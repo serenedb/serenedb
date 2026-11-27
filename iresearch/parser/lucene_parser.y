@@ -173,10 +173,9 @@ modified_term:
     base_term                       { $$ = $1; }
     // A distance of two is what a bare `~` means, and a value of one or more
     // is that many edits where a value below one is Lucene's older
-    // similarity -- `AddFuzzySimilarity` tells them apart the way Lucene does.
-    | TERM FUZZY                    { $$ = $2.has_value
-                                          ? &ctx.AddFuzzySimilarity($1, $2.value)
-                                          : &ctx.AddFuzzy($1, 2); }
+    // similarity -- `FuzzyDistance` tells them apart the way Lucene does.
+    | TERM FUZZY                    { $$ = &ctx.AddFuzzy($1, $2.has_value,
+                                                         $2.value); }
     | PREFIX FUZZY                  { $$ = &ctx.AddFuzzyPrefix(
                                         $1, $2.has_value, $2.value); }
     | phrase FUZZY                  { if ($2.has_value) {
@@ -227,13 +226,9 @@ phrase_part:
     | PREFIX                        { ctx.AddPhrasePrefix($1); }
     | WILDCARD                      { ctx.AddPhraseWildcard($1); }
     | TERM FUZZY                    { ctx.AddPhraseFuzzy(
-                                        $1, $2.has_value
-                                              ? static_cast<int>($2.value)
-                                              : 2); }
+                                        $1, $2.has_value, $2.value); }
     | PREFIX FUZZY                  { ctx.AddPhraseFuzzyPrefix(
-                                        $1, $2.has_value
-                                              ? static_cast<int>($2.value)
-                                              : 2); }
+                                        $1, $2.has_value, $2.value); }
     ;
 
 // An n-gram similarity: how much of a sequence of terms a document has to
@@ -247,8 +242,8 @@ ngram_expr:
     | FN_WILDCARD LPAREN WILDCARD RPAREN  { $$ = &ctx.AddWildcard($3); }
     | FN_WILDCARD LPAREN PREFIX RPAREN    { $$ = &ctx.AddWildcard($3); }
     | FN_WILDCARD LPAREN TERM RPAREN      { $$ = &ctx.AddWildcard($3); }
-    | FN_FUZZY LPAREN TERM RPAREN         { $$ = &ctx.AddFuzzy($3, 2); }
-    | FN_FUZZY LPAREN TERM NUMBER RPAREN  { $$ = &ctx.AddFuzzy($3, $4.value); }
+    | FN_FUZZY LPAREN TERM RPAREN         { $$ = &ctx.AddFuzzy($3, false, 0.F); }
+    | FN_FUZZY LPAREN TERM NUMBER RPAREN  { $$ = &ctx.AddFnFuzzy($3, $4.value); }
     // Which documents these hold is a question this engine can answer, even
     // though it has no intervals to compose: a set of terms, joined by how
     // many of them a document needs and in what order they must lie.

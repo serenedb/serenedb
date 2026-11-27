@@ -355,18 +355,20 @@ struct ParserContext {
   }
 
   irs::ByEditDistanceOptions& AddPhraseFuzzy(std::string_view word,
-                                             int distance) {
+                                             bool has_value, float similarity) {
     auto& part = Emplace<irs::ByEditDistanceOptions>();
     part.term = Analyze(word);
-    part.max_distance = static_cast<uint8_t>(distance);
+    part.max_distance =
+      static_cast<uint8_t>(FuzzyDistance(part.term, has_value, similarity));
     part.max_terms = fuzzy_max_terms;
     part.with_transpositions = true;
     return part;
   }
 
-  void AddPhraseFuzzyPrefix(std::string_view word, int distance) {
+  void AddPhraseFuzzyPrefix(std::string_view word, bool has_value,
+                            float similarity) {
     word.remove_suffix(1);
-    AddPhraseFuzzy(word, distance).starts_with = true;
+    AddPhraseFuzzy(word, has_value, similarity).starts_with = true;
   }
 
   void BeginNGram(float threshold) {
@@ -670,9 +672,6 @@ struct ParserContext {
     return part;
   }
 
-  // Lucene's older spelling of an edit distance: a similarity between zero
-  // and one, which it turns into edits by the length of the term.
-  // `FuzzyQuery.floatToEdits`.
   // A term or a phrase may give a boost and a fuzziness in either order, and
   // both orders mean the same thing. Reading the boost first leaves a plain
   // term already built, and a fuzzy term is a different filter -- so the term
@@ -706,8 +705,8 @@ struct ParserContext {
 
   irs::ByEditDistance& FuzzyOf(irs::bstring value, bool has_value,
                                float similarity) {
-    return has_value ? FuzzyFromSimilarity(std::move(value), similarity)
-                     : AddFuzzyTerm(std::move(value), 2);
+    const auto distance = FuzzyDistance(value, has_value, similarity);
+    return AddFuzzyTerm(std::move(value), distance);
   }
 
   irs::ByEditDistance& AddFuzzyPrefix(std::string_view value, bool has_value,
@@ -719,24 +718,23 @@ struct ParserContext {
     return f;
   }
 
-  irs::ByEditDistance& AddFuzzySimilarity(std::string_view value,
-                                          float similarity) {
-    return FuzzyFromSimilarity(Normalize(value), similarity);
-  }
-
-  irs::ByEditDistance& FuzzyFromSimilarity(irs::bstring value,
-                                           float similarity) {
+  // Lucene's older spelling of an edit distance: a similarity between zero
+  // and one, which it turns into edits by the length of the term.
+  // `FuzzyQuery.floatToEdits`.
+  static int FuzzyDistance(irs::bytes_view value, bool has_value,
+                           float similarity) {
     constexpr int kMaxEdits = 2;
-    int distance = 0;
-    if (similarity >= 1.F) {
-      distance = std::min(static_cast<int>(similarity), kMaxEdits);
-    } else if (similarity > 0.F) {
-      const auto length = static_cast<int>(irs::utf8_utils::Length(value));
-      distance = std::min(
-        static_cast<int>((1.F - similarity) * static_cast<float>(length)),
-        kMaxEdits);
+    if (!has_value || similarity >= kMaxEdits) {
+      return kMaxEdits;
     }
-    return AddFuzzyTerm(std::move(value), distance);
+    if (similarity >= 1.F) {
+      return static_cast<int>(similarity);
+    }
+    if (similarity <= 0.F) {
+      return 0;
+    }
+    const auto length = static_cast<float>(irs::utf8_utils::Length(value));
+    return std::min(static_cast<int>((1.F - similarity) * length), kMaxEdits);
   }
 
   irs::ByEditDistance& AddFuzzyTerm(irs::bstring value, int distance) {
@@ -831,8 +829,18 @@ struct ParserContext {
     THROW_SQL_ERROR(ERR_MSG("`", name, "` is not supported"));
   }
 
-  irs::ByEditDistance& AddFuzzy(std::string_view value, int distance) {
-    return AddFuzzyTerm(Normalize(value), distance);
+  irs::ByEditDistance& AddFuzzy(std::string_view value, bool has_value,
+                                float similarity) {
+    return FuzzyOf(Normalize(value), has_value, similarity);
+  }
+
+  irs::ByEditDistance& AddFnFuzzy(std::string_view value, int edits) {
+    constexpr int kMaxEdits = 3;
+    if (edits > kMaxEdits) {
+      THROW_SQL_ERROR(ERR_MSG("`fn:fuzzyTerm` allows at most ", kMaxEdits,
+                              " edits, got ", edits));
+    }
+    return AddFuzzyTerm(Normalize(value), edits);
   }
 };
 

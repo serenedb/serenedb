@@ -48,9 +48,9 @@ inline bytes_view Unescape(bytes_view in, bstring& out) {
 }
 
 template<typename Term, typename Prefix, typename WildCard>
-auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
-                     WildCard&& w) {
-  switch (ComputeWildcardType(term)) {
+auto ExecuteWildcard(bstring& buf, bytes_view term, bool bytes, Term&& t,
+                     Prefix&& p, WildCard&& w) {
+  switch (ComputeWildcardType(term, bytes)) {
     case WildcardType::TermEscaped:
       term = Unescape(term, buf);
       [[fallthrough]];

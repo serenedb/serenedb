@@ -819,7 +819,7 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
   if (type == Type<ByWildcard>::id()) {
     const auto& options = irs::utils::downCast<ByWildcard>(child).options();
     return ExecuteWildcard(
-      buf, options.term, part(Kind::Term), part(Kind::Prefix),
+      buf, options.term, options.bytes, part(Kind::Term), part(Kind::Prefix),
       part(options.bytes ? Kind::WildcardBytes : Kind::Wildcard));
   }
   if (type == Type<AutomatonFilter>::id()) {

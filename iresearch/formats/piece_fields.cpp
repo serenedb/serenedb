@@ -220,12 +220,12 @@ SeekTermIterator::ptr PieceTermReader::iterator(const RegexpAcceptor& a) const {
 
 SeekTermIterator::ptr PieceTermReader::iterator(
   const LevenshteinAcceptor& a) const {
-  return Filtered(*this, a);
+  return a.Visit([&](const auto& typed) { return Filtered(*this, typed); });
 }
 
 SeekTermIterator::ptr PieceTermReader::iterator(
   const LevenshteinPrefixAcceptor& a) const {
-  return Filtered(*this, a);
+  return a.Visit([&](const auto& typed) { return Filtered(*this, typed); });
 }
 
 SeekTermIterator::ptr PieceTermReader::iterator(

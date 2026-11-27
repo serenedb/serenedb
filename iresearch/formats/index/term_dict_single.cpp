@@ -156,12 +156,12 @@ SeekTermIterator::ptr SingleTermReader::iterator(
 
 SeekTermIterator::ptr SingleTermReader::iterator(
   const LevenshteinAcceptor& a) const {
-  return SingleFor(*this, a);
+  return a.Visit([&](const auto& typed) { return SingleFor(*this, typed); });
 }
 
 SeekTermIterator::ptr SingleTermReader::iterator(
   const LevenshteinPrefixAcceptor& a) const {
-  return SingleFor(*this, a);
+  return a.Visit([&](const auto& typed) { return SingleFor(*this, typed); });
 }
 
 SeekTermIterator::ptr SingleTermReader::iterator(

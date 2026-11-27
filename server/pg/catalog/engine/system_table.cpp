@@ -212,6 +212,7 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
     _table{input.bind_data->Cast<SystemTableBindData>().table},
     _role{duckdb::Role(
       context, input.bind_data->Cast<SystemTableBindData>().caller_role)},
+    _retriever{context, _role},
     _viewer{ViewerBits(_role)} {
   const auto& ids = input.column_ids;
   if (input.filters) {

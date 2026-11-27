@@ -38,6 +38,7 @@
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
@@ -607,7 +608,7 @@ class SystemScan {
   const duckdb::RoleAccess& Role() const noexcept { return _role; }
   uint64_t Viewer() const noexcept { return _viewer; }
   bool Shows(duckdb::CatalogEntry& entry) const {
-    return duckdb::EntryVisible(_context, _role, entry);
+    return _retriever.Shows(entry);
   }
   bool ShowsColumn(const duckdb::CatalogEntry& relation,
                    std::span<const duckdb::AclItem> acl);
@@ -1031,7 +1032,8 @@ class SystemScan {
   catalog::BaseCatalog& _database;
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
-  duckdb::RoleAccess _role;
+  const duckdb::RoleAccess& _role;
+  duckdb::CatalogEntryRetriever _retriever;
   uint64_t _viewer = 0;
   const duckdb::CatalogEntry* _columns_of = nullptr;
   bool _all_columns = false;

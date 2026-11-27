@@ -48,7 +48,8 @@ namespace sdb::pg {
 
 bool Shown(const Session& session, duckdb::CatalogEntry& entry) {
   return !session.context ||
-         duckdb::EntryVisible(*session.context, session.role, entry);
+         duckdb::CatalogEntryRetriever(*session.context, session.role)
+           .Shows(entry);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> InternalEntryByOid(

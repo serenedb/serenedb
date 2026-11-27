@@ -217,7 +217,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     if (catalog::IsSereneDB(database->GetCatalog()) &&
-        duckdb::DatabaseVisible(context, role, *database)) {
+        duckdb::CatalogEntryRetriever(context, role).Shows(*database)) {
       databases.emplace(
         database->oid,
         &database->GetCatalog().Cast<catalog::SereneDBCatalog>());
@@ -232,7 +232,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
       auto& catalog = *database->second;
       auto job = catalog.FindIn<catalog::JobCatalogEntry>(
         catalog.GetCatalogTransaction(context), run.job_oid);
-      if (!job || !duckdb::EntryVisible(context, role, *job)) {
+      if (!job || !duckdb::CatalogEntryRetriever(context, role).Shows(*job)) {
         continue;
       }
     }

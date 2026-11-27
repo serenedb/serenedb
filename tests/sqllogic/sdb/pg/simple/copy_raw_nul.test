@@ -54,6 +54,17 @@ COPY crn_int FROM '${__TEST_DIR__}/crn_big.txt';
 db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
 
 
+statement count 1
+COPY (SELECT '\x5047434f50590aff0d0a0000000000000000000001000000026f6b000100000003610062ffff'::BYTEA)
+TO '${__TEST_DIR__}/crn.bin' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error
+COPY crn FROM '${__TEST_DIR__}/crn.bin' (FORMAT binary);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
 query
 SELECT count(*) AS n FROM crn;
 ----

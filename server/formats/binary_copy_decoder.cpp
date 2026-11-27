@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstring>
 #include <duckdb/formats/copy_fields.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -180,7 +181,8 @@ duckdb::idx_t BinaryCopyDecoder::Parse(duckdb::DataChunk& output,
       const auto fields = Column(column, rows);
       for (size_t r = 0; r < rows; ++r) {
         if (fields[r].data() &&
-            !simdutf::validate_utf8(fields[r].data(), fields[r].size())) {
+            (!simdutf::validate_utf8(fields[r].data(), fields[r].size()) ||
+             std::memchr(fields[r].data(), '\0', fields[r].size()))) {
           rows = r;
           bad_column = column;
           bad_field = fields[r];

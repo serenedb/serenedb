@@ -28,6 +28,7 @@
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string.hpp>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -40,17 +41,32 @@ struct PrefetchRange {
   uint64_t size = 0;
 };
 
+class ScriptedMapping;
+
+void RegisterFaulting(ScriptedMapping& mapping);
+void UnregisterFaulting(ScriptedMapping& mapping) noexcept;
+void DropFaultingMappings();
+
 class ScriptedMapping final : public duckdb::MemoryMappedFile {
  public:
-  explicit ScriptedMapping(irs::bstring bytes)
+  ScriptedMapping(irs::bstring bytes, bool faults)
     : MemoryMappedFile{{},
                        duckdb::FileOpenFlags::FILE_FLAGS_READ,
                        Reserve(bytes.size()),
                        static_cast<duckdb::idx_t>(bytes.size())},
-      _bytes{std::move(bytes)} {
+      _bytes{std::move(bytes)},
+      _faults{faults} {
     KeepUntil(size);
+    if (_faults) {
+      RegisterFaulting(*this);
+    }
   }
-  ~ScriptedMapping() final { ::munmap(data, Reserved(size)); }
+  ~ScriptedMapping() final {
+    if (_faults) {
+      UnregisterFaulting(*this);
+    }
+    ::munmap(data, Reserved(size));
+  }
 
   void Sync() final {}
   bool Trim(duckdb::idx_t /*offset*/, duckdb::idx_t /*length*/) final {
@@ -70,6 +86,23 @@ class ScriptedMapping final : public duckdb::MemoryMappedFile {
     ASSERT_EQ(
       ::madvise(data + first * Page(), (end - first) * Page(), MADV_DONTNEED),
       0);
+    if (_faults) {
+      ASSERT_EQ(
+        ::mprotect(data + first * Page(), (end - first) * Page(), PROT_NONE),
+        0);
+    }
+  }
+
+  void DropAll() { Drop(0, size); }
+
+  bool FaultIn(const void* at) noexcept {
+    const auto* const byte = static_cast<const duckdb::data_t*>(at);
+    if (byte < data || byte >= data + Reserved(size)) {
+      return false;
+    }
+    const auto page = static_cast<uint64_t>(byte - data) / Page();
+    Load(page, page + 1);
+    return true;
   }
 
   void KeepUntil(uint64_t end) {
@@ -106,17 +139,24 @@ class ScriptedMapping final : public duckdb::MemoryMappedFile {
   void Load(uint64_t first, uint64_t end) noexcept {
     const auto from = first * Page();
     const auto to = std::min<uint64_t>(end * Page(), size);
-    if (from < to) {
-      std::memcpy(data + from, _bytes.data() + from, to - from);
+    if (from >= to) {
+      return;
     }
+    if (_faults) {
+      ::mprotect(data + from, Pages(to) * Page() - from,
+                 PROT_READ | PROT_WRITE);
+    }
+    std::memcpy(data + from, _bytes.data() + from, to - from);
   }
 
   irs::bstring _bytes;
+  bool _faults;
 };
 
 class ScriptedFileSystem final : public HookFileSystem {
  public:
-  using HookFileSystem::HookFileSystem;
+  explicit ScriptedFileSystem(duckdb::FileSystem& inner, bool faults = false)
+    : HookFileSystem{inner}, _faults{faults} {}
 
   duckdb::shared_ptr<duckdb::InputFile> OpenBlockFile(
     const std::string& /*path*/) final {
@@ -127,12 +167,16 @@ class ScriptedFileSystem final : public HookFileSystem {
     const duckdb::MMapOptions& /*options*/,
     duckdb::optional_ptr<duckdb::FileOpener> /*opener*/) final {
     auto mapping = duckdb::make_uniq<ScriptedMapping>(
-      irs::ReadWhole<irs::bstring>(duckdb::QueryContext{}, *this, path.path));
+      irs::ReadWhole<irs::bstring>(duckdb::QueryContext{}, *this, path.path),
+      _faults);
     mapped = mapping.get();
     return mapping;
   }
 
   ScriptedMapping* mapped = nullptr;
+
+ private:
+  bool _faults;
 };
 
 }  // namespace tests

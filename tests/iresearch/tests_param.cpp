@@ -29,6 +29,8 @@
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 
+#include "scripted_file_system.hpp"
+
 namespace tests {
 namespace {
 
@@ -49,6 +51,21 @@ std::shared_ptr<IndexDir> LocalDirectory(const TestBase* test) {
   auto* files =
     new IndexDir{irs::DuckDBEngine::Instance().instance(), path.string()};
   return {files, [path = std::move(path)](IndexDir* p) {
+            delete p;
+            std::filesystem::remove_all(path);
+          }};
+}
+
+std::shared_ptr<IndexDir> FaultingDirectory(const TestBase* test) {
+  auto path = test->test_dir() /
+              absl::StrCat("faulting_", gLocalDirectories.fetch_add(
+                                          1, std::memory_order_relaxed));
+  std::filesystem::create_directories(path);
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto fs = std::make_shared<ScriptedFileSystem>(
+    duckdb::FileSystem::GetFileSystem(db), true);
+  auto* files = new IndexDir{db, *fs, path.string()};
+  return {files, [path = std::move(path), fs = std::move(fs)](IndexDir* p) {
             delete p;
             std::filesystem::remove_all(path);
           }};

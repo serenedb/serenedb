@@ -29,9 +29,7 @@
 #include <atomic>
 #include <bit>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/settings.hpp>
-#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
+#include <duckdb/common/page_residency.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/exclusion_of.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -42,7 +40,6 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/scorers/indri_dirichlet.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -52,6 +49,7 @@
 #include <vector>
 
 #include "index/index_tests.hpp"
+#include "scripted_file_system.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -197,29 +195,6 @@ struct Shape {
   std::vector<std::string_view> should_prefixes;
 };
 
-class SmallRemoteBlocks {
- public:
-  SmallRemoteBlocks()
-    : _db{irs::DuckDBEngine::Instance().instance()},
-      _was{duckdb::Settings::Get<
-        duckdb::ExternalFileCacheRemoteMinBlockSizeSetting>(_db)} {
-    Set(duckdb::ExternalFileCache::MIN_BLOCK_SIZE);
-  }
-  ~SmallRemoteBlocks() { Set(_was); }
-  SmallRemoteBlocks(const SmallRemoteBlocks&) = delete;
-  SmallRemoteBlocks& operator=(const SmallRemoteBlocks&) = delete;
-
- private:
-  void Set(uint64_t bytes) {
-    duckdb::DBConfig::GetConfig(_db).SetOptionByName(
-      duckdb::ExternalFileCacheRemoteMinBlockSizeSetting::Name,
-      duckdb::Value::UBIGINT(bytes));
-  }
-
-  duckdb::DatabaseInstance& _db;
-  uint64_t _was;
-};
-
 irs::Filter::ptr PrefixOf(std::string_view prefix) {
   auto filter = std::make_unique<irs::ByPrefix>();
   *filter->mutable_field_id() = kBodyId;
@@ -320,6 +295,8 @@ class PrunedTopTest : public tests::IndexTestBase {
                                  doc_id_t span, bool prune, bool bounds,
                                  bool reuse, uint64_t& total) {
     const auto queries = Prepare(filter);
+    tests::DropFaultingMappings();
+    duckdb::PageResidency::Invalidate();
     std::vector<irs::ScoreDoc> hits(k);
     std::atomic<irs::score_t> threshold{
       std::numeric_limits<irs::score_t>::lowest()};
@@ -1154,31 +1131,6 @@ TEST_P(PrunedTopTest, required_term_merges_optional_ones_sparser_than_it) {
   }
 }
 
-TEST_P(PrunedTopTest, dense_phrases_over_small_remote_blocks) {
-  const SmallRemoteBlocks small;
-  Build(PhrasesText);
-  for (const auto& parts : {std::vector<std::string_view>{"town", "of"},
-                            std::vector<std::string_view>{"pad", "pad"},
-                            std::vector<std::string_view>{"band", "alpha"}}) {
-    SCOPED_TRACE(absl::StrJoin(parts, " "));
-    CheckRanking(*PhraseOf(parts));
-  }
-}
-
-TEST_P(PrunedTopTest, dense_terms_over_small_remote_blocks) {
-  const SmallRemoteBlocks small;
-  Build();
-  for (const auto& shape : std::vector<Shape>{
-         {{"common"}, {"rare"}},
-         {{"pad"}, {"sparse", "single"}},
-         {{"half"}, {"mid"}},
-         {{"common", "half"}},
-         {{"pad", "common"}, {"rare"}},
-       }) {
-    Check(shape);
-  }
-}
-
 TEST_P(PrunedTopTest, required_term_with_sparser_optional_ones) {
   Build();
   for (const auto& shape : std::vector<Shape>{
@@ -1196,7 +1148,8 @@ INSTANTIATE_TEST_SUITE_P(
   pruned_top_test, PrunedTopTest,
   ::testing::Combine(::testing::Values(
     tests::kMemoryDirParam, tests::DirParam{"local", &tests::LocalDirectory},
-    tests::DirParam{"sim", &tests::ObjectStoreDirectory})),
+    tests::DirParam{"sim", &tests::ObjectStoreDirectory},
+    tests::DirParam{"faulting", &tests::FaultingDirectory})),
   PrunedTopTest::to_string);
 
 }  // namespace

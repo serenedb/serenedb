@@ -606,6 +606,13 @@ HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INT
 
 
 query error
+SELECT id FROM sloppy_seg_idx WHERE body @@ ts_phrase('quick', 1, body);
+----
+db error: ERROR: ts_phrase argument 2 must be a constant
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query error
 SELECT id FROM sloppy_seg_idx WHERE body @@ ts_phrase('quick', id::VARCHAR);
 ----
 db error: ERROR: ts_phrase argument 1 must be a constant

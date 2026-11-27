@@ -386,6 +386,16 @@ ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
           .tokenizer_column = field.tokenizer_column};
 }
 
+duckdb::LogicalTypeId IndexTokenizers::Output(irs::field_id field_id) const {
+  const auto it = _fields.find(field_id);
+  if (it == _fields.end()) {
+    return duckdb::LogicalTypeId::INVALID;
+  }
+  const auto& tokenizer = it->second.tokenizer;
+  return tokenizer ? tokenizer->Output()
+                   : irs::KeywordTokenizer{}.Traits().output;
+}
+
 IndexTokenizers::Bound IndexTokenizers::AcquireAll(
   duckdb::ClientContext& context) const {
   Bound bound;

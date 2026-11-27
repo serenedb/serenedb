@@ -22,6 +22,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/common/atomic.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -58,8 +59,7 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
   permissions = info.permissions;
 }
 
-Tokenizer::TokenizerWrapper Tokenizer::Acquire(
-  duckdb::ClientContext& context) const {
+irs::analysis::Tokenizer::ptr Tokenizer::Take() const {
   irs::analysis::Tokenizer::ptr analyzer;
   {
     const absl::MutexLock lock{&_mutex};
@@ -72,10 +72,23 @@ Tokenizer::TokenizerWrapper Tokenizer::Acquire(
     analyzer = irs::analysis::CreateTokenizer(
       irs::analysis::Clone(_config),
       irs::DuckDBEngine::Instance().instance().GetSharedObjectCache());
+    duckdb::StoreRacy(_output, analyzer->Traits().output);
   }
-  TokenizerWrapper wrapper{analyzer.release(), Deleter{shared_from_this()}};
+  return analyzer;
+}
+
+Tokenizer::TokenizerWrapper Tokenizer::Acquire(
+  duckdb::ClientContext& context) const {
+  TokenizerWrapper wrapper{Take().release(), Deleter{shared_from_this()}};
   wrapper->Bind(context);
   return wrapper;
+}
+
+duckdb::LogicalTypeId Tokenizer::Output() const {
+  if (duckdb::LoadRacy(_output) == duckdb::LogicalTypeId::INVALID) {
+    Release(Take());
+  }
+  return duckdb::LoadRacy(_output);
 }
 
 void Tokenizer::Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept {

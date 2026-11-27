@@ -61,6 +61,8 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
 
   TokenizerWrapper Acquire(duckdb::ClientContext& context) const;
 
+  duckdb::LogicalTypeId Output() const;
+
   const irs::analysis::TokenizerConfig& Config() const noexcept {
     return _config;
   }
@@ -68,10 +70,12 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
   search::Features GetFeatures() const noexcept { return _features; }
 
  private:
+  irs::analysis::Tokenizer::ptr Take() const;
   void Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept;
 
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
+  mutable duckdb::LogicalTypeId _output = duckdb::LogicalTypeId::INVALID;
   mutable absl::Mutex _mutex;
   mutable std::vector<irs::analysis::Tokenizer::ptr> _pool
     ABSL_GUARDED_BY(_mutex);

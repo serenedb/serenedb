@@ -354,10 +354,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
                              "returns"));
   }
   if (kind == TsDictColumn::Term) {
-    const auto tokenizer =
-      scan.Bind().relation.ResolveTokenizers(context).Acquire(
-        index->TermField(col_id));
-    const auto output = tokenizer.analyzer->Traits().output;
+    const auto output = scan.Bind().relation.ResolveTokenizers(context).Output(
+      index->TermField(col_id));
     if (output != duckdb::LogicalTypeId::VARCHAR) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG(fn, "(): column has no text term dictionary"),
@@ -2197,8 +2195,7 @@ class TsDictFilterClaim {
     }
     auto& req = _bind_data.ts_dict.requests.front();
     if (!req.bytes) {
-      const auto output =
-        _getters.tokenizers.Acquire(req.field_id).analyzer->Traits().output;
+      const auto output = _getters.tokenizers.Output(req.field_id);
       if (output != duckdb::LogicalTypeId::VARCHAR) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

@@ -258,6 +258,7 @@ class IndexTokenizers {
   ColumnTokenizer Acquire(irs::field_id field_id) const;
   ColumnTokenizer Acquire(irs::field_id field_id,
                           duckdb::ClientContext& context) const;
+  duckdb::LogicalTypeId Output(irs::field_id field_id) const;
   Bound AcquireAll(duckdb::ClientContext& context) const;
 
  private:

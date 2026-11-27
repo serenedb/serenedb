@@ -137,5 +137,19 @@ TEST(TokenizerEntry, TrailingBytesAreRefused) {
   EXPECT_FALSE(UnpackError(bytes).empty());
 }
 
+TEST(TokenizerEntry, OutputIsTheTypeOfItsTokens) {
+  const auto keyword = std::make_shared<Tokenizer>(
+    search::Features{},
+    irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, keyword->Output());
+  const auto collation = std::make_shared<Tokenizer>(
+    search::Features{},
+    irs::analysis::TokenizerConfig{
+      .config = irs::analysis::CollationTokenizer::Options{
+        .locale = duckdb::text::Locale::FromName("en_US.UTF-8")}});
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, collation->Output());
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, collation->Output());
+}
+
 }  // namespace
 }  // namespace sdb::catalog

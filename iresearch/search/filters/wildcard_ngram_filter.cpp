@@ -144,11 +144,11 @@ bytes_view WholeCharacters(bytes_view literal) {
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
-                   bool has_pos, bool byte_grams, bool whole_characters,
+                   bool has_pos, bool byte_grams,
                    std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
-    const auto literal = whole_characters ? WholeCharacters(query.literal)
-                                          : bytes_view{query.literal};
+    const auto literal =
+      byte_grams ? bytes_view{query.literal} : WholeCharacters(query.literal);
     const auto& part = grams.emplace_back(
       literal.empty()
         ? ByPhraseOptions{}
@@ -158,7 +158,7 @@ bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
   bool exact = true;
   for (const auto& child : query.children) {
     exact &= SplitLiterals(child, ngram, value_analyzer, tokens, has_pos,
-                           byte_grams, whole_characters, grams);
+                           byte_grams, grams);
   }
   return exact;
 }
@@ -332,7 +332,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   ValueTokens tokens;
   const bool decided =
     SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
-                  tokens, has_pos, byte_grams, bytes && !byte_grams, grams) &&
+                  tokens, has_pos, byte_grams, grams) &&
     plan.exact;
   if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;

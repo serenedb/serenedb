@@ -35,11 +35,11 @@ std::unique_ptr<HttpHandler> Handler() {
 }
 
 constexpr auto kRoutes = std::to_array<Route>({
-  {HttpMethod::Post, "/_mcp", Handler<Endpoint::Rpc>},
-  {HttpMethod::Get, "/_mcp", Handler<Endpoint::MethodNotAllowed>},
-  {HttpMethod::Delete, "/_mcp", Handler<Endpoint::MethodNotAllowed>},
-  {HttpMethod::Put, "/_mcp", Handler<Endpoint::MethodNotAllowed>},
-  {HttpMethod::Head, "/_mcp", Handler<Endpoint::MethodNotAllowed>},
+  {HttpMethod::Post, "/mcp", Handler<Endpoint::Rpc>},
+  {HttpMethod::Get, "/mcp", Handler<Endpoint::MethodNotAllowed>},
+  {HttpMethod::Delete, "/mcp", Handler<Endpoint::MethodNotAllowed>},
+  {HttpMethod::Put, "/mcp", Handler<Endpoint::MethodNotAllowed>},
+  {HttpMethod::Head, "/mcp", Handler<Endpoint::MethodNotAllowed>},
 });
 
 SDB_HTTP_API kMcp{"mcp", kRoutes, kMcpMaxBodyBytes};

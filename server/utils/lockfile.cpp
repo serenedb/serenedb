@@ -26,15 +26,15 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/file.h>
+#include <unistd.h>
 
-#include <iresearch/utils/operating_system.hpp>
 #include <string>
 
 namespace sdb {
 
 absl::StatusOr<FileLock> FileLock::Take(std::string_view path, Mode mode) {
   const std::string name{path};
-  const int fd = SERENEDB_OPEN(name.c_str(), O_RDONLY | SERENEDB_O_CLOEXEC);
+  const int fd = ::open(name.c_str(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     const int error = errno;
     if (error == ENOENT) {
@@ -48,7 +48,7 @@ absl::StatusOr<FileLock> FileLock::Take(std::string_view path, Mode mode) {
     return FileLock{fd};
   }
   const int error = errno;
-  SERENEDB_CLOSE(fd);
+  ::close(fd);
   if (error == EWOULDBLOCK) {
     return absl::FailedPreconditionError(
       absl::StrCat("the data directory is in use: '", name, "' is locked by ",
@@ -63,7 +63,7 @@ absl::StatusOr<FileLock> FileLock::Take(std::string_view path, Mode mode) {
 
 FileLock::~FileLock() {
   if (_fd >= 0) {
-    SERENEDB_CLOSE(_fd);
+    ::close(_fd);
   }
 }
 

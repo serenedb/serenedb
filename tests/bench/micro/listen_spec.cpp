@@ -38,6 +38,6 @@ BENCHMARK_CAPTURE(Parse, pg_unix,
                   "postgres:///tmp/sdbsock?port=5499&mode=0660");
 BENCHMARK_CAPTURE(Parse, pg_tcp, "postgres://127.0.0.1:7890");
 BENCHMARK_CAPTURE(Parse, http_tcp,
-                  "http://127.0.0.1:9200?api=es&api=otel&db=telemetry");
+                  "http://127.0.0.1:9200?api=mcp&api=otel&db=telemetry");
 
 }  // namespace

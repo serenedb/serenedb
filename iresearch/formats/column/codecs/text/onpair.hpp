@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -33,6 +31,7 @@
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/tracked.hpp"
@@ -165,9 +164,10 @@ class Codec {
 
   template<typename K, typename V>
   using Map =
-    absl::flat_hash_map<K, V, typename absl::flat_hash_map<K, V>::hasher,
-                        typename absl::flat_hash_map<K, V>::key_equal,
-                        TrackedAllocator<std::pair<const K, V>>>;
+    containers::FlatHashMap<K, V,
+                            typename containers::FlatHashMap<K, V>::hasher,
+                            typename containers::FlatHashMap<K, V>::key_equal,
+                            TrackedAllocator<std::pair<const K, V>>>;
 
   static constexpr size_t kPairLengths = size_t{1} << 16;
 

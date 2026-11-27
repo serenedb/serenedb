@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -109,6 +110,7 @@ class HttpResponseWriter {
 
   yaclib::Task<> Drain() { return _sink.Drain(); }
   bool Broken() const noexcept { return _sink.Broken(); }
+  size_t Committed() const { return _send.TotalCommitted(); }
 
   // Terminates the response. For chunked bodies writes the last-chunk; for
   // fixed bodies asserts the promised length was written.

@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <cstring>
 #include <memory>
 
@@ -32,14 +34,12 @@
 
 namespace irs {
 
-template<typename Alloc>
 class DynamicBitset {
  public:
   // NOLINTBEGIN
   using index_t = size_t;
   using word_t = size_t;
-  using allocator_type =
-    typename std::allocator_traits<Alloc>::template rebind_alloc<word_t>;
+  using allocator_type = std::allocator<word_t>;
   using word_ptr_deleter_t = memory::AllocatorArrayDeallocator<allocator_type>;
   using word_ptr_t = std::unique_ptr<word_t[], word_ptr_deleter_t>;
   // NOLINTEND
@@ -64,13 +64,9 @@ class DynamicBitset {
     return i * BitsRequired<word_t>();
   }
 
-  DynamicBitset(const Alloc& alloc = Alloc{})
-    : _data{nullptr, word_ptr_deleter_t{alloc, 0}} {}
+  DynamicBitset() : _data{nullptr, word_ptr_deleter_t{allocator_type{}, 0}} {}
 
-  explicit DynamicBitset(size_t bits, const Alloc& alloc = Alloc{})
-    : DynamicBitset{alloc} {
-    reset(bits);
-  }
+  explicit DynamicBitset(size_t bits) : DynamicBitset{} { reset(bits); }
 
   DynamicBitset(DynamicBitset&& rhs) noexcept
     : _data{std::move(rhs._data)},
@@ -155,8 +151,8 @@ class DynamicBitset {
     byte_size = std::min(byte_size, _words * sizeof(word_t));
     if (byte_size != 0) {
       // passing nullptr to `std::memcpy` is undefined behavior
-      SDB_ASSERT(_data != nullptr);
-      SDB_ASSERT(src != nullptr);
+      SDB_ASSERT(_data);
+      SDB_ASSERT(src);
       std::memcpy(_data.get(), src, byte_size);
       sanitize();
     }
@@ -182,19 +178,8 @@ class DynamicBitset {
     return CheckBit(_data[word(i)], bit(i));
   }
 
-  bool try_set(size_t i) noexcept {
-    SDB_ASSERT(i < _bits);
-    auto& data = _data[word(i)];
-    const auto mask = word_t{1} << bit(i);
-    if ((data & mask) != 0) {
-      return false;
-    }
-    data |= mask;
-    return true;
-  }
-
   bool any() const noexcept {
-    return std::any_of(begin(), end(), [](word_t w) { return w != 0; });
+    return absl::c_any_of(*this, [](word_t w) { return w != 0; });
   }
 
   bool none() const noexcept { return !any(); }
@@ -233,8 +218,6 @@ class DynamicBitset {
     return math::Popcount(begin() + first_word, begin() + end_word);
   }
 
-  Alloc& get_allocator() { return _data.get_deleter().alloc(); }
-
  private:
   size_t capacity_words() const noexcept { return _data.get_deleter().size(); }
 
@@ -242,9 +225,9 @@ class DynamicBitset {
     if (words > capacity_words()) {
       auto new_data = memory::AllocateUnique<word_t[]>(
         _data.get_deleter().alloc(), words, memory::kAllocateOnly);
-      SDB_ASSERT(new_data != nullptr);
+      SDB_ASSERT(new_data);
       if (_words != 0) {
-        SDB_ASSERT(data() != nullptr);
+        SDB_ASSERT(data());
         std::memcpy(new_data.get(), data(), _words * sizeof(word_t));
       }
       _data = std::move(new_data);
@@ -253,7 +236,7 @@ class DynamicBitset {
 
   void clear_offset(size_t offset_words) noexcept {
     if (offset_words < _words) {
-      SDB_ASSERT(_data != nullptr);
+      SDB_ASSERT(_data);
       std::memset(_data.get() + offset_words, 0,
                   (_words - offset_words) * sizeof(word_t));
     }
@@ -278,7 +261,6 @@ class DynamicBitset {
   size_t _bits{0};   // size of bitset in bits
 };
 
-// TODO(mbkkt) move to tests?
-using bitset = DynamicBitset<std::allocator<size_t>>;
+using bitset = DynamicBitset;
 
 }  // namespace irs

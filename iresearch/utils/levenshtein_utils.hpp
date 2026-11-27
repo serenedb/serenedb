@@ -22,8 +22,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <numeric>
 #include <span>
 #include <vector>
 
@@ -31,49 +29,6 @@
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-template<typename T, size_t SubstCost = 1>
-inline size_t EditDistance(const T* lhs, size_t lhs_size, const T* rhs,
-                           size_t rhs_size) {
-  SDB_ASSERT(lhs || !lhs_size);
-  SDB_ASSERT(rhs || !rhs_size);
-
-  if (lhs_size > rhs_size) {
-    std::swap(lhs, rhs);
-    std::swap(lhs_size, rhs_size);
-  }
-
-  std::vector<size_t> cost(2 * (lhs_size + 1));
-
-  auto current = cost.begin();
-  auto next = cost.begin() + cost.size() / 2;
-  std::iota(current, next, 0);
-
-  for (size_t j = 1; j <= rhs_size; ++j) {
-    next[0] = j;
-    for (size_t i = 1; i <= lhs_size; ++i) {
-      next[i] = std::min({
-        next[i - 1] + 1,  // deletion
-        current[i] + 1,   // insertion
-        current[i - 1] +
-          (lhs[i - 1] == rhs[j - 1] ? 0 : SubstCost)  // substitution
-      });
-    }
-    std::swap(next, current);
-  }
-
-  return current[lhs_size];
-}
-
-/// @brief evaluates edit distance between the specified words
-/// @param lhs string to compare
-/// @param rhs string to compare
-/// @returns edit distance
-template<typename Char>
-inline size_t EditDistance(basic_string_view<Char> lhs,
-                           basic_string_view<Char> rhs) {
-  return EditDistance(lhs.data(), lhs.size(), rhs.data(), rhs.size());
-}
 
 // Implementation of the algorithm of building Levenshtein automaton
 // by Klaus Schulz, Stoyan Mihov described in
@@ -167,65 +122,5 @@ class ParametricDescription {
 /// @returns parametric description of Levenshtein automaton for supplied args
 ParametricDescription MakeParametricDescription(uint8_t max_distance,
                                                 bool with_transposition);
-
-/// @brief evaluates edit distance between the specified words up to
-///        specified in description.max_distance
-/// @param description parametric description
-/// @param lhs string to compare (utf8 encoded)
-/// @param lhs_size size of the string to comprare
-/// @param rhs string to compare (utf8 encoded)
-/// @param rhs_size size of the string to comprare
-/// @returns edit_distance up to specified in description.max_distance
-/// @note accepts only valid descriptions, calling function with
-///       invalid description is undefined behaviour
-size_t EditDistance(const ParametricDescription& description,
-                    const byte_type* lhs, size_t lhs_size, const byte_type* rhs,
-                    size_t rhs_size);
-
-/// @brief evaluates edit distance between the specified words up to
-///        specified in description.max_distance
-/// @param description parametric description
-/// @param lhs string to compare (utf8 encoded)
-/// @param rhs string to compare (utf8 encoded)
-/// @returns edit_distance up to specified in description.max_distance
-/// @note accepts only valid descriptions, calling function with
-///       invalid description is undefined behaviour
-inline size_t EditDistance(const ParametricDescription& description,
-                           bytes_view lhs, bytes_view rhs) {
-  return EditDistance(description, lhs.data(), lhs.size(), rhs.data(),
-                      rhs.size());
-}
-
-/// @brief evaluates edit distance between the specified words up to
-///        specified in description.max_distance.
-/// @param evaluated edit distance
-/// @param description parametric description
-/// @param lhs string to compare (utf8 encoded)
-/// @param lhs_size size of the string to comprare
-/// @param rhs string to compare (utf8 encoded)
-/// @param rhs_size size of the string to comprare
-/// @returns true if both lhs_string and rhs_strign are valid UTF-8 sequences,
-///          false - otherwise
-/// @note accepts only valid descriptions, calling function with
-///       invalid description is undefined behaviour
-bool EditDistance(size_t& distance, const ParametricDescription& description,
-                  const byte_type* lhs, size_t lhs_size, const byte_type* rhs,
-                  size_t rhs_size);
-
-/// @brief evaluates edit distance between the specified words up to
-///        specified in description.max_distance
-/// @param description parametric description
-/// @param lhs string to compare (utf8 encoded)
-/// @param rhs string to compare (utf8 encoded)
-/// @returns true if both lhs_string and rhs_strign are valid UTF-8 sequences,
-///          false - otherwise
-/// @note accepts only valid descriptions, calling function with
-///       invalid description is undefined behaviour
-inline bool EditDistance(size_t& distance,
-                         const ParametricDescription& description,
-                         bytes_view lhs, bytes_view rhs) {
-  return EditDistance(distance, description, lhs.data(), lhs.size(), rhs.data(),
-                      rhs.size());
-}
 
 }  // namespace irs

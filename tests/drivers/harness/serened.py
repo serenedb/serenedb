@@ -111,11 +111,12 @@ class Serened:
                  http=None):
         self.binary = str(binary)
         self.host = host
-        self.http = http
-        self.reserved = [reserve_port() for _ in range(2 if http else 1)]
+        self.http = (http,) if isinstance(http, str) else tuple(http or ())
+        self.reserved = [reserve_port() for _ in range(1 + len(self.http))]
         self.ports = [sock.getsockname()[1] for sock in self.reserved]
         self.port = self.ports[0]
-        self.http_port = self.ports[1] if http else None
+        self.http_ports = self.ports[1:]
+        self.http_port = self.http_ports[0] if self.http_ports else None
         self.owns_datadir = datadir is None
         self.datadir = datadir or tempfile.mkdtemp(prefix=prefix, dir=datadir_root)
         self.extra_args = list(extra_args)
@@ -135,8 +136,8 @@ class Serened:
 
     def argv(self):
         listen = f"postgres://{self.host}:{self.port}"
-        if self.http:
-            listen += f",http://{self.host}:{self.http_port}?{self.http}"
+        for params, port in zip(self.http, self.http_ports):
+            listen += f",http://{self.host}:{port}?{params}"
         return [self.binary, self.datadir, f"--listen={listen}",
                 f"--auth_timeout={self.auth_timeout}"] + self.extra_args
 

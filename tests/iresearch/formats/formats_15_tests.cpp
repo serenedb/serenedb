@@ -196,8 +196,13 @@ class SkipList {
 SkipList SkipList::Make(tests::FormatTestCase::TestPostings& it,
                         irs::doc_id_t skip_0, irs::doc_id_t skip_n,
                         irs::doc_id_t count) {
-  size_t num_levels =
-    skip_0 < count ? 1 + irs::math::Log(count / skip_0, skip_n) : 0;
+  size_t num_levels = 0;
+  if (skip_0 < count) {
+    num_levels = 1;
+    for (auto n = count / skip_0; n >= skip_n; n /= skip_n) {
+      ++num_levels;
+    }
+  }
   EXPECT_GT(num_levels, 0);
 
   std::vector<Level> skip_list;

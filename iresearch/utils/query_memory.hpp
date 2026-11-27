@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/storage/arena_allocator.hpp>
+#include <memory>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -61,9 +62,9 @@ class MemoryArena {
     if (alignment <= kAlignment) {
       return _arena.AllocateAligned(bytes);
     }
-    auto* p = _arena.AllocateAligned(bytes + alignment - kAlignment);
-    return reinterpret_cast<void*>(
-      memory::AlignUp(reinterpret_cast<uintptr_t>(p), alignment));
+    size_t space = bytes + alignment - kAlignment;
+    void* p = _arena.AllocateAligned(space);
+    return std::align(alignment, bytes, p, space);
   }
 
   template<typename T>

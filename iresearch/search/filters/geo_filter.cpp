@@ -52,6 +52,7 @@
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/geo/geo_params.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/query_memory.hpp"
 

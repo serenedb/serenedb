@@ -23,7 +23,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -51,6 +50,7 @@
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
 #include "iresearch/utils/tracked.hpp"
@@ -60,7 +60,7 @@ namespace irs {
 using Compaction = std::vector<const SubReader*>;
 using CompactionView = std::span<const SubReader* const>;
 
-using CompactingSegments = absl::flat_hash_set<std::string_view>;
+using CompactingSegments = containers::FlatHashSet<std::string_view>;
 
 using CompactionPolicy =
   std::function<void(Compaction& candidates, const IndexReader& index,

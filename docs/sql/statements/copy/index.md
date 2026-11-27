@@ -191,6 +191,10 @@ Expressions may be used for options as well. Copy to a file using a format store
 
 <SqlLogicTest id="sql/statements/copy/index/example_035" />
 
+### `COPY ... TO STDOUT`
+
+Over the PostgreSQL wire protocol, `COPY ... TO STDOUT` streams the result to the client as it is written, in every format. A client that reads slower than the `COPY` writes holds it back: the memory the server spends on the unread part stays in proportion to the pieces the format writes at a time (a chunk of rows in `csv`, a row group in `parquet`) and to the number of threads, not to the size of the result. The `COPY`'s threads run other queries while the client catches up, and the `COPY` goes on once the client reads again.
+
 ### `COPY ... TO` Options
 
 Zero or more copy options may be provided as a part of the copy operation. The `WITH` specifier is optional, but if any options are specified, the parentheses are required. Parameter values can be passed in with or without wrapping in single quotes. Arbitrary expressions may be used for parameter values.

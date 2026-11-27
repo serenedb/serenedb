@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -30,6 +29,7 @@
 
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 
@@ -58,7 +58,7 @@ class HnswBases {
   };
 
   mutable absl::Mutex _mutex;
-  absl::flat_hash_map<field_id, Basis> _published;
+  containers::FlatHashMap<field_id, Basis> _published;
   std::vector<std::weak_ptr<const std::vector<float>>> _loaded;
   std::vector<Narrowed> _narrowed;
 };

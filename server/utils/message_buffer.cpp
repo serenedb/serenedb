@@ -134,7 +134,7 @@ size_t Buffer::ReadableSize() noexcept {
       return size;
     }
     chunk = chunk->Next();
-    SDB_ASSERT(chunk != nullptr);
+    SDB_ASSERT(chunk);
   }
 }
 
@@ -151,7 +151,7 @@ SequenceView Buffer::ReadableView(size_t length) noexcept {
     length -= available;
     SDB_ASSERT(chunk != _consumed.chunk);
     chunk = chunk->Next();
-    SDB_ASSERT(chunk != nullptr);
+    SDB_ASSERT(chunk);
     pos = chunk->GetBegin();
   }
   return SequenceView{begin, begin};
@@ -181,7 +181,7 @@ void Buffer::Consume(size_t size) {
 }
 
 void Buffer::Release(Chunk* chunk) {
-  if (_retained == nullptr) {
+  if (!_retained) {
     delete chunk;
     return;
   }

@@ -315,7 +315,7 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
   })");
   GeoFilter q;
   q.mutable_options()->type = GeoFilterType::Intersects;
-  json::ParseRegion(json.value(), q.mutable_options()->shape);
+  irs::tests::ParseRegion(json.value(), q.mutable_options()->shape);
   *q.mutable_field_id() = kGeo;
 
   const auto execute = [&](const irs::Filter& filter) {
@@ -539,7 +539,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    json::ParseRegion(json.value(), q.mutable_options()->shape);
+    irs::tests::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Point,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -566,7 +566,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    json::ParseRegion(json.value(), q.mutable_options()->shape);
+    irs::tests::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -900,7 +900,7 @@ TEST(GeoFilterTest, checkScorer) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    json::ParseRegion(json.value(), q.mutable_options()->shape);
+    irs::tests::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -962,7 +962,7 @@ TEST(GeoFilterTest, checkScorer) {
     GeoFilter q;
     q.SetBoost(1.5f);
     q.mutable_options()->type = GeoFilterType::Intersects;
-    json::ParseRegion(json.value(), q.mutable_options()->shape);
+    irs::tests::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -1061,7 +1061,7 @@ TEST(GeoFilterTest, per_node_scorer_override) {
     })");
     auto q = std::make_unique<GeoFilter>();
     q->mutable_options()->type = GeoFilterType::Intersects;
-    json::ParseRegion(json.value(), q->mutable_options()->shape);
+    irs::tests::ParseRegion(json.value(), q->mutable_options()->shape);
     *q->mutable_field_id() = kGeo;
     q->mutable_options()->store_field_id = kGeo;
     return q;

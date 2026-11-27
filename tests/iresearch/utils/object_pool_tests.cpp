@@ -21,6 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <array>
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/object_pool.hpp>
@@ -1871,7 +1873,8 @@ TEST(concurrent_linked_list_test, concurrent_push) {
   }
 
   ASSERT_TRUE(results.front() == kThreads &&
-              irs::irstd::AllEqual(results.begin(), results.end()));
+              absl::c_adjacent_find(results, std::not_equal_to{}) ==
+                results.end());
 }
 
 TEST(concurrent_linked_list_test, concurrent_pop_push) {

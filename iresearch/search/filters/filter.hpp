@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 
@@ -53,9 +52,9 @@
 #include "iresearch/search/scorers/unscored.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/down_cast.hpp"
-#include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/parallel_for.hpp"
 #include "iresearch/utils/query_memory.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/tracked.hpp"
 
 namespace irs {

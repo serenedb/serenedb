@@ -36,7 +36,12 @@
 
 namespace irs::geo {
 
-using namespace coding;
+using coding::IsOptionsS2;
+using coding::Options;
+using coding::ToPoint;
+using coding::ToSize;
+using coding::ToTag;
+using coding::Type;
 
 namespace {
 
@@ -132,7 +137,7 @@ template<Parsing P>
 bool ParseShape(simdjson::ondemand::value json, ShapeContainer& region,
                 std::vector<S2LatLng>& cache, coding::Options options,
                 Encoder* encoder) {
-  SDB_ASSERT(encoder == nullptr || encoder->length() == 0);
+  SDB_ASSERT(!encoder || encoder->length() == 0);
 
   auto parse = [&] {
     if (json.type() == simdjson::ondemand::json_type::array) {

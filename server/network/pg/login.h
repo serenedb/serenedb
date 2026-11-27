@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,15 +20,27 @@
 
 #pragma once
 
-#include <span>
-#include <string>
-#include <vector>
+#include <string_view>
 
-namespace sdb::query {
+#include "network/pg/hba.h"
+#include "server/utils/asio_ns.h"
 
-inline constexpr std::string_view kColumnSeparator = ":";
+namespace sdb::network::pg {
 
-// column_name<separator>unique_id -> column_name
-std::string_view ToAlias(std::string_view name);
+struct LoginPeer {
+  asio_ns::ip::address address;
+  bool is_local = false;
+  bool is_ssl = false;
+};
 
-}  // namespace sdb::query
+hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
+                          std::string_view database);
+
+struct RoleLogin {
+  bool can_login = false;
+  bool password_expired = false;
+};
+
+RoleLogin ReadRoleLogin(std::string_view user);
+
+}  // namespace sdb::network::pg

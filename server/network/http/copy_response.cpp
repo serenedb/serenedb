@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,12 +18,37 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "query/utils.h"
+#include "network/http/copy_response.h"
 
-namespace sdb::query {
+namespace sdb::network::http {
 
-std::string_view ToAlias(std::string_view name) {
-  return name.substr(0, name.find_last_of(kColumnSeparator));
+size_t CopyResponse::Write(std::string_view bytes) {
+  if (_streaming) {
+    Send(bytes);
+  } else {
+    _buffer.append(bytes);
+    if (_buffer.size() > _held) {
+      _streaming = true;
+      _writer.WriteHeadChunked(HttpStatus::Ok, _content_type, _headers);
+      Send(_buffer);
+      _buffer = {};
+    }
+  }
+  return _writer.Committed();
 }
 
-}  // namespace sdb::query
+void CopyResponse::Send(std::string_view bytes) {
+  if (!_writer.Broken()) {
+    _writer.Write(bytes);
+  }
+}
+
+void CopyResponse::Finish() {
+  if (_streaming) {
+    _writer.Finish();
+  } else {
+    _writer.Fixed(HttpStatus::Ok, _content_type, _buffer, _headers);
+  }
+}
+
+}  // namespace sdb::network::http

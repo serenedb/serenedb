@@ -200,7 +200,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     const auto scanned = scanner.Scan(
       window, std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs_count - window),
       chunk, &rows, count);
-    chunk.SetCardinality(scanned);
+    chunk.SetChildCardinality(scanned);
     auto values = encoder.Encode(chunk, column_ids).Values<duckdb::string_t>();
     for (duckdb::idx_t row = 0; row != scanned; ++row) {
       if (const auto entry = values[row]; entry.IsValid()) {
@@ -849,7 +849,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
         }
       }
     }
-    absl::flat_hash_map<uint64_t, const irs::SubReader*> segments;
+    irs::containers::FlatHashMap<uint64_t, const irs::SubReader*> segments;
     for (const auto& segment : reader) {
       segments.emplace(
         irs::utils::downCast<irs::SegmentReader>(segment).GetImpl()->Id(),
@@ -892,7 +892,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
   if (absl::c_any_of(removal->groups, [&](const auto& group) {
         return flushed_rows(group.segment);
       })) {
-    absl::flat_hash_map<uint64_t, irs::DocumentMaskBuilder> mapped;
+    irs::containers::FlatHashMap<uint64_t, irs::DocumentMaskBuilder> mapped;
     for (const auto& group : removal->groups) {
       if (!flushed_rows(group.segment)) {
         mapped[group.segment].Merge(group.docs);

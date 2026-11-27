@@ -27,9 +27,6 @@
 
 namespace sdb::network::http::test {
 
-// Synthetic transport-test endpoints under /_test/ (echo, ping, bytes, fuzz,
-// status) used by functional + performance tests. Gated behind a flag; never
-// enabled in production; not part of any standard API.
 enum class Endpoint : uint8_t {
   Echo,
   Ping,
@@ -37,6 +34,7 @@ enum class Endpoint : uint8_t {
   Fuzz,
   Status,
   SessionUser,
+  Copy,
 };
 
 std::unique_ptr<HttpHandler> Make(Endpoint endpoint);

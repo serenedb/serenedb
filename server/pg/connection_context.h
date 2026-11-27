@@ -56,6 +56,7 @@ struct ExportRequest;
 namespace sdb::connector {
 
 struct EsBulkInput;
+class CopyOutput;
 
 }  // namespace sdb::connector
 namespace sdb::replication {
@@ -75,6 +76,7 @@ class CopyInBatches;
 struct LoginCheck {
   duckdb::idx_t role;
   bool superuser = false;
+  duckdb::vector<std::string> settings;
   irs::pg::SqlErrorData error;
 };
 
@@ -85,15 +87,16 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
 namespace sdb::network {
 
 class CancelRegistry;
-}
+class SendGate;
 
+}  // namespace sdb::network
 namespace sdb {
 
 using SideChannel =
   PointerUnion<pg::CopyInBatches, otel::ExportRequest<otel::LogRecord>,
                otel::ExportRequest<otel::Span>,
                otel::ExportRequest<otel::Metric>, connector::EsBulkInput,
-               replication::ReplBatch>;
+               replication::ReplBatch, connector::CopyOutput>;
 
 struct SessionIdentity {
   std::string_view user;
@@ -102,6 +105,7 @@ struct SessionIdentity {
   std::string_view database;
   duckdb::idx_t database_id = 0;
   message::Buffer* send_buffer = nullptr;
+  network::SendGate* send_gate = nullptr;
   int32_t backend_pid = 0;
   network::CancelRegistry* cancel_registry = nullptr;
   bool client_backend = false;
@@ -145,6 +149,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   void ResetIdentity() { SetSessionRole(_login_role_id); }
 
   auto* GetSendBuffer() const { return _send_buffer; }
+  auto* GetSendGate() const { return _send_gate; }
 
   template<typename T>
   void SetSideChannel(T* value) {
@@ -267,6 +272,8 @@ class ConnectionContext final : public duckdb::ClientContext {
       transaction->SearchTxn().CheckStatement(*this);
     }
   }
+  duckdb::optional_ptr<duckdb::CopyOutputGate> GetCopyOutputGate(
+    const std::string& file_path) final;
 
  private:
   struct NoticeNode {
@@ -294,10 +301,12 @@ class ConnectionContext final : public duckdb::ClientContext {
   const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
+  network::SendGate* const _send_gate;
   const duckdb::idx_t _login_role_id;
   duckdb::idx_t _session_role_id;
   duckdb::idx_t _effective_role_id;
   SideChannel _side_channel;
+  const bool _owns_temporary_objects;
   bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};
   std::shared_ptr<pg::ProgressSource> _progress;

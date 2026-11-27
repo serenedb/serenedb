@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,21 +20,37 @@
 
 #pragma once
 
-#include <cstdint>
-#include <duckdb/storage/storage_info.hpp>
+#include <cstddef>
+#include <string>
 #include <string_view>
+#include <utility>
 
-namespace duckdb {
+#include "connector/duckdb_copy_filesystem.h"
+#include "network/http/response_writer.h"
 
-inline std::string_view StorageVersionError(uint64_t version) {
-  if (version > static_cast<uint64_t>(SDB_VERSION_UPPER)) {
-    return "it was written by a newer release of SereneDB";
-  }
-  if (version < static_cast<uint64_t>(SDB_VERSION_LOWER)) {
-    return "it is older than this release of SereneDB reads; upgrade it "
-           "through an earlier release first";
-  }
-  return {};
-}
+namespace sdb::network::http {
 
-}  // namespace duckdb
+class CopyResponse final : public connector::CopyOutput {
+ public:
+  CopyResponse(HttpResponseWriter& writer, std::string_view content_type,
+               std::string headers, size_t held)
+    : _writer{writer},
+      _content_type{content_type},
+      _headers{std::move(headers)},
+      _held{held} {}
+
+  size_t Write(std::string_view bytes) final;
+  void Finish();
+
+ private:
+  void Send(std::string_view bytes);
+
+  HttpResponseWriter& _writer;
+  std::string_view _content_type;
+  std::string _headers;
+  size_t _held;
+  std::string _buffer;
+  bool _streaming = false;
+};
+
+}  // namespace sdb::network::http

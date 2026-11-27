@@ -42,7 +42,6 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/utils/dispatch.hpp"
-#include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"

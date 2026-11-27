@@ -47,6 +47,7 @@
 #include "network/gate.h"
 #include "network/io_context.h"
 #include "network/proxy_protocol.h"
+#include "network/send_gate.h"
 #include "network/socket.h"
 #include "server/utils/asio_ns.h"
 #include "server/utils/message_buffer.h"
@@ -65,15 +66,6 @@ inline constexpr size_t kReadBlock = 16 * 1024;
 // while 256K only gains wide results ~2% and costs narrow scans ~9% plus the
 // most memory.
 inline constexpr size_t kSendFlushSize = 64 * 1024;
-
-// Backpressure bound: the most encoded-but-unsent bytes one connection may
-// hold. The Direct sink / session producer pause while _send carries more than
-// this committed-but-unwritten; Parallel workers pause while more than this is
-// queued for the splice. Bounds per-connection serialize memory (and a slow
-// client's buffered bytes). Measured minimum that doesn't regress: Direct needs
-// ~4 flushes of run-ahead and plateaus at 256K (64K->256K is +21%, 256K->1M
-// only +1.6%); Parallel is flat. Must stay >= the flush.
-inline constexpr size_t kSendHighWater = 256 * 1024;
 
 // Wire-buffer chunk growth. Max (== the flush size, shared by recv and send) is
 // the doubling ceiling: the send buffer seals at the flush, so a chunk never
@@ -149,6 +141,16 @@ class Transport : public TransportBase {
   }
 
  protected:
+  void ReleaseWriters() {
+    if (!_send_gate.Blocked()) {
+      return;
+    }
+    ArmSendWaiter();
+    if (_send_gate.Release(SendBroken())) {
+      DisarmSendWaiter();
+    }
+  }
+
   // Kicks the send writer without waiting -- the hot path. Response bytes drain
   // to the socket concurrently with whatever the session does next.
   void KickSend() {
@@ -380,6 +382,7 @@ class Transport : public TransportBase {
   Gate _producer_gate;
 
   const duckdb::shared_ptr<CpuResumer> _task;
+  SendGate _send_gate{_send_written, *_task};
   bool _handed_off = false;
   std::optional<std::string> _proxy_client;
 

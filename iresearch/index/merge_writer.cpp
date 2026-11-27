@@ -25,7 +25,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
 #include <bit>
@@ -61,6 +60,8 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/misc.hpp"
@@ -86,7 +87,7 @@ struct MergedField {
   std::array<MergedMember, kDictMembers> members;
 };
 
-using FieldMetaMapT = absl::flat_hash_map<field_id, MergedField>;
+using FieldMetaMapT = containers::NodeHashMap<field_id, MergedField>;
 
 struct DictKey {
   field_id id;
@@ -706,7 +707,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
   return out_id;
 }
 
-using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
+using MergedNormIdMap = containers::FlatHashMap<field_id, field_id>;
 
 MergedNormIdMap MergeNorms(ColWriter& col_writer,
                            std::span<const MergeSource> sources,

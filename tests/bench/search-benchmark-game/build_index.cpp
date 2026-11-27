@@ -20,13 +20,14 @@
 
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_format.h>
+#include <absl/time/clock.h>
 #include <unistd.h>
 
 #include <cstdio>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/remap_executable.hpp>
-#include <iresearch/utils/timer_utils.hpp>
 #include <thread>
 
 #include "executor.h"
@@ -50,26 +51,11 @@ int main(int argc, const char* argv[]) {
   irs::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
-    irs::timer_utils::InitStats(true);
-    irs::Finally output_stats = [] noexcept {
-      std::vector<std::tuple<std::string, size_t, size_t>> output;
-      irs::timer_utils::Visit(
-        [&](const std::string& key, size_t count, size_t time_us) -> bool {
-          if (count == 0) {
-            return true;
-          }
-          output.emplace_back(key, count, time_us);
-          return true;
-        });
-      std::sort(output.begin(), output.end());
-      for (auto& [key, count, time_us] : output) {
-        absl::PrintF("%s calls:%d, time: %d us, avg call: %g us\n", key, count,
-                     time_us,
-                     static_cast<double>(time_us) / static_cast<double>(count));
-      }
+    const auto start = absl::Now();
+    irs::Finally output_time = [start] noexcept {
+      absl::PrintF("Total indexing time: %d us\n",
+                   absl::ToInt64Microseconds(absl::Now() - start));
     };
-
-    SCOPED_TIMER("Total indexing time");
 
     struct IndexText : bench::IBatchHandler {
       bench::Document doc;

@@ -56,8 +56,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
   void CommitTransaction(tests::IndexWriter::Transaction& trx) { trx.Commit(); }
 
  public:
-  IndexProfileTestCase() { irs::timer_utils::InitStats(true); }
-
   void ProfileBulkIndex(size_t num_insert_threads, size_t num_update_threads,
                         size_t batch_size,
                         tests::IndexWriter::ptr writer = nullptr,
@@ -87,8 +85,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
         fields[idx]->value(value);
       }
     };
-
-    irs::timer_utils::InitStats(true);
 
     std::atomic<size_t> parsed_docs_count(0);
     std::atomic<size_t> update_docs_count(0);
@@ -142,7 +138,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
             gen_skip = thread_count - 1;
 
             {
-              REGISTER_TIMER_NAMED_DETAILED("parse");
               csv_doc_template.init();
 
               if (!gen.next()) {
@@ -153,7 +148,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
             ++parsed_docs_count;
 
             {
-              REGISTER_TIMER_NAMED_DETAILED("load");
               auto ctx = writer->GetBatch();
               {
                 auto d = ctx.Insert();
@@ -174,7 +168,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               }
 
               {
-                REGISTER_TIMER_NAMED_DETAILED("commit");
                 writer->RefreshCommit();
               }
 
@@ -185,7 +178,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
           {
             std::unique_lock commit_lock{_commit_mutex};
-            REGISTER_TIMER_NAMED_DETAILED("commit");
             writer->RefreshCommit();
           }
 
@@ -234,7 +226,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
             doc_skip = update_skip;
 
             {
-              REGISTER_TIMER_NAMED_DETAILED("parse");
               csv_doc_template.init();
 
               if (!gen.next()) {
@@ -266,7 +257,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                 csv_doc_template.insert(std::move(f));
               }
 
-              REGISTER_TIMER_NAMED_DETAILED("update");
               {
                 auto ctx = writer->GetBatch();
                 ctx.Remove(std::move(removal));
@@ -293,7 +283,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               }
 
               {
-                REGISTER_TIMER_NAMED_DETAILED("commit");
                 writer->RefreshCommit();
               }
 
@@ -304,7 +293,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
           {
             std::unique_lock commit_lock{_commit_mutex};
-            REGISTER_TIMER_NAMED_DETAILED("commit");
             writer->RefreshCommit();
           }
 
@@ -321,19 +309,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       writer->RefreshCommit();
       EXPECT_FALSE(writer->RefreshCommit());
     }
-
-    auto path = test_dir();
-
-    path /= "profile_bulk_index.log";
-
-    std::ofstream out(path.native());
-
-    irs::timer_utils::FlushStats(out);
-
-    out.close();
-
-    path = std::filesystem::absolute(path);
-    std::cout << "Path to timing log: " << path.string() << std::endl;
 
     auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     // not all commits might produce a new segment,
@@ -406,7 +381,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           while (working.load()) {
             {
               std::unique_lock commit_lock{_commit_mutex};
-              REGISTER_TIMER_NAMED_DETAILED("commit");
               writer->RefreshCommit();
             }
             ++writer_commit_count;

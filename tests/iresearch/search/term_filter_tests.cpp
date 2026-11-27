@@ -480,9 +480,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       while (!irs::doc_limits::eof(docs->Next())) {
         docs->FetchScoreArgs(0);
         fetcher.Fetch(docs->Value());
-        irs::score_t score_value{};
+        [[maybe_unused]] irs::score_t score_value{};
         score.Score(&score_value, 1);
-        IRS_IGNORE(score_value);
         ASSERT_EQ(1, expected.erase(docs->Value()));
       }
 

@@ -47,7 +47,7 @@ struct Chain {
 
   ~Chain() {
     auto* chunk = head;
-    while (chunk != nullptr) {
+    while (chunk) {
       delete std::exchange(chunk, chunk->Next());
     }
   }
@@ -66,10 +66,10 @@ struct Chain {
   }
 
   void Append(Chain&& other) {
-    if (other.head == nullptr) {
+    if (!other.head) {
       return;
     }
-    if (head == nullptr) {
+    if (!head) {
       *this = std::move(other);
       return;
     }
@@ -121,9 +121,8 @@ class Buffer {
   void CommitWrite(size_t size);
   bool Readable() noexcept {
     RefreshReadable();
-    return _consumed.chunk != nullptr &&
-           !(_head == _consumed.chunk &&
-             _head->GetBegin() == _consumed.in_chunk);
+    return _consumed.chunk && !(_head == _consumed.chunk &&
+                                _head->GetBegin() == _consumed.in_chunk);
   }
   std::string_view Front() noexcept;
   void Consume(size_t size);

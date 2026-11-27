@@ -1,4 +1,1 @@
-target_sources(
-    sereneserver
-    PRIVATE server_engine.cpp utils.cpp config_variables.cpp
-)
+target_sources(sereneserver PRIVATE server_engine.cpp config_variables.cpp)

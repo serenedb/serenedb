@@ -92,7 +92,7 @@ void WriteFooterImpl(duckdb::BufferedFileWriter& out,
   serializer.Begin();
   serializer.WritePropertyWithDefault<uint32_t>(kFieldDataCrc32c, "data_crc32c",
                                                 data_crc32c, 0);
-  if (write != nullptr) {
+  if (write) {
     serializer.WriteObject(kFieldMeta, "meta",
                            [&](duckdb::BinarySerializer& meta) {
                              SDB_IF_FAILURE("irs::FooterMetaUnpacked") {
@@ -153,7 +153,7 @@ Footer ReadFooterImpl(const duckdb::InputFile& file, std::string_view name,
     footer.data_expected_crc32c =
       deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
                                                              "data_crc32c", 0);
-    if (read != nullptr) {
+    if (read) {
       deserializer.ReadObject(kFieldMeta, "meta",
                               [&](duckdb::BinaryDeserializer& meta) {
                                 ReadMeta(meta, stream, *read, footer.data_len);

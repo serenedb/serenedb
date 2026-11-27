@@ -266,6 +266,37 @@ def test_query_of_a_vanished_client_ends(conn):
         time.sleep(0.2)
 
 
+@pytest.mark.parametrize("leave", ["close", "half-close", "reset"])
+def test_a_query_that_writes_nothing_ends_with_its_client(conn, leave):
+    marker = f"-- quiet {leave}"
+    victim = WireConn()
+    victim.send("Q", _cstr(
+        f"SELECT sum(i) FROM range(9000000000000000000) t(i) {marker}"))
+    probe = (
+        "SELECT count(*) FROM pg_stat_activity WHERE state = 'active' "
+        f"AND query LIKE '%{marker}' AND pid <> pg_backend_pid()"
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while first_field(conn.run_ok(probe)) == b"0":
+            assert time.monotonic() < deadline, "the query never started"
+            time.sleep(0.05)
+        left = time.monotonic()
+        if leave == "half-close":
+            victim.sock.shutdown(socket.SHUT_WR)
+        elif leave == "reset":
+            victim.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                   struct.pack("ii", 1, 0))
+            victim.sock.close()
+        else:
+            victim.sock.close()
+        while first_field(conn.run_ok(probe)) != b"0":
+            assert time.monotonic() - left < 10, "the query outlived its client"
+            time.sleep(0.01)
+    finally:
+        victim.sock.close()
+
+
 def test_startup_rejects_missing_user():
     # PG requires a user name in the startup packet (SQLSTATE 28000); without it
     # the server must not silently fall back to a default user.
@@ -298,7 +329,7 @@ def test_startup_rejects_missing_user():
         sock.close()
 
 
-def _startup_collect(extra_params: dict[str, str]):
+def _startup_collect(extra_params: dict[str, str], user: str | None = None):
     """Open a raw trust connection with extra startup params; collect every
     message from AuthenticationOk through the terminating ReadyForQuery (or an
     ErrorResponse if the connection is refused)."""
@@ -314,7 +345,12 @@ def _startup_collect(extra_params: dict[str, str]):
             buf += chunk
         return buf
 
-    params = _cstr("user") + _cstr(kw["user"]) + _cstr("database") + _cstr(kw["dbname"])
+    params = (
+        _cstr("user")
+        + _cstr(user or kw["user"])
+        + _cstr("database")
+        + _cstr(kw["dbname"])
+    )
     for k, v in extra_params.items():
         params += _cstr(k) + _cstr(v)
     params += b"\0"
@@ -348,6 +384,24 @@ def test_startup_non_utf8_client_encoding_accepted_with_warning():
     assert len(warns) == 1, notices(m)
     assert warns[0].get("S") == "WARNING" and warns[0].get("C") == "01000", warns
     assert "LATIN1" in warns[0]["M"] and "UTF8" in warns[0]["M"], warns
+
+
+def test_startup_refused_role_setting_is_a_warning(conn):
+    login = "drv_refused_role_setting"
+    conn.run_ok(f"DROP ROLE IF EXISTS {login}")
+    conn.run_ok(f"CREATE ROLE {login} LOGIN")
+    try:
+        conn.run_ok(f"ALTER ROLE {login} SET statement_timeout = 'nan'")
+        conn.run_ok(f"ALTER ROLE {login} SET application_name = 'stored'")
+        m = _startup_collect({}, user=login)
+        assert "Z" in types(m) and "E" not in types(m), errors(m)
+        status = dict(param_status(m))
+        assert status.get("application_name") == "stored", status
+        warns = notices(m)
+        assert [(n.get("S"), n.get("C")) for n in warns] == [("WARNING", "01000")], warns
+        assert "statement_timeout" in warns[0]["M"], warns
+    finally:
+        conn.run_ok(f"DROP ROLE {login}")
 
 
 def test_startup_options_apply_settings():
@@ -457,6 +511,50 @@ def test_execute_in_a_named_statement_runs_the_statement_as_it_is_now(conn):
     assert executions("named_exec_now") == b"2"
     conn.run_ok("DEALLOCATE ALL")
     conn.run_ok("DROP TABLE named_exec_kv")
+
+
+def test_untyped_parameters_keep_their_numeric_value(conn):
+    conn.run_ok("DROP TABLE IF EXISTS untyped_price")
+    conn.run_ok("CREATE TABLE untyped_price (price NUMERIC(5,2))")
+    conn.run_ok("INSERT INTO untyped_price VALUES (100.00)")
+    assert all_fields(_run_with(
+        conn, "SELECT price * $1 = 15 FROM untyped_price", (b"0.15",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price + $1 = 1100.255 FROM untyped_price",
+        (b"1000.255",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT 1.5 + $1 = 1001.75", (b"1000.25",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT $1 * price = 15 FROM untyped_price", (b"0.15",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price - $1 = 99.001 FROM untyped_price",
+        (b"0.999",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price % $1 = 0.1 FROM untyped_price", (b"0.3",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT mod(price, $1) = 0.1 FROM untyped_price",
+        (b"0.3",))) == [b"t"]
+    _run_with(conn, "UPDATE untyped_price SET price = price * $1", (b"1.10",))
+    assert first_field(conn.run_ok("SELECT price FROM untyped_price")) == b"110.00"
+    conn.run_ok("DROP TABLE untyped_price")
+
+
+def test_untyped_parameters_compared_with_a_column_take_its_type(conn):
+    conn.run_ok("DROP TABLE IF EXISTS untyped_scale")
+    conn.run_ok("CREATE TABLE untyped_scale (price NUMERIC(5,2))")
+    conn.run_ok("INSERT INTO untyped_scale VALUES (100.00)")
+    assert all_fields(_run_with(
+        conn, "SELECT price = $1 FROM untyped_scale", (b"100.001",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price = ANY($1) FROM untyped_scale",
+        (b"{100.001}",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price <> ALL($1) FROM untyped_scale",
+        (b"{100.001}",))) == [b"f"]
+    assert all_fields(_run_with(
+        conn, "SELECT price = $1::numeric FROM untyped_scale",
+        (b"100.001",))) == [b"f"]
+    conn.run_ok("DROP TABLE untyped_scale")
 
 
 def test_empty_query_extended(conn):
@@ -939,6 +1037,42 @@ def test_parse_param_oid_unknown_is_inferred(conn):
     m = conn.drain_to_ready()
     assert "E" not in types(m), errors(m)
     assert first_field(m) == b"42"
+
+
+def test_parse_skipped_parameter_number_needs_a_declared_type(conn):
+    conn.parse("", "select $2::int4")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["42P18"], errors(m)
+    assert errors(m)[0]["M"] == "could not determine data type of parameter $1"
+    conn.parse("", "select $3::int4", oids=(25,))
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["42P18"], errors(m)
+    assert errors(m)[0]["M"] == "could not determine data type of parameter $2"
+    conn.parse("", "select $2::int4", oids=(25,))
+    conn.describe("S", "")
+    conn.bind("", "", params=(b"unused", b"7"))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert parameter_types(m) == [25, 23], parameter_types(m)
+    assert first_field(m) == b"7"
+
+
+def test_parse_with_an_unknown_type_oid_does_not_define_the_name(conn):
+    conn.parse("raw_bad_oid", "select $1", oids=(1000000000,))
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["XX000"], errors(m)
+    conn.parse("raw_bad_oid", "select $1::int4")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    conn.send("C", b"S" + _cstr("raw_bad_oid"))
+    conn.sync()
+    conn.drain_to_ready()
 
 
 @pytest.mark.parametrize(

@@ -34,7 +34,6 @@
 #include <iresearch/formats/ivf/quantizers/common.hpp>
 #include <iresearch/index/vector_distance.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
-#include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>

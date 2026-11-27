@@ -138,9 +138,8 @@ struct SubReader : public IndexReader, public NormProvider {
 
   uint64_t docs_count() const final { return Meta().docs_count; }
 
-  const SubReader& operator[](size_t i) const noexcept final {
+  const SubReader& operator[]([[maybe_unused]] size_t i) const noexcept final {
     SDB_ASSERT(i == 0);
-    IRS_IGNORE(i);
     return *this;
   }
 

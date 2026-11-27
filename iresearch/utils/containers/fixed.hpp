@@ -264,7 +264,7 @@ class Fixed<T, 0> {
   }
 
   void Release() noexcept {
-    if (_data == nullptr) {
+    if (!_data) {
       return;
     }
     std::destroy_n(_data, _size);

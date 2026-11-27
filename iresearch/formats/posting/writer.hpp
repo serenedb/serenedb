@@ -186,7 +186,7 @@ class PostingsWriter final {
 
   explicit PostingsWriter(LocalBudget& budget)
     : _index{budget},
-      _docs{TrackedAllocator<size_t>{budget}},
+      _docs_charge{budget, 0},
       _pos_group{budget},
       _pay_group{budget},
       _term_docs{TrackedAllocator<doc_id_t>{budget}} {}
@@ -286,7 +286,8 @@ class PostingsWriter final {
   BlockIndexWriter _index;
   PostingMeta _last_state;  // Last final term state
   // Set of all processed documents
-  DynamicBitset<TrackedAllocator<size_t>> _docs;
+  bitset _docs;
+  MemoryCharge _docs_charge;
   size_t _docs_first_word = std::numeric_limits<size_t>::max();
   size_t _docs_end_word = 0;
   FileTracker* _tracker = nullptr;
@@ -383,6 +384,7 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
 
   // Prepare documents bitset
   _docs.reset(doc_limits::min() + state.doc_count);
+  _docs_charge.Resize(_docs.capacity() / BitsRequired<byte_type>());
   ForgetDocs();
 }
 

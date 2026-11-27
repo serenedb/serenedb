@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <util/utf.h>
 
 #include <algorithm>
 #include <optional>
@@ -618,8 +619,10 @@ struct ParserContext {
         continue;
       }
       i += 4;
-      irs::byte_type utf8[irs::utf8_utils::kMaxCharSize];
-      out.append(utf8, irs::utf8_utils::FromChar32(code, utf8));
+      const re2::Rune rune = code;
+      char utf8[re2::UTFmax];
+      out.append(reinterpret_cast<const irs::byte_type*>(utf8),
+                 re2::runetochar(utf8, &rune));
     }
     return out;
   }

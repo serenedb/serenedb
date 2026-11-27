@@ -472,7 +472,7 @@ IRS_FORCE_INLINE duckdb::idx_t ColFilterChain::EvaluateRow(Row& row,
       writer.WriteValue(row.leaves[l].Contains(doc_of(k)));
     }
   }
-  chunk.SetCardinality(count);
+  chunk.SetChildCardinality(count);
   auto& executor = *row.state->Cast<duckdb::ExpressionFilterState>().executor;
   return executor.SelectExpression(chunk, _row_sel);
 }

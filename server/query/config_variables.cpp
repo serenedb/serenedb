@@ -210,14 +210,17 @@ void SegmentMemoryMax(duckdb::ClientContext& context, duckdb::SetScope scope,
   }
 }
 
+constexpr uint64_t kMaxStackTraceTimeout = 10000;
+
 void StackTraceTimeout(duckdb::ClientContext& context, duckdb::SetScope scope,
                        duckdb::Value& value) {
   RejectZero<"sdb_stack_trace_timeout">(context, scope, value);
-  if (value.GetValue<uint64_t>() > 10000) {
+  if (value.GetValue<uint64_t>() > kMaxStackTraceTimeout) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("invalid value for parameter \"sdb_stack_trace_timeout\": \"",
-              value.ToString(), "\": it must be at most 10000"));
+              value.ToString(), "\": it must be at most ",
+              kMaxStackTraceTimeout));
   }
 }
 

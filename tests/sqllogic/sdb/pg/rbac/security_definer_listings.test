@@ -56,12 +56,12 @@ SET ROLE sdbl_owner;
 
 statement ok
 CREATE FUNCTION sdbl_s.listed_tables() RETURNS text LANGUAGE sql SECURITY DEFINER
-AS 'SELECT string_agg(table_name, '','' ORDER BY table_name) FROM sdb_tables() WHERE table_name IN (''sdbl_hidden'', ''sdbl_shown'')';
+AS 'SELECT string_agg(table_name, '','' ORDER BY table_name) FROM information_schema.tables WHERE table_name IN (''sdbl_hidden'', ''sdbl_shown'')';
 
 
 statement ok
 CREATE FUNCTION sdbl_s.listed_columns() RETURNS text LANGUAGE sql SECURITY DEFINER
-AS 'SELECT string_agg(column_name, '','' ORDER BY column_name) FROM sdb_columns() WHERE table_name IN (''sdbl_hidden'', ''sdbl_shown'')';
+AS 'SELECT string_agg(column_name, '','' ORDER BY column_name) FROM information_schema.columns WHERE table_name IN (''sdbl_hidden'', ''sdbl_shown'')';
 
 
 statement ok
@@ -70,10 +70,17 @@ RESET ROLE;
 
 connection c_caller user=sdbl_caller password=sdbl_pw
 query
-SELECT string_agg(table_name, ',' ORDER BY table_name) AS listed FROM sdb_tables() WHERE table_name IN ('sdbl_hidden', 'sdbl_shown');
+SELECT string_agg(table_name, ',' ORDER BY table_name) AS listed FROM information_schema.tables WHERE table_name IN ('sdbl_hidden', 'sdbl_shown');
 ----
 listed
 sdbl_hidden
+
+
+connection c_caller user=sdbl_caller password=sdbl_pw
+statement error
+SELECT count(*) FROM sdb_tables();
+----
+db error: ERROR: permission denied for function sdb_tables
 
 
 connection c_caller user=sdbl_caller password=sdbl_pw

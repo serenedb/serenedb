@@ -74,10 +74,17 @@ db error: ERROR: permission denied for function postgres_query
 
 connection c_ved user=esf_vedernikoff password=esf_pw
 query
-SELECT count(DISTINCT function_name) AS listed FROM sdb_functions() WHERE function_name IN ('postgres_query', 'sdb_secrets', 'which_secret');
+SELECT count(DISTINCT proname) AS listed FROM pg_proc WHERE proname IN ('postgres_query', 'sdb_secrets', 'which_secret');
 ----
 listed
 3
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM sdb_functions();
+----
+db error: ERROR: permission denied for function sdb_functions
 
 
 query

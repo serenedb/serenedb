@@ -37,14 +37,6 @@ INSERT INTO eaw_side_${__DATABASE__}.main.eaw_t VALUES (2);
 db error: ERROR: Table with name "eaw_side_<slt:ignore>.main.eaw_t" does not exist because schema "eaw_side_<slt:ignore>.main" does not exist.
 
 
-connection c_eaw user=eaw_reader password=eaw_pw
-query
-SELECT count(*) AS listed FROM sdb_tables() WHERE table_name = 'eaw_t';
-----
-listed
-0
-
-
 statement ok
 DETACH eaw_side_${__DATABASE__};
 

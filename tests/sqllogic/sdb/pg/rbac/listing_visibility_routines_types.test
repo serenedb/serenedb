@@ -32,9 +32,9 @@ REVOKE USAGE ON TYPE lvrt_ty FROM PUBLIC;
 
 connection c_user user=lvrt_user password=lvrt_pw
 query
-SELECT (SELECT count(*) FROM sdb_functions() WHERE function_name = 'lvrt_f') AS functions,
-       (SELECT count(*) FROM sdb_types() WHERE type_name = 'lvrt_ty') AS types,
-       (SELECT count(*) > 0 FROM sdb_functions() WHERE function_name = 'sum') AS aggregates;
+SELECT (SELECT count(*) FROM pg_proc WHERE proname = 'lvrt_f') AS functions,
+       (SELECT count(*) FROM pg_type WHERE typname = 'lvrt_ty') AS types,
+       (SELECT count(*) > 0 FROM pg_proc WHERE proname = 'sum') AS aggregates;
 ----
 functions	types	aggregates
 0	0	t
@@ -50,8 +50,8 @@ GRANT USAGE ON TYPE lvrt_ty TO lvrt_user;
 
 connection c_user user=lvrt_user password=lvrt_pw
 query
-SELECT (SELECT count(*) FROM sdb_functions() WHERE function_name = 'lvrt_f') AS functions,
-       (SELECT count(*) FROM sdb_types() WHERE type_name = 'lvrt_ty') AS types;
+SELECT (SELECT count(*) FROM pg_proc WHERE proname = 'lvrt_f') AS functions,
+       (SELECT count(*) FROM pg_type WHERE typname = 'lvrt_ty') AS types;
 ----
 functions	types
 2	1
@@ -67,7 +67,7 @@ CREATE INDEX lvrt_idx ON lvrt_t (a);
 
 connection c_user user=lvrt_user password=lvrt_pw
 query
-SELECT count(*) AS indexes FROM sdb_indexes() WHERE index_name = 'lvrt_idx';
+SELECT count(*) AS indexes FROM pg_indexes WHERE indexname = 'lvrt_idx';
 ----
 indexes
 0
@@ -79,7 +79,7 @@ GRANT SELECT ON lvrt_t TO lvrt_user;
 
 connection c_user user=lvrt_user password=lvrt_pw
 query
-SELECT count(*) AS indexes FROM sdb_indexes() WHERE index_name = 'lvrt_idx';
+SELECT count(*) AS indexes FROM pg_indexes WHERE indexname = 'lvrt_idx';
 ----
 indexes
 1

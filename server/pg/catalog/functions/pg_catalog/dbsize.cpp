@@ -240,7 +240,7 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
   auto& context = state.GetContext();
-  const auto role = CallerAccess(state);
+  const auto role = duckdb::CallerAccess(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
       const auto entry = DatabaseEntry(context, key);
@@ -574,10 +574,10 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
                  {duckdb::ScalarFunction{
                    {regclass}, int8, RelationBytesFunction<false, true>}});
   duckdb::ScalarFunction database_by_name{
-    {text}, int8, DatabaseSizeFunction<duckdb::string_t>, BindCaller};
+    {text}, int8, DatabaseSizeFunction<duckdb::string_t>};
   database_by_name.SetFallible();
   duckdb::ScalarFunction database_by_oid{
-    {int8}, int8, DatabaseSizeFunction<int64_t>, BindCaller};
+    {int8}, int8, DatabaseSizeFunction<int64_t>};
   database_by_oid.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_database_size", stability, nullptr,
                  {database_by_name, database_by_oid});

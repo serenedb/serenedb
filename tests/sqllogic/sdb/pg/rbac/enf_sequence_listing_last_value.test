@@ -30,9 +30,9 @@ SET ROLE esllv_vedernikoff;
 
 
 query
-SELECT sequence_name, last_value FROM sdb_sequences() WHERE sequence_name = 'esllv_ledger_seq';
+SELECT sequencename, last_value FROM pg_sequences WHERE sequencename = 'esllv_ledger_seq';
 ----
-sequence_name	last_value
+sequencename	last_value
 esllv_ledger_seq	NULL
 
 
@@ -49,9 +49,9 @@ SET ROLE esllv_vedernikoff;
 
 
 query
-SELECT sequence_name, last_value FROM sdb_sequences() WHERE sequence_name = 'esllv_ledger_seq';
+SELECT sequencename, last_value FROM pg_sequences WHERE sequencename = 'esllv_ledger_seq';
 ----
-sequence_name	last_value
+sequencename	last_value
 esllv_ledger_seq	1
 
 

@@ -36,7 +36,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
-#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -1175,10 +1174,10 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  loader.RegisterFunction(duckdb::ScalarFunction(
-    duckdb::Identifier{kTSQueryMatch},
-    {duckdb::LogicalType::ANY, MakeTSQueryType()}, duckdb::LogicalType::BOOLEAN,
-    TSQueryStubFn, BindTSQueryMatch));
+  loader.RegisterFunction(
+    duckdb::ScalarFunction(duckdb::Identifier{kTSQueryMatch},
+                           {duckdb::LogicalType::ANY, MakeTSQueryType()},
+                           duckdb::LogicalType::BOOLEAN, TSQueryStubFn));
 }
 
 // Stub registrations for sugar predicates -- the filter builder
@@ -1267,13 +1266,6 @@ void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
 // scorer into bind_data -- the stub fires only if a call escapes the rule.
 
 }  // namespace
-
-duckdb::unique_ptr<duckdb::FunctionData> BindTSQueryMatch(
-  duckdb::BindScalarFunctionInput& input) {
-  return duckdb::make_uniq<TSQueryMatchBindData>(
-    input.HasBinder() ? input.GetBinder().CallerRole()
-                      : duckdb::optional_idx{});
-}
 
 duckdb::LogicalType MakeTSQueryType() {
   return MakeTSQueryStructType(kTSQueryTypeName);

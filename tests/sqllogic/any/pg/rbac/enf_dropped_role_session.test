@@ -152,7 +152,7 @@ DETAIL: Only roles with privileges of the "pg_read_server_files" role may read s
 skipif postgres
 connection c_eds user=eds_gone password=eds_pw
 query
-SELECT count(*) AS listed FROM sdb_tables() WHERE table_name = 'eds_secret';
+SELECT count(*) AS listed FROM pg_tables WHERE tablename = 'eds_secret';
 ----
 listed
 0

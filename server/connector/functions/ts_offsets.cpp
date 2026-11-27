@@ -322,8 +322,8 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::BoundScalarFunction bound_at_at(at_at);
   bound_at_at.SetName(duckdb::Identifier{kTSQueryMatch});
   auto match_expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    std::move(bound_at_at), std::move(at_at_children),
-    duckdb::make_uniq<TSQueryMatchBindData>(caller_role));
+    std::move(bound_at_at), std::move(at_at_children), nullptr);
+  match_expr->BoundRoleMutable() = caller_role;
 
   auto column_getter = [column_id, dict_tokenizer,
                         &context](const duckdb::BoundColumnRefExpression& ref)

@@ -53,12 +53,12 @@ SequenceProgress ProgressOf(const duckdb::SequenceData& data) {
   return {.last_value = data.counter, .is_called = false};
 }
 
-const duckdb::SequenceCatalogEntry* ReadableSequence(
-  const Session& session, const duckdb::RoleAccess& role, int64_t oid,
-  AclMode modes) {
+const duckdb::SequenceCatalogEntry* ReadableSequence(const Session& session,
+                                                     int64_t oid,
+                                                     AclMode modes) {
   const auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
   if (!entry || entry->type != CatalogType::SEQUENCE_ENTRY ||
-      !duckdb::AllowedAny(role, *entry, modes)) {
+      !duckdb::AllowedAny(session.role, *entry, modes)) {
     return nullptr;
   }
   return &entry->Cast<duckdb::SequenceCatalogEntry>();
@@ -68,7 +68,6 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
                                  duckdb::ExpressionState& state,
                                  duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto role = CallerAccess(state);
   const auto oids = args.data[0].Values<int64_t>();
   auto writer = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {
@@ -88,7 +87,8 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a sequence"));
     }
-    if (!duckdb::AllowedAny(role, *entry, AclMode::Select | AclMode::Usage)) {
+    if (!duckdb::AllowedAny(session.role, *entry,
+                            AclMode::Select | AclMode::Usage)) {
       writer.WriteNull();
       continue;
     }
@@ -106,7 +106,6 @@ void PgGetSequenceDataFunction(duckdb::DataChunk& args,
                                duckdb::ExpressionState& state,
                                duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto role = CallerAccess(state);
   const auto oids = args.data[0].Values<int64_t>();
   auto writer =
     duckdb::FlatVector::Writer<duckdb::VectorStructType<int64_t, bool>>(
@@ -118,7 +117,7 @@ void PgGetSequenceDataFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto* sequence =
-      ReadableSequence(session, role, oid.GetValue(), AclMode::Select);
+      ReadableSequence(session, oid.GetValue(), AclMode::Select);
     writer.WriteValue([&](auto& last_value, auto& is_called) {
       if (!sequence) {
         last_value.WriteNull();
@@ -136,7 +135,6 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState& state,
                                   duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto role = CallerAccess(state);
   const auto oids = args.data[0].Values<int64_t>();
   auto writer = duckdb::FlatVector::Writer<duckdb::VectorStructType<
     int64_t, int64_t, int64_t, int64_t, bool, int64_t, int64_t>>(result,
@@ -156,7 +154,7 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
     }
     const auto type =
       relation->entry ? relation->entry->type : CatalogType::TABLE_ENTRY;
-    if (!HasPrivilege(role, type, *relation->permissions,
+    if (!HasPrivilege(session.role, type, *relation->permissions,
                       AclMode::Select | AclMode::Update | AclMode::Usage,
                       AclMode::NoRights)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -211,7 +209,7 @@ void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("lastval is not yet defined in this session"));
   }
-  if (!duckdb::AllowedAny(CallerAccess(state), *entry,
+  if (!duckdb::AllowedAny(SessionOf(state).role, *entry,
                           AclMode::Select | AclMode::Usage)) {
     duckdb::ThrowPermissionDenied(*entry);
   }

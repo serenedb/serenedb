@@ -889,7 +889,7 @@ class ObjectAcls final : public duckdb::FunctionLocalState {
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitObjectAcls(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData*) {
-  return duckdb::make_uniq<ObjectAcls>(state.GetContext(), CallerRole(expr));
+  return duckdb::make_uniq<ObjectAcls>(state.GetContext(), expr.BoundRole());
 }
 
 void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -996,7 +996,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
  public:
   PrivilegeCheck(duckdb::ClientContext& context,
                  const duckdb::BoundFunctionExpression& expr)
-    : _session{MakeSession(&context, CallerRole(expr))},
+    : _session{MakeSession(&context, expr.BoundRole())},
       _roles{catalog::RolesOf(&context)},
       _kind{
         expr.Function().GetExtraFunctionInfo().Cast<PrivilegeKindInfo>().kind} {
@@ -1260,7 +1260,7 @@ void RegisterPrivilegeFunctions(
       duckdb::ScalarFunction function{std::move(arguments),
                                       duckdb::LogicalType::BOOLEAN,
                                       ExecutePrivilegeCheck,
-                                      BindCaller,
+                                      nullptr,
                                       nullptr,
                                       InitPrivilegeCheck};
       function.SetExtraFunctionInfo(info);
@@ -1321,8 +1321,7 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, InitObjectAcls,
     {duckdb::ScalarFunction{{OID(), OID(), duckdb::LogicalType::INTEGER},
                             duckdb::LogicalType::LIST(ACLITEM()),
-                            PgGetAclFunction,
-                            BindCaller}});
+                            PgGetAclFunction}});
 }
 
 }  // namespace sdb::pg

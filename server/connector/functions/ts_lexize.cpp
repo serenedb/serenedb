@@ -25,6 +25,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
@@ -32,7 +33,6 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
-#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -89,7 +89,6 @@ catalog::Tokenizer::TokenizerWrapper AcquireTextTokenizer(
 
 struct DynamicCtx {
   duckdb::idx_t db_id;
-  duckdb::optional_idx caller_role;
 
   bool operator==(const DynamicCtx& rhs) const = default;
 };
@@ -120,17 +119,11 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
   return local;
 }
 
-const TsLexizeBindData& GetBindData(duckdb::ExpressionState& state) {
+[[maybe_unused]] const TsLexizeBindData& GetBindData(
+  duckdb::ExpressionState& state) {
   return state.expr.Cast<duckdb::BoundFunctionExpression>()
     .BindInfo()
     ->Cast<TsLexizeBindData>();
-}
-
-duckdb::RoleAccess CallerOf(duckdb::ExpressionState& state) {
-  const auto& bind = GetBindData(state);
-  SDB_ASSERT(std::holds_alternative<DynamicCtx>(bind.state));
-  return state.GetContext().CallerAccess(
-    std::get<DynamicCtx>(bind.state).caller_role);
 }
 
 template<duckdb::idx_t ValueArg>
@@ -188,7 +181,8 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
   const auto count = static_cast<uint32_t>(args.size());
-  const auto role = CallerOf(state);
+  SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
+  const auto role = duckdb::CallerAccess(state);
   duckdb::UnifiedVectorFormat dicts;
   args.data[0].ToUnifiedFormat(dicts);
   duckdb::UnifiedVectorFormat texts;
@@ -222,7 +216,8 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
                                   duckdb::ExpressionState& state,
                                   duckdb::Vector& result) {
   const auto count = static_cast<uint32_t>(args.size());
-  const auto role = CallerOf(state);
+  SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
+  const auto role = duckdb::CallerAccess(state);
   duckdb::UnifiedVectorFormat dicts;
   args.data[0].ToUnifiedFormat(dicts);
   auto& input = args.data[1];
@@ -278,11 +273,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   duckdb::BindScalarFunctionInput& input) {
   auto& context = input.GetClientContext();
   auto& conn_ctx = ConnectionContext::Get(context);
-  DynamicCtx ctx{
-    .db_id = conn_ctx.GetDatabaseId(),
-    .caller_role = input.HasBinder() ? input.GetBinder().CallerRole()
-                                     : duckdb::optional_idx{},
-  };
+  DynamicCtx ctx{.db_id = conn_ctx.GetDatabaseId()};
 
   auto bind = duckdb::make_uniq<TsLexizeBindData>();
   if (auto val = input.TryGetConstant(0); val && !val->IsNull()) {

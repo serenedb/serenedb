@@ -92,7 +92,7 @@ b
 
 connection after_crash
 query
-SELECT column_name FROM sdb_columns() WHERE table_name = 'rien_window' ORDER BY column_index;
+SELECT column_name FROM information_schema.columns WHERE table_name = 'rien_window' ORDER BY ordinal_position;
 ----
 column_name
 b

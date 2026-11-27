@@ -30,17 +30,17 @@ GRANT SELECT ON evis_granted TO evis_vedernikoff;
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 query
-SELECT schema_name, table_name FROM sdb_tables() WHERE table_name LIKE 'evis_%' ORDER BY 1, 2;
+SELECT schemaname, tablename FROM pg_tables WHERE tablename LIKE 'evis_%' ORDER BY 1, 2;
 ----
-schema_name	table_name
+schemaname	tablename
 public	evis_granted
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 query
-SELECT schema_name FROM sdb_schemas() WHERE schema_name LIKE 'evis_%' ORDER BY 1;
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'evis_%' ORDER BY 1;
 ----
-schema_name
+nspname
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
@@ -182,9 +182,9 @@ Did you mean "evis_secretive"?
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 query
-SELECT table_name FROM sdb_tables() WHERE table_name LIKE 'evis_%' ORDER BY 1;
+SELECT tablename FROM pg_tables WHERE tablename LIKE 'evis_%' ORDER BY 1;
 ----
-table_name
+tablename
 evis_granted
 evis_secretive
 
@@ -257,14 +257,6 @@ db error: ERROR: Table with name "evis_other_<slt:ignore>.public.evis_remote" do
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
-query
-SELECT count(*) AS listed FROM sdb_tables() WHERE table_name = 'evis_remote';
-----
-listed
-0
-
-
-connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 SELECT pg_database_size('evis_other_${__DATABASE__}');
 ----
@@ -312,14 +304,6 @@ SELECT count(*) AS rows FROM evis_other_${__DATABASE__}.public.evis_remote;
 ----
 rows
 0
-
-
-connection c_ved user=evis_vedernikoff password=evis_pw
-query
-SELECT count(*) AS listed FROM sdb_tables() WHERE table_name = 'evis_remote';
-----
-listed
-1
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw

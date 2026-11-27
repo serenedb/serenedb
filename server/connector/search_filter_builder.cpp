@@ -1652,10 +1652,7 @@ absl::Status FromFunctionExpression(
     // evaluated outside @@" error -- losing the specific cause. Throw
     // at this boundary so users see the actual reason + a hint.
     SDB_ASSERT(args.size() == 2);
-    const auto role = ctx.client_context.CallerAccess(
-      func.BindInfo()
-        ? func.BindInfo()->Cast<TSQueryMatchBindData>().caller_role
-        : duckdb::optional_idx{});
+    const auto role = ctx.client_context.CallerAccess(func.BoundRole());
     FromTSQueryMatch(filter, ctx.WithRole(role), *args[0], *args[1]);
     return absl::OkStatus();
   }

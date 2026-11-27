@@ -22,10 +22,7 @@
 
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
-#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/static_strings.hpp>
 
 namespace sdb::pg {
@@ -50,10 +47,6 @@ duckdb::ScalarFunctionSet MakeSet(
   for (auto function : functions) {
     if (init) {
       function.SetInitStateCallback(init);
-    }
-    if (init == InitSession) {
-      SDB_ASSERT(!function.HasBindCallback());
-      function.SetBindCallback(BindCaller);
     }
     set.AddFunction(std::move(function));
   }
@@ -97,18 +90,6 @@ duckdb::unique_ptr<duckdb::Expression> BindNull(
   duckdb::FunctionBindExpressionInput& input) {
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value{input.bound_function.GetReturnType()});
-}
-
-duckdb::unique_ptr<duckdb::FunctionData> BindCaller(
-  duckdb::BindScalarFunctionInput& input) {
-  return duckdb::make_uniq<CallerData>(input.HasBinder()
-                                         ? input.GetBinder().CallerRole()
-                                         : duckdb::optional_idx{});
-}
-
-duckdb::RoleAccess CallerAccess(duckdb::ExpressionState& state) {
-  return state.GetContext().CallerAccess(
-    CallerRole(state.expr.Cast<duckdb::BoundFunctionExpression>()));
 }
 
 void RegisterFunctions(duckdb::DatabaseInstance& db) {

@@ -166,18 +166,25 @@ visible
 2
 
 
-# A wrapper over the alias behaves exactly like a wrapper over the source, and
-# one over sqlite_master now resolves at all.
+connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
+statement error
+SELECT count(*) FROM zebrafin_pub.w_source
+----
+db error: ERROR: permission denied for function sdb_tables
+
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
-query
-SELECT
-  (SELECT count(*) FROM zebrafin_pub.w_source) AS source_rows,
-  (SELECT count(*) FROM zebrafin_pub.w_alias) AS alias_rows,
-  (SELECT count(*) >= 0 FROM zebrafin_pub.w_sqlite) AS sqlite_wrapper
+statement error
+SELECT count(*) FROM zebrafin_pub.w_alias
 ----
-source_rows	alias_rows	sqlite_wrapper
-0	0	t
+db error: ERROR: permission denied for function sdb_tables
+
+
+connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
+statement error
+SELECT count(*) FROM zebrafin_pub.w_sqlite
+----
+db error: ERROR: permission denied for function sdb_tables
 
 
 # ---- no escalation: an unprivileged definer view is still its owner's ----

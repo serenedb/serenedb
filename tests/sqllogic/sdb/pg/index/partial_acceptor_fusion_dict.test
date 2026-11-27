@@ -1,0 +1,64 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE partial_fusion_dict (id INTEGER PRIMARY KEY, word VARCHAR NOT NULL);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY partial_fusion_keyword AS keyword() WITH (frequency);
+
+statement ok
+CREATE INDEX partial_fusion_dict_idx ON partial_fusion_dict USING inverted (word partial_fusion_keyword);
+
+statement ok
+INSERT INTO partial_fusion_dict VALUES
+  (1, 'apple'), (2, 'banana'), (3, 'cherry'), (4, 'kiwi'), (5, 'orange');
+
+statement ok
+VACUUM (FLUSH_TABLE) partial_fusion_dict;
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(word)) AS term FROM partial_fusion_dict_idx
+WHERE word LIKE '%ki%' OR word LIKE '%wi%' OR word BETWEEN 'banana' AND 'cherry';
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────────────────────────────╮
+│ Groups: #0                                             │
+│ ~0 rows                                                │
+╰────────────────────────────┬───────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴───────────────────────────╮
+│ Index: partial_fusion_dict_idx                         │
+│ Lookup: search                                         │
+│ Index Filter:                                          │
+│ ╭─ Or ──────────────────────╮                          │
+│ ╰─────────────┬─────────────╯                          │
+│               ├───────────────────────────╮            │
+│ ╭─ Range ─────┴─────────────╮  ╭─ Automaton ─────────╮ │
+│ │ Field: word(string)       │  │ Field: word(string) │ │
+│ │ Range: >=banana, <=cherry │  │ Pattern: %ki%|%wi%  │ │
+│ ╰───────────────────────────╯  ╰─────────────────────╯ │
+│ TsDict: word                                           │
+│ Projections:                                           │
+│ sdb_inverted_index_term$word                           │
+│ ~1 row                                                 │
+╰────────────────────────────────────────────────────────╯
+
+query
+SELECT unnest(ts_dict_agg(word)) AS term FROM partial_fusion_dict_idx
+WHERE word LIKE '%ki%' OR word LIKE '%wi%' OR word BETWEEN 'banana' AND 'cherry'
+ORDER BY term;
+----
+term
+banana
+cherry
+kiwi
+
+query
+SELECT unnest(ts_dict_agg(word)) AS term, unnest(ts_dict_score(word)) AS score
+FROM partial_fusion_dict_idx
+WHERE word LIKE '%ki%' OR word LIKE '%wi%' OR word BETWEEN 'banana' AND 'cherry'
+ORDER BY term;
+----
+term	score
+banana	1
+cherry	1
+kiwi	1

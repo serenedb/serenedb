@@ -21,7 +21,6 @@
 #include "catalog/entry/foreign_server.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
@@ -145,10 +144,7 @@ void ForeignServerCatalogEntry::Attach(
   }
   const auto owner = context.AccessOf(permissions.owner);
   const duckdb::ClientContext::AccessScope scope{.role = &owner};
-  absl::Cleanup restore_scope =
-    [&context, previous = std::exchange(context.access_scope, &scope)] {
-      context.access_scope = previous;
-    };
+  const duckdb::ClientContext::AccessScopeGuard guard{&context, scope};
   catalog::Attach(context, info, type, access_mode,
                   duckdb::AttachVisibility::SHOWN, oid);
 }

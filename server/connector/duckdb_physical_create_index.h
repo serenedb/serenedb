@@ -127,8 +127,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::idx_t database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
     duckdb::SchemaCatalogEntry& schema_entry,
-    duckdb::idx_t estimated_cardinality,
-    std::vector<duckdb::idx_t> called_overloads);
+    duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final { return true; }
@@ -158,7 +157,6 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   duckdb::idx_t _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
-  std::vector<duckdb::idx_t> _called_overloads;
 
   duckdb::optional_ptr<const SereneDBCreateIndexInfo> Extras() const noexcept {
     return dynamic_cast<const SereneDBCreateIndexInfo*>(_info.get());

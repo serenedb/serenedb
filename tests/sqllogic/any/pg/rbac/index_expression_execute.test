@@ -1,4 +1,12 @@
 statement ok
+DROP TABLE IF EXISTS iee_triples;
+
+
+statement ok
+DROP SCHEMA IF EXISTS iee_other CASCADE;
+
+
+statement ok
 DROP TABLE IF EXISTS iee_items;
 
 
@@ -113,6 +121,76 @@ SELECT a, b FROM iee_items ORDER BY a;
 ----
 a	b
 1	4
+
+
+statement ok
+CREATE SCHEMA iee_other;
+
+
+statement ok
+CREATE FUNCTION iee_other.iee_triple(x INTEGER) RETURNS INTEGER AS $$ SELECT x * 3 $$ LANGUAGE sql IMMUTABLE;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION iee_other.iee_triple(INTEGER) FROM PUBLIC;
+
+
+statement ok
+CREATE TABLE iee_triples (a INTEGER);
+
+
+statement ok
+GRANT INSERT ON iee_triples TO iee_vedernikoff;
+
+
+statement ok
+SET search_path = iee_other, public;
+
+
+statement ok
+CREATE INDEX iee_triples_triple ON iee_triples (iee_triple(a));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+SET ROLE iee_vedernikoff;
+
+
+statement error
+INSERT INTO iee_triples VALUES (1);
+----
+db error: ERROR: permission denied for function iee_triple
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION iee_other.iee_triple(INTEGER) TO iee_vedernikoff;
+
+
+statement ok
+SET ROLE iee_vedernikoff;
+
+
+statement ok
+INSERT INTO iee_triples VALUES (1);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE iee_triples;
+
+
+statement ok
+DROP SCHEMA iee_other CASCADE;
 
 
 statement ok

@@ -82,7 +82,6 @@ struct InvertedIndexData {
   irs::containers::NodeHashMap<irs::field_id, FieldRecord> fields;
   std::optional<irs::ScorerOptions> top_k_scorer;
   std::optional<UniqueKeyRecord> unique_key;
-  std::vector<duckdb::idx_t> called_overloads;
 };
 
 }  // namespace sdb::catalog::persistence

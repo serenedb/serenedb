@@ -38,7 +38,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -207,7 +206,6 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
   std::vector<ConstraintKey> constraint_keys;
-  std::vector<duckdb::idx_t> called_overloads;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -300,13 +298,6 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
 
   duckdb::optional_ptr<duckdb::CatalogEntry> GetRelation(
     duckdb::CatalogTransaction transaction) const final;
-
-  std::span<const duckdb::idx_t> CalledOverloads() const final {
-    if (!_config) {
-      return {};
-    }
-    return _config->called_overloads;
-  }
 
   duckdb::Identifier GetSchemaName() const final { return ParentSchemaName(); }
 

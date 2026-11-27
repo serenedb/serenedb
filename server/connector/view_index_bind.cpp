@@ -20,8 +20,6 @@
 
 #include "connector/view_index_bind.h"
 
-#include <absl/cleanup/cleanup.h>
-
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
@@ -286,17 +284,31 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("only inverted indexes are supported on a table"));
   }
+  auto& home = table.ParentSchema(context);
+  for (size_t i = 0; i < info->expressions.size(); ++i) {
+    binder.QualifyUserFunctions(home, *info->expressions[i]);
+    binder.QualifyUserFunctions(home, *info->parsed_expressions[i]);
+  }
+  if (info->where_clause) {
+    binder.QualifyUserFunctions(home, *info->where_clause);
+  }
   auto& dependencies = info->dependencies;
   auto& catalog = table.ParentCatalog();
   duckdb::catalog_entry_callback_t lookup_callback =
     [&dependencies, &catalog](duckdb::CatalogEntry& entry) {
       if (&catalog == &entry.ParentCatalog()) {
         dependencies.AddDependency(entry);
+      } else if (!entry.internal &&
+                 (entry.type == duckdb::CatalogType::MACRO_ENTRY ||
+                  entry.type == duckdb::CatalogType::TABLE_MACRO_ENTRY)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("cross-database references are not implemented: \"",
+                  entry.ParentCatalog().GetName().GetIdentifierName(), ".",
+                  entry.ParentSchemaName().GetIdentifierName(), ".",
+                  entry.name.GetIdentifierName(), "\""));
       }
     };
-  duckdb::RecordedCalls calls{.catalog = catalog};
-  binder.RecordCalls(&calls);
-  absl::Cleanup stop_recording = [&] { binder.RecordCalls(nullptr); };
   duckdb::IndexBinder index_binder(binder, context, &table, info.get());
   index_binder.SetCatalogLookupCallback(lookup_callback);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
@@ -327,7 +339,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
     auto where_copy = info->where_clause->Copy();
     where_binder.BindKey(where_copy);
   }
-  std::move(stop_recording).Invoke();
 
   auto& get = plan->Cast<duckdb::LogicalGet>();
   for (const auto& column_id : get.GetColumnIds()) {
@@ -345,7 +356,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   plan = duckdb::make_uniq<duckdb::LogicalEmptyResult>(std::move(plan));
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), table, nullptr);
-  result->called_overloads = std::move(calls.overloads);
   result->children.emplace_back(std::move(plan));
   return std::move(result);
 }

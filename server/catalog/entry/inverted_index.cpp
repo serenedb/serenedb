@@ -136,7 +136,6 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
        .columns = std::move(data.unique_key->columns),
        .expressions = std::move(data.unique_key->expressions)});
   }
-  config->called_overloads = std::move(data.called_overloads);
   return config;
 }
 
@@ -560,7 +559,6 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
                                    .columns = key.columns,
                                    .expressions = key.expressions};
   }
-  data.called_overloads = _config->called_overloads;
   return data;
 }
 

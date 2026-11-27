@@ -72,3 +72,43 @@ pk
 
 statement ok
 DROP TABLE cx;
+
+statement ok
+CREATE TABLE cb(id INTEGER PRIMARY KEY, w VARCHAR)
+
+statement ok
+INSERT INTO cb VALUES (1, '\x41'), (2, 'A'), (3, 'beast')
+
+query
+SELECT list(id ORDER BY id) AS ids FROM cb WHERE lower(w)::bytea = 'A'::bytea
+----
+ids
+{1}
+
+statement ok
+CREATE INDEX cb_lower ON cb USING inverted(id, (lower(w)))
+
+query
+SELECT list(id ORDER BY id) AS ids FROM cb WHERE lower(w)::bytea = 'A'::bytea
+----
+ids
+{1}
+
+statement ok
+CREATE INDEX cb_bytes ON cb USING inverted(id, (w::bytea))
+
+query
+SELECT list(id ORDER BY id) AS ids FROM cb WHERE (w::bytea)::varchar LIKE '%beast%'
+----
+ids
+NULL
+
+statement error
+SELECT id FROM cb_bytes WHERE (w::bytea)::varchar @@ ts_like('%beast%')
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
+
+
+statement ok
+DROP TABLE cb;

@@ -2675,12 +2675,10 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
       }
     } else if (cast_type.id() != info->logical_type.id()) {
       if (!irs::IsJson(info->layout)) {
-        if (term_dict::IsNumeric(cast_type.id())) {
-          return nullptr;
-        }
-        info->logical_type = cast_type;
-      } else if (cast_type.id() == duckdb::LogicalTypeId::DOUBLE ||
-                 cast_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
+        return nullptr;
+      }
+      if (cast_type.id() == duckdb::LogicalTypeId::DOUBLE ||
+          cast_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
         info->logical_type = cast_type;
       } else if (cast_type.id() != duckdb::LogicalTypeId::BLOB) {
         return nullptr;

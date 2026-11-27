@@ -40,3 +40,180 @@ SELECT v -> 0 AS first, v -> 'a' ->> 0 AS a0 FROM json_lenient ORDER BY v::text;
 first	a0
 1	NULL
 NULL	2
+
+
+query
+SELECT '{"a":[2,],}'::json -> 'a' AS a, '{"a":{"b":1,},}'::json -> 'a' AS b, '[[1,],]'::json -> 0 AS c, '{"a":[2,],}'::json #> '{a}' AS d, '{"a":[2,],}'::json ->> 'a' AS e, '{"a":{"b":[3,],},}'::json #>> '{a,b}' AS f;
+----
+a	b	c	d	e	f
+[2,]	{"b":1,}	[1,]	[2,]	[2,]	[3,]
+
+
+query
+SELECT '[1,2,]'::json -> -1 AS a, '[1,2,]'::json -> 2 AS b, '[1,2,]'::json -> -3 AS c, '{"a":1,}'::json -> 'b' AS d, '{"a":"x,]",}'::json ->> 'a' AS e, '[1 , ]'::json ->> 0 AS f, E'{"a":1 ,\n}'::json ->> 'a' AS g;
+----
+a	b	c	d	e	f	g
+2	NULL	NULL	NULL	x,]	1	1
+
+
+query
+SELECT json_typeof('NaN') AS a, json_typeof('nan') AS b, json_typeof('Infinity') AS c, json_typeof('-Infinity') AS d, json_typeof('inf') AS e, json_typeof('[1,]') AS f, json_typeof('{"a":nan}'::json -> 'a') AS g, json_typeof('null') AS h, json_typeof('{"a":1,}') AS i;
+----
+a	b	c	d	e	f	g	h	i
+number	number	number	number	number	array	number	null	object
+
+
+query
+SELECT '[nan]'::json ->> 0 AS a, '[NaN]'::json -> 0 AS b, '{"a":INF,}'::json ->> 'a' AS c, '[-nan,]'::json ->> 0 AS d, '[null,]'::json ->> 0 AS e, '{"a":null,}'::json -> 'a' AS f;
+----
+a	b	c	d	e	f
+nan	NaN	INF	-nan	NULL	null
+
+
+query
+SELECT value FROM json_array_elements('[[1,],{"a":1,},NaN,nan,"s",null,]');
+----
+value
+[1,]
+{"a":1,}
+NaN
+nan
+"s"
+null
+
+
+query
+SELECT value FROM json_array_elements_text('[[1,],{"a":1,},NaN,nan,"s",null,]');
+----
+value
+[1,]
+{"a":1,}
+NaN
+nan
+s
+NULL
+
+
+query
+SELECT key, value FROM json_each_text('{"a":[1,],"b":NaN,"c":nan,"d":null,"e":{"f":1,},}');
+----
+key	value
+a	[1,]
+b	NaN
+c	nan
+d	NULL
+e	{"f":1,}
+
+
+query
+SELECT json_object_keys('{"a":1,"b":[2,],}');
+----
+json_object_keys
+a
+b
+
+
+query
+SELECT json_strip_nulls('{"a":null,"b":[1,null,],"c":{"d":null,"e":nan,},"f":NaN,}') AS a, json_strip_nulls('[null,{"a":null,"b":1,},]') AS b, json_strip_nulls('[1 ,null ,]') AS c;
+----
+a	b	c
+{"b":[1,null],"c":{"e":nan},"f":NaN}	[null,{"b":1}]	[1 ,null ]
+
+
+statement ok
+CREATE TYPE jl_row AS (a int, b json, c text);
+
+
+statement ok
+CREATE TYPE jl_num AS (a float8, b float8, c float8, d int[], e json);
+
+
+query
+SELECT * FROM json_populate_record(null::jl_row, '{"a":1,"b":[1,],"c":"x",}');
+----
+a	b	c
+1	[1,]	x
+
+
+query
+SELECT * FROM json_populate_recordset(null::jl_row, '[{"a":1,"b":{"k":[2,],},},{"a":3,"c":NaN},]');
+----
+a	b	c
+1	{"k":[2,],}	NULL
+3	NULL	NaN
+
+
+query
+SELECT * FROM json_populate_record(null::jl_num, '{"a":Infinity,"b":-Infinity,"c":nan,"d":[1,2,],"e":[[1,],],}');
+----
+a	b	c	d	e
+Infinity	-Infinity	NaN	{1,2}	[[1,],]
+
+
+query
+SELECT * FROM json_populate_recordset(null::jl_num, '[{"a":1.5,"d":[3,],},{"b":NaN,"e":{"x":[1,],},},]');
+----
+a	b	c	d	e
+1.5	NULL	NULL	{3}	NULL
+NULL	NaN	NULL	NULL	{"x":[1,],}
+
+
+query
+SELECT json_strip_nulls(E'[1,\t]') AS a, json_strip_nulls(E'{"a":1,\n}') AS b, json_strip_nulls(E'[1,\r\n]') AS c, json_strip_nulls('{"a":[1,],"b":2}') AS d;
+----
+a	b	c	d
+[1]	{"a":1}	[1]	{"a":[1],"b":2}
+
+
+query
+SELECT '5'::json -> 0 AS a, '5'::json ->> 'a' AS b, '"s"'::json #> '{a}' AS c, '[1,2]'::json #> '{5}' AS d, '{"a":1}'::json #> '{b}' AS e, '{"a":[1,]}'::json #> '{a,5}' AS f, '[1,]'::json #>> '{x}' AS g, '[1,]'::json #> '{}' AS h;
+----
+a	b	c	d	e	f	g	h
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	[1,]
+
+
+statement ok
+CREATE TABLE jl_mix (i int, v json);
+
+
+statement ok
+INSERT INTO jl_mix VALUES (1, '{"a":[1,2,],"b":null,}'), (2, '{"a":[3],"b":4}'), (3, '{"a":[5,],"b":null,}'), (4, '{"a":[6,],}'), (5, '{"a":[7,8]}'), (6, '{"a":[NaN,9,],"c":"x,]",}');
+
+
+query
+SELECT i, json_strip_nulls(v) AS s, v -> 'a' AS a, v ->> 'c' AS c FROM jl_mix ORDER BY i;
+----
+i	s	a	c
+1	{"a":[1,2]}	[1,2,]	NULL
+2	{"a":[3],"b":4}	[3]	NULL
+3	{"a":[5]}	[5,]	NULL
+4	{"a":[6]}	[6,]	NULL
+5	{"a":[7,8]}	[7,8]	NULL
+6	{"a":[NaN,9],"c":"x,]"}	[NaN,9,]	x,]
+
+
+query
+SELECT i, value FROM jl_mix, json_array_elements_text(v -> 'a') ORDER BY i, value;
+----
+i	value
+1	1
+1	2
+2	3
+3	5
+4	6
+5	7
+5	8
+6	9
+6	NaN
+
+
+statement error
+SELECT jsonin('[1,]');
+----
+db error: ERROR: Invalid input syntax for type json: [1,]
+
+
+statement error
+SELECT jsonin('[NaN]');
+----
+db error: ERROR: Invalid input syntax for type json: [NaN]

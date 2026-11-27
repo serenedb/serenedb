@@ -1001,19 +1001,20 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
     const auto& filter =
       irs::utils::downCast<LevenshteinAutomatonFilter>(child);
     const auto& options = filter.options();
-    SDB_ASSERT(options.parametric);
-    if (options.starts_with) {
+    SDB_ASSERT(options.source);
+    auto fuzzy = options.source->Fuzzy();
+    if (!fuzzy) {
       return std::nullopt;
     }
     auto pattern = options.target;
     pattern += static_cast<byte_type>('~');
-    const auto prefix = options.parametric->LowerBound();
+    const auto prefix = fuzzy->LowerBound();
     return Operand{filter.field_id(),
                    leaf.dict,
                    std::move(pattern),
                    TermBounds{bstring{prefix}, UpperBoundOf(prefix)},
                    nullptr,
-                   options.parametric};
+                   std::move(fuzzy)};
   }
   return std::nullopt;
 }

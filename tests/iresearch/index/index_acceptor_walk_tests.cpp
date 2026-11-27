@@ -437,14 +437,16 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     }
   }
 
-  template<typename Oracle>
+  template<bool kBytes, typename Oracle>
   void AssertFuzzyOracle(const irs::IndexReader& reader,
                          const irs::ParametricDescription& description,
-                         std::string_view target, bool bytes, bool starts_with,
+                         std::string_view target, bool starts_with,
                          Oracle&& oracle) {
-    const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
+    using Fuzzy = irs::BasicLevenshteinAcceptor<kBytes>;
+    using Prefix = irs::BasicLevenshteinPrefixAcceptor<kBytes>;
+    const auto fuzzy = std::make_shared<const Fuzzy>(
       description, irs::kEmptyStringView<irs::byte_type>,
-      irs::ViewCast<irs::byte_type>(target), bytes);
+      irs::ViewCast<irs::byte_type>(target));
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = StringsOf(segment, field_id);
@@ -459,35 +461,45 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                                   static_cast<irs::byte_type>(distance));
           }
         }
-        const auto check = [&](const auto& a) {
+        const auto matches = [&](const auto& a) {
           for (const auto& [term, distance] : expected) {
             irs::byte_type payload{};
             EXPECT_TRUE(a.Matches(term, payload));
             EXPECT_EQ(distance, payload);
           }
+        };
+        const auto check = [&](const auto& a) {
+          matches(a);
           auto walk = field->iterator(a);
           ASSERT_NE(nullptr, walk);
           AssertSameWalk(expected, *walk, true);
         };
         if (starts_with) {
-          const auto acceptor =
-            std::make_shared<const irs::LevenshteinPrefixAcceptor>(fuzzy);
-          check(*acceptor);
-          const auto dfa = PrefixConjunction::Make(acceptor);
+          const auto acceptor = std::make_shared<const Prefix>(fuzzy);
+          if constexpr (kBytes) {
+            matches(*acceptor);
+          } else {
+            check(*acceptor);
+          }
+          const auto dfa = irs::FuzzyConjunctionOf<Prefix>::Make(acceptor);
           ASSERT_NE(nullptr, dfa);
           check(*dfa);
-          const PrefixConjunction small{{}, acceptor, 16384};
+          const irs::FuzzyConjunctionOf<Prefix> small{{}, acceptor, 16384};
           check(small);
-          const PrefixConjunction none{{}, acceptor, 0};
+          const irs::FuzzyConjunctionOf<Prefix> none{{}, acceptor, 0};
           check(none);
         } else {
-          check(*fuzzy);
-          const auto dfa = WholeConjunction::Make(fuzzy);
+          if constexpr (kBytes) {
+            matches(*fuzzy);
+          } else {
+            check(*fuzzy);
+          }
+          const auto dfa = irs::FuzzyConjunctionOf<Fuzzy>::Make(fuzzy);
           ASSERT_NE(nullptr, dfa);
           check(*dfa);
-          const WholeConjunction small{{}, fuzzy, 16384};
+          const irs::FuzzyConjunctionOf<Fuzzy> small{{}, fuzzy, 16384};
           check(small);
-          const WholeConjunction none{{}, fuzzy, 0};
+          const irs::FuzzyConjunctionOf<Fuzzy> none{{}, fuzzy, 0};
           check(none);
         }
       }
@@ -1322,8 +1334,8 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_bytes) {
           const auto target_view = irs::ViewCast<irs::byte_type>(target);
           const std::vector<uint32_t> target_bytes{target_view.begin(),
                                                    target_view.end()};
-          AssertFuzzyOracle(
-            reader, description, target, true, starts_with,
+          AssertFuzzyOracle<true>(
+            reader, description, target, starts_with,
             [&](irs::bytes_view term) {
               const std::vector<uint32_t> term_bytes{term.begin(), term.end()};
               return SymbolDistance(term_bytes, target_bytes, transpositions,
@@ -1384,14 +1396,15 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_invalid_utf8_targets) {
                        << target << "', distance: " << size_t{distance}
                        << ", transpositions: " << transpositions
                        << ", starts with: " << starts_with);
-          AssertFuzzyOracle(reader, description, target, false, starts_with,
-                            [&](irs::bytes_view term) {
-                              std::vector<uint32_t> chars;
-                              EXPECT_TRUE(irs::utf8_utils::ToUTF32<true>(
-                                term, std::back_inserter(chars)));
-                              return SymbolDistance(
-                                chars, symbols, transpositions, starts_with);
-                            });
+          AssertFuzzyOracle<false>(reader, description, target, starts_with,
+                                   [&](irs::bytes_view term) {
+                                     std::vector<uint32_t> chars;
+                                     EXPECT_TRUE(irs::utf8_utils::ToUTF32<true>(
+                                       term, std::back_inserter(chars)));
+                                     return SymbolDistance(chars, symbols,
+                                                           transpositions,
+                                                           starts_with);
+                                   });
         }
       }
     }

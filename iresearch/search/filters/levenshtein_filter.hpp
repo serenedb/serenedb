@@ -109,7 +109,7 @@ struct LevenshteinAutomatonOptions {
   using FilterType = LevenshteinAutomatonFilter;
 
   bstring target;
-  std::shared_ptr<const LevenshteinAcceptor> parametric;
+  size_t prefix_size{0};
   TermAcceptorSource::ptr source;
   ByEditDistanceAllOptions::pdp_f provider{};
   uint32_t utf8_target_size{1};
@@ -129,7 +129,8 @@ struct LevenshteinAutomatonOptions {
                               size_t max_terms);
 
   bool operator==(const LevenshteinAutomatonOptions& rhs) const noexcept {
-    return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
+    return target == rhs.target && prefix_size == rhs.prefix_size &&
+           utf8_target_size == rhs.utf8_target_size &&
            no_distance == rhs.no_distance &&
            with_transpositions == rhs.with_transpositions &&
            starts_with == rhs.starts_with && bytes == rhs.bytes &&

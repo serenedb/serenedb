@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/privileges.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
@@ -214,6 +215,12 @@ void BaseCatalog::ScanSchemas(absl::FunctionRef<void(Schema&)> callback) {
 
 void BaseCatalog::DropSchema(duckdb::ClientContext& context,
                              duckdb::DropInfo& info) {
+  DropSchema(context, info, {});
+}
+
+void BaseCatalog::DropSchema(duckdb::ClientContext& context,
+                             duckdb::DropInfo& info,
+                             std::span<const duckdb::idx_t> together) {
   auto transaction = GetCatalogTransaction(context);
   const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::SCHEMA_ENTRY,
                                        info.GetQualifiedName()};
@@ -230,7 +237,7 @@ void BaseCatalog::DropSchema(duckdb::ClientContext& context,
   }
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  DropDependents(transaction, schema, info.cascade, info.dropped_together);
+  DropDependents(transaction, schema, info.cascade, together);
   DropSchemaEntry(transaction, schema);
 }
 
@@ -438,10 +445,33 @@ duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupEntry(
   return set ? set->Get(transaction, name) : nullptr;
 }
 
-void BaseCatalog::RefuseDroppingTogether(
-  duckdb::CatalogTransaction transaction,
-  const duckdb::catalog_entry_vector_t& entries) {
-  catalog::RefuseDroppingTogether(transaction, entries);
+void BaseCatalog::DropEntries(
+  duckdb::ClientContext& context, const duckdb::catalog_entry_vector_t& entries,
+  duckdb::catalog_entry_map_t<duckdb::vector<duckdb::DropInfo>>& drops) {
+  auto transaction = GetCatalogTransaction(context);
+  if (entries.size() > 1 && !drops[entries.front()].front().cascade) {
+    RefuseDroppingTogether(transaction, entries);
+  }
+  std::vector<duckdb::idx_t> together;
+  together.reserve(entries.size());
+  for (const auto& entry : entries) {
+    together.push_back(entry.get().oid);
+  }
+  for (auto& entry : DropOrder(transaction, entries)) {
+    for (auto& drop : drops[entry]) {
+      if (drop.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        DropSchema(context, drop, together);
+      } else if (duckdb::ObjectKindOf(drop.type).container ==
+                 duckdb::ObjectContainer::CLUSTER) {
+        DropEntry(context, drop);
+      } else {
+        entry.get()
+          .ParentSchema(transaction)
+          .Cast<Schema>()
+          .DropEntry(context, drop, together);
+      }
+    }
+  }
 }
 
 duckdb::catalog_entry_vector_t BaseCatalog::DropOrder(

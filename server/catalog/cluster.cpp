@@ -848,7 +848,7 @@ void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
   }
   if (auto entry =
         _databases.Get(transaction, info.GetQualifiedName().Name())) {
-    DropDependents(transaction, *entry, info.cascade, info.dropped_together);
+    DropDependents(transaction, *entry, info.cascade);
   }
   if (!DropFrom(_databases, transaction, duckdb::CatalogType::DATABASE_ENTRY,
                 info)) {

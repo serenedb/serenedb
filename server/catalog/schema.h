@@ -31,6 +31,7 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <functional>
 #include <memory>
+#include <span>
 
 #include "catalog/entry_set.h"
 
@@ -116,6 +117,8 @@ class Schema final : public duckdb::SchemaCatalogEntry {
     const duckdb::EntryLookupInfo& lookup_info) final;
 
   void DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info) final;
+  void DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info,
+                 std::span<const duckdb::idx_t> together);
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;

@@ -946,10 +946,18 @@ void Schema::Drop(duckdb::CatalogTransaction transaction,
 }
 
 void Schema::DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info) {
+  DropEntry(context, info, {});
+}
+
+void Schema::DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info,
+                       std::span<const duckdb::idx_t> together) {
   auto transaction = GetCatalogTransaction(context);
   const auto& entry_name = info.GetQualifiedName().Name();
   auto entry = Set(info.type).Get(transaction, entry_name);
   if (!entry) {
+    if (info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
+      return;
+    }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("Failed to drop entry ",
                             duckdb::SQLQuotedIdentifier::ToString(entry_name),
@@ -992,7 +1000,7 @@ void Schema::DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       return;
     }
   }
-  DropDependents(transaction, *entry, info.cascade, info.dropped_together);
+  DropDependents(transaction, *entry, info.cascade, together);
   Drop(transaction, *entry);
 }
 

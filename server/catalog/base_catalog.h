@@ -26,6 +26,7 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <functional>
+#include <span>
 #include <string>
 
 #include "catalog/entry_set.h"
@@ -81,6 +82,8 @@ class BaseCatalog : public duckdb::Catalog {
   void ScanSchemas(absl::FunctionRef<void(Schema&)> callback);
 
   void DropSchema(duckdb::ClientContext& context, duckdb::DropInfo& info) final;
+  void DropSchema(duckdb::ClientContext& context, duckdb::DropInfo& info,
+                  std::span<const duckdb::idx_t> together);
 
   void AlterSchemaEntry(duckdb::CatalogTransaction transaction,
                         duckdb::SchemaCatalogEntry& schema,
@@ -132,13 +135,14 @@ class BaseCatalog : public duckdb::Catalog {
     duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
     const duckdb::Identifier& name) final;
 
+  void DropEntries(
+    duckdb::ClientContext& context,
+    const duckdb::catalog_entry_vector_t& entries,
+    duckdb::catalog_entry_map_t<duckdb::vector<duckdb::DropInfo>>& drops) final;
+
   duckdb::catalog_entry_vector_t DropOrder(
     duckdb::CatalogTransaction transaction,
-    const duckdb::catalog_entry_vector_t& entries) final;
-
-  void RefuseDroppingTogether(
-    duckdb::CatalogTransaction transaction,
-    const duckdb::catalog_entry_vector_t& entries) final;
+    const duckdb::catalog_entry_vector_t& entries);
 
   virtual duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
     duckdb::CatalogTransaction transaction, Schema& schema,

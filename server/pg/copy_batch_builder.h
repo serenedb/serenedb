@@ -24,12 +24,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 
 #include "pg/copy_in_batches.h"
 
 namespace sdb::pg {
+
+size_t BinaryRowEnd(std::string_view bytes, size_t pos,
+                    std::span<const int32_t> widths) noexcept;
 
 size_t WalkBinaryRows(std::string_view bytes, size_t pos,
                       size_t limit) noexcept;

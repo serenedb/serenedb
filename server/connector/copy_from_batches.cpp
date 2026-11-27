@@ -21,7 +21,6 @@
 #include "connector/copy_from_batches.h"
 
 #include <absl/base/internal/endian.h>
-#include <absl/container/btree_map.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -31,6 +30,7 @@
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/common/serializer/async_memory_governor.hpp>
 #include <duckdb/formats/copy_from.hpp>
+#include <duckdb/formats/range_lines.hpp>
 #include <duckdb/formats/row_input.hpp>
 #include <duckdb/parallel/async_result.hpp>
 #include <duckdb/parallel/task_executor.hpp>
@@ -100,22 +100,9 @@ bool PlausibleRows(std::string_view bytes, size_t pos,
     if (fields < 0 || static_cast<size_t>(fields) != widths.size()) {
       return false;
     }
-    pos += sizeof(int16_t);
-    for (const auto width : widths) {
-      if (bytes.size() - pos < sizeof(int32_t)) {
-        return false;
-      }
-      const auto length =
-        static_cast<int32_t>(absl::big_endian::Load32(bytes.data() + pos));
-      pos += sizeof(int32_t);
-      if (length == pg::kPgCopyNull) {
-        continue;
-      }
-      if (length < 0 || (width >= 0 && length != width) ||
-          bytes.size() - pos < static_cast<size_t>(length)) {
-        return false;
-      }
-      pos += static_cast<size_t>(length);
+    pos = pg::BinaryRowEnd(bytes, pos, widths);
+    if (pos == std::string_view::npos) {
+      return false;
     }
   }
   return true;
@@ -513,8 +500,7 @@ class CopyLines {
     duckdb::vector<duckdb::InterruptState> waiters;
     {
       Guard guard{_waiters.lock};
-      _done.try_emplace(seq, lines);
-      if (!Advance()) {
+      if (!_lines.Add(seq, lines)) {
         return;
       }
       waiters = _waiters.TakeBlockedTasks();
@@ -536,8 +522,8 @@ class CopyLines {
       if (_failed < seq) {
         return 0;
       }
-      if (_next == seq) {
-        return _lines + line;
+      if (_lines.Known(seq)) {
+        return _lines.Before(seq) + line;
       }
       if (pg::CopyInBatches::CanPark(input) &&
           _waiters.BlockTask(*input.interrupt_state)) {
@@ -554,21 +540,8 @@ class CopyLines {
   }
 
  private:
-  bool Advance() DUCKDB_REQUIRES(_waiters.lock) {
-    bool advanced = false;
-    for (auto it = _done.begin(); it != _done.end() && it->first == _next;
-         it = _done.erase(it)) {
-      _lines += it->second;
-      ++_next;
-      advanced = true;
-    }
-    return advanced;
-  }
-
   duckdb::StateWithBlockableTasks _waiters;
-  absl::btree_map<uint64_t, uint64_t> _done DUCKDB_GUARDED_BY(_waiters.lock);
-  uint64_t _next DUCKDB_GUARDED_BY(_waiters.lock) = 0;
-  uint64_t _lines DUCKDB_GUARDED_BY(_waiters.lock) = 0;
+  duckdb::RangeLines _lines DUCKDB_GUARDED_BY(_waiters.lock);
   uint64_t _failed DUCKDB_GUARDED_BY(_waiters.lock) =
     std::numeric_limits<uint64_t>::max();
 };

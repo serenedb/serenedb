@@ -59,38 +59,48 @@ size_t BinaryCopyHeaderExtension(std::string_view header) {
   return static_cast<size_t>(ext);
 }
 
-size_t WalkBinaryRows(std::string_view bytes, size_t pos,
-                      size_t limit) noexcept {
+size_t BinaryRowEnd(std::string_view bytes, size_t pos,
+                    std::span<const int32_t> widths) noexcept {
   const char* const data = bytes.data();
   const size_t size = bytes.size();
+  if (size - pos < sizeof(int16_t)) {
+    return std::string_view::npos;
+  }
+  const auto fields =
+    static_cast<int16_t>(absl::big_endian::Load16(data + pos));
+  if (fields < 0) {
+    return std::string_view::npos;
+  }
+  SDB_ASSERT(widths.empty() || static_cast<size_t>(fields) == widths.size());
+  pos += sizeof(int16_t);
+  for (int16_t field = 0; field < fields; ++field) {
+    if (size - pos < sizeof(int32_t)) {
+      return std::string_view::npos;
+    }
+    const auto length =
+      static_cast<int32_t>(absl::big_endian::Load32(data + pos));
+    pos += sizeof(int32_t);
+    if (length == kPgCopyNull) {
+      continue;
+    }
+    if (length < 0 ||
+        (!widths.empty() && widths[field] >= 0 && length != widths[field]) ||
+        size - pos < static_cast<size_t>(length)) {
+      return std::string_view::npos;
+    }
+    pos += static_cast<size_t>(length);
+  }
+  return pos;
+}
+
+size_t WalkBinaryRows(std::string_view bytes, size_t pos,
+                      size_t limit) noexcept {
   while (pos < limit) {
-    size_t p = pos;
-    if (size - p < sizeof(int16_t)) {
+    const auto end = BinaryRowEnd(bytes, pos, {});
+    if (end == std::string_view::npos) {
       return pos;
     }
-    const auto fields =
-      static_cast<int16_t>(absl::big_endian::Load16(data + p));
-    if (fields < 0) {
-      return pos;
-    }
-    p += sizeof(int16_t);
-    for (int16_t field = 0; field < fields; ++field) {
-      if (size - p < sizeof(int32_t)) {
-        return pos;
-      }
-      const auto length =
-        static_cast<int32_t>(absl::big_endian::Load32(data + p));
-      p += sizeof(int32_t);
-      if (length > 0) {
-        if (size - p < static_cast<size_t>(length)) {
-          return pos;
-        }
-        p += static_cast<size_t>(length);
-      } else if (length < kPgCopyNull) {
-        return pos;
-      }
-    }
-    pos = p;
+    pos = end;
   }
   return pos;
 }

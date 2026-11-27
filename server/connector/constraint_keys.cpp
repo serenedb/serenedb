@@ -170,7 +170,9 @@ std::optional<std::string> ConstraintKeyText(
       }
     }
     if (columns.empty() ||
-        !role.CanColumns(table, duckdb::AclMode::Select, columns)) {
+        !duckdb::Check(context, role,
+                       duckdb::PrivilegeTarget::Columns(table, columns),
+                       duckdb::AclMode::Select)) {
       return std::nullopt;
     }
   }

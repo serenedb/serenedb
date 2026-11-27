@@ -24,7 +24,14 @@
 
 #include <algorithm>
 #include <compare>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/catalog/privileges.hpp>
+#include <duckdb/catalog/schema_info.hpp>
+#include <duckdb/common/types/hash.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -39,6 +46,99 @@
 #include "pg/types/mapping.h"
 
 namespace sdb::pg {
+namespace {
+
+constexpr uint64_t kPublicBit = uint64_t{1} << 63;
+
+uint64_t RoleBit(duckdb::idx_t role) {
+  return role == duckdb::ACL_ID_PUBLIC
+           ? kPublicBit
+           : uint64_t{1} << (duckdb::Hash(uint64_t{role}) % 63);
+}
+
+uint64_t GranteeBits(std::span<const duckdb::AclItem> acl,
+                     duckdb::AclMode privileges) {
+  uint64_t bits = 0;
+  for (const auto& item : acl) {
+    if ((item.privs & privileges) != duckdb::AclMode::NoRights) {
+      bits |= RoleBit(item.grantee);
+    }
+  }
+  return bits;
+}
+
+uint64_t HolderBits(const duckdb::ObjectKind& kind,
+                    const duckdb::Permissions& permissions) {
+  const auto bits = RoleBit(permissions.owner);
+  if (!permissions.UsesDefaultAcl()) {
+    return bits | GranteeBits(permissions.acl, kind.privileges);
+  }
+  return (kind.public_privileges & kind.privileges) != duckdb::AclMode::NoRights
+           ? bits | kPublicBit
+           : bits;
+}
+
+uint64_t OwnBits(const duckdb::CatalogEntry& entry) {
+  if (entry.internal || duckdb::PermissionsOf(entry).owner == 0) {
+    return kVisibleToAll;
+  }
+  const auto& kind = duckdb::ObjectKindOf(entry.type);
+  switch (entry.type) {
+    case duckdb::CatalogType::SCHEMA_ENTRY:
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
+    case duckdb::CatalogType::TYPE_ENTRY:
+    case duckdb::CatalogType::JOB_ENTRY:
+      return HolderBits(kind, entry.permissions);
+    case duckdb::CatalogType::TABLE_ENTRY:
+    case duckdb::CatalogType::VIEW_ENTRY: {
+      auto bits = HolderBits(kind, entry.permissions);
+      duckdb::AnyColumnAcl(entry.Cast<duckdb::StandardEntry>(),
+                           [&](std::span<const duckdb::AclItem> acl) {
+                             bits |=
+                               GranteeBits(acl, duckdb::ACL_COLUMN_PRIVILEGES);
+                             return false;
+                           });
+      return bits;
+    }
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY: {
+      const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
+      uint64_t bits = 0;
+      for (const auto& overload : macro.macros) {
+        bits |= HolderBits(kind, macro.OverloadPermissions(*overload));
+      }
+      return bits;
+    }
+    default:
+      return kVisibleToAll;
+  }
+}
+
+}  // namespace
+
+uint64_t VisibilityBits(const duckdb::CatalogEntry& entry) {
+  const auto bits = OwnBits(entry);
+  if (bits == kVisibleToAll || !entry.ParentSchemaOid()) {
+    return bits;
+  }
+  const auto& schema_info =
+    entry.type == duckdb::CatalogType::SCHEMA_ENTRY
+      ? *entry.Cast<duckdb::SchemaCatalogEntry>().GetSchemaInfo()->parent
+      : *entry.Cast<duckdb::StandardEntry>().schema_info;
+  const auto schema = schema_info.versions->GetCommitted();
+  return schema ? bits | RoleBit(schema->permissions.owner) : bits;
+}
+
+uint64_t ViewerBits(const duckdb::RoleAccess& role) {
+  if (role.is_superuser || role.capabilities != duckdb::RoleCapability::None) {
+    return kVisibleToAll;
+  }
+  auto bits = kPublicBit | RoleBit(role.role);
+  for (const auto member : role.closure) {
+    bits |= RoleBit(member);
+  }
+  return bits;
+}
 
 duckdb::LogicalType SystemColumnType(int32_t oid) {
   const auto& type = *FindBuiltinType(oid);
@@ -112,7 +212,7 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
     _table{input.bind_data->Cast<SystemTableBindData>().table},
     _role{context.CallerAccess(
       input.bind_data->Cast<SystemTableBindData>().caller_role)},
-    _viewer{duckdb::ViewerBits(_role)} {
+    _viewer{ViewerBits(_role)} {
   const auto& ids = input.column_ids;
   if (input.filters) {
     for (const auto& entry : *input.filters) {

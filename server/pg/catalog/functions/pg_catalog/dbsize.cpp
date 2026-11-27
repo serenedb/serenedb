@@ -302,15 +302,11 @@ duckdb::idx_t SessionTablespace(const Session& session) {
 
 int64_t TablespaceBytes(const Session& session,
                         const catalog::TablespaceCatalogEntry& tablespace) {
-  if (tablespace.oid != SessionTablespace(session)) {
-    if (const auto& role = session.role;
-        !role.Has(duckdb::RoleCapability::ReadAllStats) &&
-        !duckdb::Check(*session.context, role, tablespace,
-                       duckdb::AclMode::Create)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for tablespace ",
-                              tablespace.name.GetIdentifierName()));
-    }
+  if (tablespace.oid != SessionTablespace(session) &&
+      !session.role.Has(duckdb::RoleCapability::ReadAllStats)) {
+    duckdb::Check(*session.context, session.role, tablespace,
+                  duckdb::AclMode::Create)
+      .Require();
   }
   if (tablespace.oid == kPgGlobalTablespace) {
     const auto* log = catalog::Transactions::Get().GetLog();

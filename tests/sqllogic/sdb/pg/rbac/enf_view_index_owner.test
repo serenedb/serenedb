@@ -61,6 +61,13 @@ n
 2
 
 
+connection c_reader user=evio_reader password=evio_pw
+statement error
+REINDEX INDEX evio_v_idx;
+----
+db error: ERROR: permission denied for index evio_v_idx
+
+
 connection default
 statement ok
 REVOKE SELECT ON evio_src FROM evio_owner;

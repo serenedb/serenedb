@@ -582,6 +582,11 @@ void SortedBy(const SystemRows<Row, Holder>& rows, const SystemFilter& filter,
   }
 }
 
+inline constexpr uint64_t kVisibleToAll = ~uint64_t{0};
+
+uint64_t VisibilityBits(const duckdb::CatalogEntry& entry);
+uint64_t ViewerBits(const duckdb::RoleAccess& role);
+
 class SystemScan {
  public:
   static constexpr std::span<const SystemFact> kFacts{};
@@ -1328,7 +1333,7 @@ class SystemCursor<SystemEntries> final {
   template<typename T>
   std::span<const uint64_t> Visibility(
     const T& table, const duckdb::SchemaCatalogEntry& schema) const {
-    if (table.Viewer() == duckdb::VISIBLE_TO_ALL) {
+    if (table.Viewer() == kVisibleToAll) {
       return {};
     }
     const auto& snapshot = *_set.snapshot;
@@ -1336,7 +1341,7 @@ class SystemCursor<SystemEntries> final {
       snapshot.visibility.Get([&](std::vector<uint64_t>& visibility) {
         visibility.reserve(snapshot.entries.size());
         for (const auto* entry : snapshot.entries) {
-          visibility.push_back(duckdb::VisibilityBits(*entry));
+          visibility.push_back(VisibilityBits(*entry));
         }
       });
     return std::span{bits}.subspan(

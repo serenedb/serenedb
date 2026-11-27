@@ -46,7 +46,7 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
   using Base::SeekToLeaf;
 
  public:
-  using Base::ForeseeSpans;
+  using Base::HintSpans;
 
   PostingProbe() = default;
 

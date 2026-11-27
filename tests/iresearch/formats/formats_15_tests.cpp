@@ -785,7 +785,7 @@ TEST_P(Format15TestCase, LongPostingsPruneThreshold100) {
   AssertPrunedPostings(docs, kThreshold);
 }
 
-TEST_P(Format15TestCase, AReaderReadsTheBlocksItForesawWithoutTheirPages) {
+TEST_P(Format15TestCase, AReaderReadsTheBlocksItHintedWithoutTheirPages) {
   static constexpr size_t kBlocks = 1024;
   const size_t block = GetPostingsBlockSize();
   const auto docs = GenerateDocs(kBlocks * block, 8.f, 1.f, 100);
@@ -829,12 +829,12 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItForesawWithoutTheirPages) {
   for (size_t i = 0; i != std::size(targets); ++i) {
     spans[i] = {.first = targets[i], .last = targets[i]};
   }
-  ASSERT_TRUE(follower.ForeseeSpans(spans));
+  ASSERT_TRUE(follower.HintSpans(spans));
   EXPECT_FALSE(doc_pages.prefetched.empty());
   for (const auto target : targets) {
     ASSERT_EQ(target, follower.Seek(target));
   }
-  EXPECT_FALSE(follower.ForeseeSpans(spans));
+  EXPECT_FALSE(follower.HintSpans(spans));
 
   ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
   duckdb::PageResidency::Invalidate();
@@ -844,12 +844,12 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItForesawWithoutTheirPages) {
     {.first = targets[2], .last = targets[2]},
     {.first = ahead, .last = ahead},
   };
-  ASSERT_TRUE(follower.ForeseeSpans(behind_and_ahead));
+  ASSERT_TRUE(follower.HintSpans(behind_and_ahead));
   EXPECT_FALSE(doc_pages.prefetched.empty());
   ASSERT_EQ(ahead, follower.Seek(ahead));
 }
 
-TEST_P(Format15TestCase, AWholeListReaderForeseesPastWhereItLandedOnly) {
+TEST_P(Format15TestCase, AWholeListReaderHintsPastWhereItLandedOnly) {
   static constexpr size_t kBlocks = 2048;
   static constexpr auto kWindow = irs::detail::kWindowDocs;
   const size_t block = GetPostingsBlockSize();
@@ -914,7 +914,7 @@ TEST_P(Format15TestCase, AWholeListReaderForeseesPastWhereItLandedOnly) {
   EXPECT_TRUE(doc_pages.prefetched.empty());
 }
 
-TEST_P(Format15TestCase, APrunedReaderReadsTheCompetitiveBlocksItForesaw) {
+TEST_P(Format15TestCase, APrunedReaderReadsTheCompetitiveBlocksItHinted) {
   static constexpr size_t kCount = 256 * 1024;
   static constexpr uint32_t kThreshold = 100;
   const auto docs = GenerateDocs(kCount, 60.f, 10.f, 1);

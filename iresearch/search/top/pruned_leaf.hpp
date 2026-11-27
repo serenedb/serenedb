@@ -138,7 +138,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     _cached_runs.fill(kNoBlock);
     _root_score = std::numeric_limits<score_t>::max();
     _threshold = std::numeric_limits<score_t>::lowest();
-    _foresee_at = 0;
+    _hint_at = 0;
 
     if (meta.docs_count == 1) {
       *(std::end(_docs) - 1) = doc_limits::min() + meta.doc_delta;
@@ -267,7 +267,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   static constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
   static constexpr uint32_t kCachedRuns = 8;
-  static constexpr uint32_t kForeseenBlocks = detail::kMostSpans;
+  static constexpr uint32_t kHintBlocks = detail::kMostSpans;
 
   score_t BoundScore(BoundPair bound) {
     _bound_source->Set(bound.freq, bound.norm);
@@ -304,17 +304,17 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     }
   }
 
-  uint32_t ForeseeCompetitive(uint32_t* blocks) {
+  uint32_t HintCompetitive(uint32_t* blocks) {
     static_assert(Standalone);
     const auto& index = _walk.Index();
     const auto n = index.Size();
     const auto b = _walk.Block();
-    if (b == n || b < _foresee_at || (_foresee_at == 0 && this->InMemory(b))) {
+    if (b == n || b < _hint_at || (_hint_at == 0 && this->InMemory(b))) {
       return 0;
     }
     blocks[0] = b;
     uint32_t count = 1;
-    for (auto k = b + 1; count != kForeseenBlocks; ++k) {
+    for (auto k = b + 1; count != kHintBlocks; ++k) {
       k = FirstCompetitive(
         index, k, _threshold, [&](uint32_t r) { return RunScore(r); },
         [&](uint32_t c) { return BlockScore(c); });
@@ -324,20 +324,20 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
       blocks[count++] = k;
     }
     if (this->InMemory(blocks[count - 1])) {
-      _foresee_at = 0;
+      _hint_at = 0;
       return 0;
     }
-    _foresee_at = count == kForeseenBlocks ? blocks[count / 2] : n;
+    _hint_at = count == kHintBlocks ? blocks[count / 2] : n;
     this->HintBlocks({blocks, count});
-    ForeseeNorms(index, {blocks, count});
+    HintNorms(index, {blocks, count});
     return count;
   }
 
-  IRS_NO_INLINE void ForeseeNorms(const BlockIndex& index,
-                                  std::span<const uint32_t> blocks) noexcept {
+  IRS_NO_INLINE void HintNorms(const BlockIndex& index,
+                               std::span<const uint32_t> blocks) noexcept {
     for (const auto b : blocks) {
-      _score.fetcher->Foresee(
-        b == 0 ? doc_limits::min() : index.Last(b - 1) + 1, index.Last(b));
+      _score.fetcher->Hint(b == 0 ? doc_limits::min() : index.Last(b - 1) + 1,
+                           index.Last(b));
     }
   }
 
@@ -476,7 +476,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   std::array<score_t, kCachedRuns> _run_scores;
   score_t _root_score = std::numeric_limits<score_t>::max();
   score_t _threshold = std::numeric_limits<score_t>::lowest();
-  uint32_t _foresee_at = 0;
+  uint32_t _hint_at = 0;
   uint32_t _len = 0;
   doc_id_t _base = 0;
   uint32_t _cost = 0;

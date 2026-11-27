@@ -172,12 +172,12 @@ class PhraseSlots {
     return _leaves.Probe(target);
   }
 
-  bool ForeseeSpans(std::span<const DocSpan> spans) {
+  bool HintSpans(std::span<const DocSpan> spans) {
     const auto* const bound = BoundLeaf();
     bool hinted = false;
     for (auto& slot : _leaves) {
       for (auto& leaf : LeavesOf(slot)) {
-        const bool hints = leaf.ForeseeSpans(spans);
+        const bool hints = leaf.HintSpans(spans);
         hinted = hinted || (&leaf == bound && hints);
       }
     }

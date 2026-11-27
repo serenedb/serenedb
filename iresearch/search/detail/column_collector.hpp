@@ -82,9 +82,9 @@ class ColumnArgsFetcher {
     }
   }
 
-  void Foresee(doc_id_t first, doc_id_t last) noexcept {
+  void Hint(doc_id_t first, doc_id_t last) noexcept {
     for (auto& entry : _columns) {
-      entry.reader->Foresee(first, last);
+      entry.reader->Hint(first, last);
     }
   }
 

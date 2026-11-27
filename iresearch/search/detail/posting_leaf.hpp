@@ -252,7 +252,7 @@ class PostingLeaf {
   static constexpr bool kEnc = Shape.enc || !InputType::CONTIGUOUS;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
-  static constexpr doc_id_t kForeseenDocs = doc_id_t{1} << 16;
+  static constexpr doc_id_t kHintDocs = doc_id_t{1} << 16;
 
   IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
@@ -304,7 +304,7 @@ class PostingLeaf {
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(doc_in, meta);
-      _foreseen = 0;
+      _hinted_end = 0;
     }
     if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
@@ -358,19 +358,19 @@ class PostingLeaf {
       }
     }
     if constexpr (Shape.reads == LeafReads::Whole) {
-      if (uint64_t{max} + kForeseenDocs / 2 > _foreseen && Armed() &&
+      if (uint64_t{max} + kHintDocs / 2 > _hinted_end && Armed() &&
           !_walk.Pending()) [[unlikely]] {
-        ForeseeFrom(std::max(min, _foreseen), max);
+        HintFrom(std::max(min, _hinted_end), max);
       }
     }
     return true;
   }
 
-  IRS_NO_INLINE void ForeseeFrom(doc_id_t from, doc_id_t max) {
-    _foreseen = static_cast<doc_id_t>(
-      std::min<uint64_t>(uint64_t{max} + kForeseenDocs, doc_limits::eof()));
-    const DocSpan span{.first = from, .last = _foreseen - 1};
-    ForeseeSpans({&span, 1});
+  IRS_NO_INLINE void HintFrom(doc_id_t from, doc_id_t max) {
+    _hinted_end = static_cast<doc_id_t>(
+      std::min<uint64_t>(uint64_t{max} + kHintDocs, doc_limits::eof()));
+    const DocSpan span{.first = from, .last = _hinted_end - 1};
+    HintSpans({&span, 1});
   }
 
   IRS_FORCE_INLINE void SetFreqLen(bool has_freq) noexcept {
@@ -623,9 +623,9 @@ class PostingLeaf {
     return landings;
   }
 
-  bool ForeseeSpans(std::span<const DocSpan> spans) {
+  bool HintSpans(std::span<const DocSpan> spans) {
     BlockRun runs[kMostSpans];
-    const auto count = ForeseeRuns(spans, runs);
+    const auto count = RunsToHint(spans, runs);
     if (count == 0) {
       return false;
     }
@@ -633,17 +633,17 @@ class PostingLeaf {
     return true;
   }
 
-  uint32_t ForeseeRuns(std::span<const DocSpan> spans, BlockRun* runs) {
+  uint32_t RunsToHint(std::span<const DocSpan> spans, BlockRun* runs) {
     SDB_ASSERT(spans.size() <= kMostSpans);
     if (spans.empty() || spans.back().last <= _last || _left_in_list == 0 ||
         !_walk.Armed()) {
       return 0;
     }
-    return ForeseeArmed(spans, runs);
+    return ArmedRunsToHint(spans, runs);
   }
 
-  IRS_NO_INLINE uint32_t ForeseeArmed(std::span<const DocSpan> spans,
-                                      BlockRun* runs) {
+  IRS_NO_INLINE uint32_t ArmedRunsToHint(std::span<const DocSpan> spans,
+                                         BlockRun* runs) {
     const auto& index = _walk.Loaded(In());
     const auto n = index.Size();
     auto block = _walk.NextBlock(_left_in_list);
@@ -741,7 +741,7 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
   [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Whole, doc_id_t>
-    _foreseen{};
+    _hinted_end{};
   BlockCursor<InputType> _walk;
 };
 

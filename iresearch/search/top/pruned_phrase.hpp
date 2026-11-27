@@ -124,14 +124,14 @@ class PrunedPhrase : public Root {
     if (b == index->Size()) {
       return doc_limits::eof();
     }
-    if (b >= _foresee_at && (_foresee_at != 0 || !_slots.InMemory(b))) {
-      Foresee(*index, b, threshold);
+    if (b >= _hint_at && (_hint_at != 0 || !_slots.InMemory(b))) {
+      HintCompetitive(*index, b, threshold);
     }
     return _slots.Seek(index->Last(b - 1) + 1);
   }
 
-  IRS_NO_INLINE void Foresee(const BlockIndex& index, uint32_t b,
-                             score_t threshold) {
+  IRS_NO_INLINE void HintCompetitive(const BlockIndex& index, uint32_t b,
+                                     score_t threshold) {
     const auto n = index.Size();
     uint32_t blocks[detail::kMostSpans];
     detail::DocSpan spans[detail::kMostSpans];
@@ -144,14 +144,14 @@ class PrunedPhrase : public Root {
       blocks[count] = k;
       spans[count++] = {.first = index.Last(k - 1) + 1, .last = index.Last(k)};
     }
-    if (!_slots.ForeseeSpans({spans, count})) {
-      _foresee_at = 0;
+    if (!_slots.HintSpans({spans, count})) {
+      _hint_at = 0;
       return;
     }
     for (uint32_t i = 0; i != count; ++i) {
-      _fetcher.Foresee(spans[i].first, spans[i].last);
+      _fetcher.Hint(spans[i].first, spans[i].last);
     }
-    _foresee_at = count == detail::kMostSpans ? blocks[count / 2] : n;
+    _hint_at = count == detail::kMostSpans ? blocks[count / 2] : n;
   }
 
   doc_id_t MatchFirst(doc_id_t doc, doc_id_t end,
@@ -289,7 +289,7 @@ class PrunedPhrase : public Root {
   ColumnArgsFetcher& _fetcher;
   doc_id_t _block_last = doc_limits::invalid();
   uint32_t _run = std::numeric_limits<uint32_t>::max();
-  uint32_t _foresee_at = 0;
+  uint32_t _hint_at = 0;
   score_t _run_score = 0;
   uint32_t _seen = 0;
   uint32_t _passed = 0;

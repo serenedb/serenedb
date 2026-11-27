@@ -98,9 +98,9 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
 
   bool Covers(doc_id_t target) const noexcept { return target <= _last; }
 
-  bool ForeseeSpans(std::span<const DocSpan> spans) {
+  bool HintSpans(std::span<const DocSpan> spans) {
     BlockRun runs[kMostSpans];
-    const auto count = this->ForeseeRuns(spans, runs);
+    const auto count = this->RunsToHint(spans, runs);
     if (count == 0) {
       return false;
     }

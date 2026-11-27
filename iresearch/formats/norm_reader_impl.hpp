@@ -129,7 +129,7 @@ class NormReaderBase : public NormReader {
     1;
   static constexpr uint64_t kMaxSpanPerPage = 2;
   static constexpr uint64_t kMaxGapPages = 2;
-  static constexpr uint64_t kForeseenPages = 16;
+  static constexpr uint64_t kHintPages = 16;
   static constexpr uint64_t kDenseBytes =
     uint64_t{kPostingBlock} * ABSL_CACHELINE_SIZE;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
@@ -157,12 +157,12 @@ class NormReaderBase : public NormReader {
     return _column->Residency().Test(first, last) > last - first;
   }
 
-  IRS_NO_INLINE void ForeseePages(doc_id_t first, doc_id_t last) noexcept {
+  IRS_NO_INLINE void HintPages(doc_id_t first, doc_id_t last) noexcept {
     const auto* const from = At(first);
     const auto* const to = End(last);
     const auto begin = PageAt(from);
     const auto end = PageAt(to - 1);
-    if (end - begin >= kForeseenPages) {
+    if (end - begin >= kHintPages) {
       return;
     }
     const auto epoch = duckdb::PageResidency::Epoch();
@@ -526,7 +526,7 @@ class PersistedNormReader : public NormReaderBase {
     Prefetch(docs.back(), next_last);
   }
 
-  void Foresee(doc_id_t first, doc_id_t last) noexcept final {
+  void Hint(doc_id_t first, doc_id_t last) noexcept final {
     if constexpr (Paged) {
       if constexpr (Multi) {
         if (first < _region->first_doc || last >= _region->end_doc) {
@@ -534,7 +534,7 @@ class PersistedNormReader : public NormReaderBase {
         }
       }
       if (_bytes != 0) {
-        ForeseePages(first, last);
+        HintPages(first, last);
       }
     }
   }

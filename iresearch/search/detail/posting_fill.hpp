@@ -175,16 +175,14 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
     }
     return SeekToLeaf(target, [this, end](doc_id_t prev) IRS_FORCE_INLINE {
       if (prev != _last) [[unlikely]] {
-        ForeseeUntil(end);
+        HintUntil(end);
       }
       Load(prev);
     });
   }
 
-  IRS_NO_INLINE void ForeseeUntil(doc_id_t end) {
-    if (_left_in_list == 0 || !_walk.Armed() || _walk.Pending()) {
-      return;
-    }
+  IRS_NO_INLINE void HintUntil(doc_id_t end) {
+    SDB_ASSERT(_left_in_list != 0 && _walk.Armed() && !_walk.Pending());
     const auto& index = _walk.Index();
     const auto n = index.Size();
     const auto first = _walk.NextBlock(_left_in_list);

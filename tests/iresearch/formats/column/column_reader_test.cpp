@@ -5993,7 +5993,7 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
   }
 }
 
-TEST_F(ColumnReaderTest, NormReaderForeseesTheNormsOfADenseSpanOnce) {
+TEST_F(ColumnReaderTest, NormReaderHintsTheNormsOfADenseSpanOnce) {
   constexpr uint64_t kDocs = 60000;
   constexpr uint32_t kRgSize = 65536;
   constexpr irs::field_id kN = 50;
@@ -6027,19 +6027,19 @@ TEST_F(ColumnReaderTest, NormReaderForeseesTheNormsOfADenseSpanOnce) {
   prefetched.clear();
   const auto reader = irs::MakePersistedNormReader(*nr);
 
-  reader->Foresee(doc(30000), doc(30127));
+  reader->Hint(doc(30000), doc(30127));
   EXPECT_EQ(prefetched.size(), 1);
   prefetched.clear();
-  reader->Foresee(doc(30000), doc(30127));
+  reader->Hint(doc(30000), doc(30127));
   EXPECT_TRUE(prefetched.empty());
-  reader->Foresee(doc(1000), doc(41000));
+  reader->Hint(doc(1000), doc(41000));
   EXPECT_TRUE(prefetched.empty());
   for (uint64_t d = 30000; d != 30128; ++d) {
     EXPECT_EQ(reader->Get(doc(d)), norm_val(d)) << "doc " << d;
   }
 }
 
-TEST_F(ColumnReaderTest, ANormReaderOfSeveralRegionsForeseesInItsRegionOnly) {
+TEST_F(ColumnReaderTest, ANormReaderOfSeveralRegionsHintsInItsRegionOnly) {
   constexpr uint64_t kDocs = 60000;
   constexpr uint32_t kRgSize = 16384;
   constexpr irs::field_id kN = 50;
@@ -6074,9 +6074,9 @@ TEST_F(ColumnReaderTest, ANormReaderOfSeveralRegionsForeseesInItsRegionOnly) {
   prefetched.clear();
   const auto reader = irs::MakePersistedNormReader(*nr);
 
-  reader->Foresee(doc(30000), doc(30127));
+  reader->Hint(doc(30000), doc(30127));
   EXPECT_TRUE(prefetched.empty());
-  reader->Foresee(doc(1000), doc(1127));
+  reader->Hint(doc(1000), doc(1127));
   EXPECT_EQ(prefetched.size(), 1);
   for (uint64_t d = 1000; d != 1128; ++d) {
     EXPECT_EQ(reader->Get(doc(d)), norm_val(d)) << "doc " << d;

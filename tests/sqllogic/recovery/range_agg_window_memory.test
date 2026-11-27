@@ -1,0 +1,45 @@
+control substitution on
+
+system ok
+for p in $(pgrep -x serened); do if tr '\0' ' ' < /proc/$p/cmdline | grep -q -- "$SDB_DATADIR"; then echo $p; fi; done | head -1 > $__TEST_DIR__/serened_pid; test -s $__TEST_DIR__/serened_pid
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); echo 5 > /proc/$pid/clear_refs; awk '/VmHWM/ {print $2}' /proc/$pid/status > $__TEST_DIR__/hwm_before
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE m = '{}') AS empty
+FROM (SELECT range_agg(datemultirange()) OVER (ORDER BY i) AS m FROM generate_series(1, 20000) AS i) t;
+----
+n	empty
+20000	20000
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE m = int4multirange(int4range(-i, 0))) AS merged
+FROM (SELECT i, range_agg(int4range(-i, 1 - i)) OVER (ORDER BY i) AS m FROM generate_series(1, 20000) AS i) t;
+----
+n	merged
+20000	20000
+
+query
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE m = (SELECT range_agg(int4range(10 * k, 10 * k + 3)) FROM generate_series(0, 49) AS k)) AS complete
+FROM (SELECT range_agg(int4range(10 * (i % 50), 10 * (i % 50) + 3))
+               OVER (ORDER BY i ROWS BETWEEN 10000 PRECEDING AND 10000 FOLLOWING) AS m
+      FROM generate_series(1, 20000) AS i) t;
+----
+n	complete
+20000	20000
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE m = '{[1,5)}') AS merged, count(*) FILTER (WHERE m = '{}') AS empty,
+       count(*) FILTER (WHERE m IS NULL) AS missing
+FROM (SELECT range_agg(CASE i % 3 WHEN 0 THEN int4range(1, 5) WHEN 2 THEN 'empty'::int4range END) OVER (ORDER BY i) AS m
+      FROM generate_series(1, 20000) AS i) t;
+----
+n	merged	empty	missing
+20000	19998	1	1
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); before=$(cat $__TEST_DIR__/hwm_before); after=$(awk '/VmHWM/ {print $2}' /proc/$pid/status); echo "peak_rss_growth_below_384MiB=$(( after - before < 393216 ))"
+----
+peak_rss_growth_below_384MiB=1

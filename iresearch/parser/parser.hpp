@@ -68,6 +68,7 @@ struct ParserContext {
     irs::field_id id{irs::field_limits::invalid()};
     irs::DictRef dict;
     irs::analysis::Tokenizer* tokenizer{nullptr};
+    bool bytes{false};
   };
 
   class FieldProvider {
@@ -79,6 +80,7 @@ struct ParserContext {
 
   irs::field_id default_field_id{irs::field_limits::invalid()};
   irs::DictRef default_dict;
+  bool default_bytes{false};
   const FieldProvider* fields{nullptr};
   irs::BooleanFilter* current_root;
   irs::analysis::Tokenizer* tokenizer;
@@ -174,6 +176,7 @@ struct ParserContext {
     *f.mutable_field_id() = FieldId();
     *f.mutable_dict() = Dict();
     f.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(value);
+    f.mutable_options()->bytes = Bytes();
     return f;
   }
 
@@ -238,6 +241,11 @@ struct ParserContext {
   irs::DictRef Dict() const noexcept {
     const auto field = CurrentField();
     return irs::field_limits::valid(field.id) ? field.dict : default_dict;
+  }
+
+  bool Bytes() const noexcept {
+    const auto field = CurrentField();
+    return irs::field_limits::valid(field.id) ? field.bytes : default_bytes;
   }
 
   irs::analysis::Tokenizer* FieldTokenizer() const noexcept {
@@ -339,8 +347,10 @@ struct ParserContext {
 
   void AddPhraseWildcard(std::string_view word) {
     const auto wildcard = FindPattern(word);
-    Emplace<irs::ByWildcardOptions>().term =
+    auto& part = Emplace<irs::ByWildcardOptions>();
+    part.term =
       Pattern(Analyze(word.substr(0, wildcard)), word.substr(wildcard));
+    part.bytes = Bytes();
   }
 
   static size_t FindPattern(std::string_view word) noexcept {
@@ -362,6 +372,7 @@ struct ParserContext {
       static_cast<uint8_t>(FuzzyDistance(part.term, has_value, similarity));
     part.max_terms = fuzzy_max_terms;
     part.with_transpositions = true;
+    part.bytes = Bytes();
     return part;
   }
 
@@ -408,6 +419,7 @@ struct ParserContext {
     const auto wildcard = FindPattern(value);
     *f.mutable_options() = irs::ByWildcardOptions{
       Pattern(Normalize(value.substr(0, wildcard)), value.substr(wildcard))};
+    f.mutable_options()->bytes = Bytes();
     return f;
   }
 
@@ -721,8 +733,8 @@ struct ParserContext {
   // Lucene's older spelling of an edit distance: a similarity between zero
   // and one, which it turns into edits by the length of the term.
   // `FuzzyQuery.floatToEdits`.
-  static int FuzzyDistance(irs::bytes_view value, bool has_value,
-                           float similarity) {
+  int FuzzyDistance(irs::bytes_view value, bool has_value,
+                    float similarity) const {
     constexpr int kMaxEdits = 2;
     if (!has_value || similarity >= kMaxEdits) {
       return kMaxEdits;
@@ -733,7 +745,8 @@ struct ParserContext {
     if (similarity <= 0.F) {
       return 0;
     }
-    const auto length = static_cast<float>(irs::utf8_utils::Length(value));
+    const auto length = static_cast<float>(
+      Bytes() ? value.size() : irs::utf8_utils::Length(value));
     return std::min(static_cast<int>((1.F - similarity) * length), kMaxEdits);
   }
 
@@ -745,6 +758,7 @@ struct ParserContext {
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);
     f.mutable_options()->max_terms = fuzzy_max_terms;
     f.mutable_options()->with_transpositions = true;
+    f.mutable_options()->bytes = Bytes();
     return f;
   }
 

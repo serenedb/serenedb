@@ -250,7 +250,9 @@ class IndexFields final : public irs::ParserContext::FieldProvider {
     out = {
       .id = info->field_id,
       .dict = TextOf(*info),
-      .tokenizer = shingle ? &shingle->Base() : info->tokenizer.analyzer.get()};
+      .tokenizer = shingle ? &shingle->Base() : info->tokenizer.analyzer.get(),
+      .bytes = term_dict::ElementKind(info->logical_type) ==
+               duckdb::LogicalTypeId::BLOB};
     _held.push_back(std::move(*info));
     return true;
   }
@@ -282,6 +284,8 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   root.SetBoost(ctx.boost);
   irs::ParserContext parser_ctx{root, column_info.field_id, TextOf(column_info),
                                 PhraseAnalyzer(ctx, column_info)};
+  parser_ctx.default_bytes = term_dict::ElementKind(column_info.logical_type) ==
+                             duckdb::LogicalTypeId::BLOB;
   std::optional<IndexFields> provider;
   if (column_info.index_fields) {
     provider.emplace(*column_info.index_fields);

@@ -1110,3 +1110,38 @@ id
 1
 2
 3
+
+statement ok
+CREATE TABLE bfz(id INTEGER PRIMARY KEY, v BYTEA)
+
+statement ok
+CREATE INDEX bfz_idx ON bfz USING inverted(id, v)
+
+statement ok
+INSERT INTO bfz VALUES (1, '\xc3a9'::bytea), (2, '\x65'::bytea), (3, '\x6162'::bytea)
+
+query
+SELECT 'levenshtein' AS form, list(id ORDER BY id) AS ids FROM bfz_idx WHERE v @@ ts_levenshtein('e', 1)
+UNION ALL SELECT 'fuzzy', list(id ORDER BY id) FROM bfz_idx WHERE v @@ to_tsquery('e~1')
+UNION ALL SELECT 'like', list(id ORDER BY id) FROM bfz_idx WHERE v @@ ts_like('_')
+UNION ALL SELECT 'wildcard', list(id ORDER BY id) FROM bfz_idx WHERE v @@ to_tsquery('?')
+UNION ALL SELECT 'regexp', list(id ORDER BY id) FROM bfz_idx WHERE v @@ ts_regexp('.')
+UNION ALL SELECT 'regex', list(id ORDER BY id) FROM bfz_idx WHERE v @@ to_tsquery('/./')
+ORDER BY form
+----
+form	ids
+fuzzy	{2}
+levenshtein	{2}
+like	{2}
+regex	{2}
+regexp	{2}
+wildcard	{2}
+
+statement ok
+INSERT INTO bfz VALUES (4, '\xc3'::bytea)
+
+query
+SELECT list(id ORDER BY id) AS ids FROM bfz_idx WHERE v @@ to_tsquery('é~0.5')
+----
+ids
+{1,4}

@@ -37,6 +37,10 @@ Tokenizer::ptr ShingleTokenizer::Make(Options opts,
   return std::make_unique<ShingleTokenizer>(std::move(base), std::move(opts));
 }
 
+duckdb::LogicalTypeId ShingleTokenizer::Output(const Options& opts) noexcept {
+  return OutputOf(*opts.base_analyzer);
+}
+
 ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
   : _analyzer{std::move(base)},
     _min{options.min_shingle_size},

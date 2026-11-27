@@ -478,6 +478,16 @@ Tokenizer::ptr PipelineTokenizer::Make(Options opts,
   return std::make_unique<PipelineTokenizer>(std::move(live_children));
 }
 
+duckdb::LogicalTypeId PipelineTokenizer::Output(const Options& opts) noexcept {
+  auto output = duckdb::LogicalTypeId::VARCHAR;
+  for (const auto& child : opts.children) {
+    if (!std::holds_alternative<KeywordTokenizer::Options>(child->config)) {
+      output = OutputOf(*child);
+    }
+  }
+  return output;
+}
+
 void PipelineTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt,
                              uint32_t count, doc_id_t first_doc,
                              TokenSink& sink, FillCtx ctx) {

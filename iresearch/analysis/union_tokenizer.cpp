@@ -27,6 +27,18 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
+namespace {
+
+duckdb::LogicalTypeId CommonOutput(duckdb::LogicalTypeId a,
+                                   duckdb::LogicalTypeId b) noexcept {
+  if (a == duckdb::LogicalTypeId::INVALID ||
+      b == duckdb::LogicalTypeId::INVALID) {
+    return duckdb::LogicalTypeId::INVALID;
+  }
+  return a == b ? a : duckdb::LogicalTypeId::BLOB;
+}
+
+}  // namespace
 
 UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
   : _subs{std::move(options)} {
@@ -44,11 +56,18 @@ UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
 
 TokenTraits UnionTokenizer::Traits() const noexcept {
   auto output = duckdb::LogicalTypeId::VARCHAR;
-  for (size_t i = 0; i != _subs.size(); ++i) {
-    const auto type = _subs[i]->Traits().output;
-    output = i == 0 || type == output ? type : duckdb::LogicalTypeId::BLOB;
+  for (const auto& sub : _subs) {
+    output = CommonOutput(output, sub->Traits().output);
   }
   return {.output = output, .explicit_pos = true};
+}
+
+duckdb::LogicalTypeId UnionTokenizer::Output(const Options& opts) noexcept {
+  auto output = duckdb::LogicalTypeId::VARCHAR;
+  for (const auto& child : opts.children) {
+    output = CommonOutput(output, OutputOf(*child));
+  }
+  return output;
 }
 
 Tokenizer::ptr UnionTokenizer::Make(Options opts,

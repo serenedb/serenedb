@@ -62,6 +62,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     return "generate_shingles";
   }
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId Output(const Options& opts) noexcept;
 
   ShingleTokenizer(Tokenizer::ptr base, Options&& options);
 

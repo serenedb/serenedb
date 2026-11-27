@@ -27,34 +27,8 @@ namespace irs::analysis {
 
 duckdb::LogicalTypeId OutputOf(const TokenizerConfig& cfg) noexcept {
   return std::visit(
-    []<typename Options>(const Options& opts) -> duckdb::LogicalTypeId {
-      if constexpr (std::is_same_v<Options, PipelineTokenizer::Options>) {
-        auto output = duckdb::LogicalTypeId::VARCHAR;
-        for (size_t i = 0; i != opts.children.size(); ++i) {
-          SDB_ASSERT(opts.children[i]);
-          const auto& child = *opts.children[i];
-          if (i == 0 || !std::holds_alternative<KeywordTokenizer::Options>(
-                          child.config)) {
-            output = OutputOf(child);
-          }
-        }
-        return output;
-      } else if constexpr (std::is_same_v<Options, UnionTokenizer::Options>) {
-        auto output = duckdb::LogicalTypeId::VARCHAR;
-        for (size_t i = 0; i != opts.children.size(); ++i) {
-          SDB_ASSERT(opts.children[i]);
-          const auto type = OutputOf(*opts.children[i]);
-          if (type == duckdb::LogicalTypeId::INVALID) {
-            return type;
-          }
-          output =
-            i == 0 || type == output ? type : duckdb::LogicalTypeId::BLOB;
-        }
-        return output;
-      } else if constexpr (std::is_same_v<Options, ShingleTokenizer::Options>) {
-        SDB_ASSERT(opts.base_analyzer);
-        return OutputOf(*opts.base_analyzer);
-      } else if constexpr (requires { Options::Owner::Output(opts); }) {
+    []<typename Options>(const Options& opts) {
+      if constexpr (requires { Options::Owner::Output(opts); }) {
         return Options::Owner::Output(opts);
       } else {
         return duckdb::LogicalTypeId::VARCHAR;

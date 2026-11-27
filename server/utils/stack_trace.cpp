@@ -183,6 +183,7 @@ void InstallHandlers() {
   }
   sigaction(SIGRTMIN, &action, nullptr);
 
+  // Put FaultHandler before the crash handler; it forwards other faults.
   auto chain = [](int signal, struct sigaction& previous) {
     sigaction(signal, nullptr, &previous);
     struct sigaction fault = previous;

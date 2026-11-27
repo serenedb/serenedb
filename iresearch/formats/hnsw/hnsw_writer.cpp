@@ -21,6 +21,7 @@
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <array>
@@ -28,16 +29,19 @@
 #include <chrono>
 #include <core_functions/array_kernels.hpp>
 #include <cstring>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <optional>
+#include <tuple>
 #include <yaclib/async/run.hpp>
 #include <yaclib/async/wait.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
+#include "iresearch/formats/ann_crew.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -117,7 +121,8 @@ struct MergeDonor {
 inline constexpr double kHnswMaxMissingRatio = 0.3;
 
 MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
-                          uint32_t d, VectorMetric metric, uint32_t m) {
+                          uint32_t d, VectorMetric metric, uint32_t m,
+                          const AnnBuildEnv* env) {
   MergeDonor best;
   uint64_t out_base = 0;
   for (const auto& src : sources) {
@@ -146,7 +151,7 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
                       .alive = src.alive_count};
   }
   if (best.index != nullptr) {
-    auto data = best.index->Load();
+    auto data = best.index->Load(AnnParallelFor(env));
     if (!data || data->graph.Empty() || data->graph.M() != m) {
       return {};
     }
@@ -318,94 +323,13 @@ std::vector<float> LoadVectors(const ColumnReader& col, ReadContext& ctx,
 
 inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
 
-class HnswCrew {
- public:
-  HnswCrew(const AnnBuildEnv* env, uint32_t want) noexcept
-    : _env{env && env->executor && want > 1 ? env : nullptr},
-      _want{_env ? want : 1U} {
-    if (_env) {
-      _held = _env->acquire(_want, 0);
-    }
-  }
-
-  HnswCrew(const HnswCrew&) = delete;
-  HnswCrew& operator=(const HnswCrew&) = delete;
-
-  ~HnswCrew() {
-    Join();
-    if (_env) {
-      _env->release(_held);
-    }
-  }
-
-  bool CanGrow() const noexcept { return _env; }
-  uint32_t Want() const noexcept { return _want; }
-
-  uint32_t Take() {
-    if (_env && _held < _want) {
-      _held += _env->acquire(_want - _held, _held);
-    }
-    return _held;
-  }
-
-  template<typename F>
-  void Spawn(F& work) {
-    for (; _spawned < _held; ++_spawned) {
-      _runs.push_back(
-        yaclib::Run(*_env->executor, [&work, w = _spawned] { work(w); }));
-    }
-  }
-
-  template<typename F>
-  void Grow(F& work) {
-    Take();
-    Spawn(work);
-  }
-
-  std::vector<yaclib::FutureOn<>>& Runs() noexcept { return _runs; }
-
-  void Join() {
-    if (!_runs.empty()) {
-      duckdb::TaskScheduler::BlockingScope blocking;
-      yaclib::Wait(_runs.begin(), _runs.end());
-      _runs.clear();
-    }
-    _spawned = 1;
-  }
-
- private:
-  const AnnBuildEnv* _env;
-  uint32_t _want;
-  uint32_t _held = 1;
-  uint32_t _spawned = 1;
-  std::vector<yaclib::FutureOn<>> _runs;
-};
-
-void FanOut(const AnnBuildEnv* env, size_t tasks,
-            absl::FunctionRef<void(size_t)> task) {
-  std::atomic<size_t> next{0};
-  const auto work = [&](size_t) {
-    for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
-      task(t);
-    }
-  };
-  HnswCrew crew{
-    env, static_cast<uint32_t>(std::clamp<size_t>(tasks, 1, kHnswMaxWorkers))};
-  crew.Spawn(work);
-  for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
-    task(t);
-    crew.Grow(work);
-  }
-  crew.Join();
-}
-
 bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                   uint32_t d, bool normalize, QuantizerWriter& qw,
                   byte_type* codes, uint32_t record_size,
                   std::vector<uint8_t>& valid, const AnnBuildEnv* env) {
-  HnswCrew crew{env, static_cast<uint32_t>(std::clamp<uint64_t>(
-                       rows * qw.EncodeWidth() / kHnswMinRowsPerEncoder, 1,
-                       kHnswMaxWorkers))};
+  AnnCrew crew{env, static_cast<uint32_t>(std::clamp<uint64_t>(
+                      rows * qw.EncodeWidth() / kHnswMinRowsPerEncoder, 1,
+                      kHnswMaxWorkers))};
   std::vector<std::unique_ptr<QuantizerWriter>> spare;
   bool clonable = true;
 
@@ -474,12 +398,19 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
     runs.clear();
     for (size_t w = 1; w < parts; ++w) {
       runs.push_back(
-        yaclib::Run(*env->executor, [&run_part, w] { run_part(w); }));
+        yaclib::Run(env->executor, [&run_part, w] { run_part(w); }));
     }
-    run_part(0);
-    if (!runs.empty()) {
-      duckdb::TaskScheduler::BlockingScope blocking;
-      yaclib::Wait(runs.begin(), runs.end());
+    {
+      absl::Cleanup wait = [&] {
+        if (!runs.empty()) {
+          duckdb::TaskScheduler::BlockingScope blocking;
+          yaclib::Wait(runs.begin(), runs.end());
+        }
+      };
+      run_part(0);
+    }
+    for (const auto& run : runs) {
+      std::ignore = run.Touch().Ok();
     }
     if (!ok.load(std::memory_order_relaxed)) {
       return false;
@@ -791,9 +722,9 @@ template<typename Factory>
 auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
                  std::span<const uint32_t> nodes, size_t rows, uint32_t warmup,
                  const AnnBuildEnv* env) -> yaclib::Future<> {
-  HnswCrew crew{env,
-                static_cast<uint32_t>(std::clamp<size_t>(
-                  nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
+  AnnCrew crew{env,
+               static_cast<uint32_t>(std::clamp<size_t>(
+                 nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
 
   const size_t serial =
     crew.CanGrow() ? std::min<size_t>(nodes.size(), warmup) : nodes.size();
@@ -828,7 +759,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
                          uint32_t ef_construction, uint64_t seed,
                          const MergeDonor& donor, const AnnBuildEnv* env)
   -> yaclib::Future<bool> {
-  auto data = donor.index->Load();
+  auto data = donor.index->Load(AnnParallelFor(env));
   SDB_ASSERT(data);
   const auto& src_graph = data->graph;
   const auto src_rows = src_graph.Size();
@@ -1005,9 +936,9 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
     return;
   }
 
-  HnswCrew crew{env,
-                static_cast<uint32_t>(std::clamp<size_t>(
-                  nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
+  AnnCrew crew{env,
+               static_cast<uint32_t>(std::clamp<size_t>(
+                 nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
   HnswInsertJob<Factory> job{graph, factory,     ef_construction,
                              {},    crew.Want(), rows};
   const auto work = [&job](size_t w) { job.RunWorker(w); };
@@ -1181,15 +1112,15 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
                               const MergeDonor& donor,
                               const std::vector<float>& vectors,
                               std::span<const uint8_t> valid, uint32_t d,
-                              bool enough) {
+                              bool enough, const AnnBuildEnv* env) {
   HnswBases::Basis basis;
   if (bases) {
     basis = bases->Find(field);
   }
   if (!basis && donor.index) {
-    if (auto data = donor.index->Load()) {
-      basis = data->rotation;
-    }
+    const auto data = donor.index->Load(AnnParallelFor(env));
+    SDB_ASSERT(data);
+    basis = data->rotation;
   }
   if (!basis && enough) {
     basis = std::make_shared<const std::vector<float>>(
@@ -1319,6 +1250,7 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
 
 yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                                    const AnnBuildEnv* env) {
+  _env = env;
   _d = static_cast<uint32_t>(col.ArraySize());
   _rows = col.RowCount();
   SDB_ASSERT(_d != 0);
@@ -1340,14 +1272,14 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const auto ef = _info.ef_construction;
   SDB_ASSERT(m != 0 && ef != 0);
   const auto donor =
-    PickMergeDonor(_merge_sources, _info.index_id, _d, _info.metric, m);
+    PickMergeDonor(_merge_sources, _info.index_id, _d, _info.metric, m, env);
 
   if (_qw && RotatesCodes(_info, _d)) {
     auto vectors =
       LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
     const bool enough = PanoramaEnough(valid, _d);
-    const auto basis =
-      AcquireBasis(_bases, _info.index_id, donor, vectors, valid, _d, enough);
+    const auto basis = AcquireBasis(_bases, _info.index_id, donor, vectors,
+                                    valid, _d, enough, env);
     if (basis && enough) {
       RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
       const auto stats = EncodeRotated(vectors, valid, env);
@@ -1376,7 +1308,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     if (RotationApplies(_info.metric, _d)) {
       const bool enough = PanoramaEnough(valid, _d);
       const auto basis = AcquireBasis(_bases, _info.index_id, donor, _vectors,
-                                      valid, _d, enough);
+                                      valid, _d, enough, env);
       if (basis && enough) {
         RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
         _norms = RowNorms(_vectors, valid.size(), _d);
@@ -1448,7 +1380,14 @@ void HnswWriter::Flush() {
     out.WriteData(reinterpret_cast<const byte_type*>(values.data()),
                   values.size() * sizeof(float));
   };
-  _graph.Serialize(out);
+  HnswGraphFrames graph;
+  bool raw = false;
+  SDB_IF_FAILURE("irs::HnswRawGraph") { raw = true; }
+  if (raw) {
+    _graph.Serialize(out);
+  } else {
+    graph = _graph.SerializePacked(out, AnnParallelFor(_env));
+  }
   if (_qw) {
     _qw->Serialize(out);
     if (!_centroid.empty()) {
@@ -1466,6 +1405,7 @@ void HnswWriter::Flush() {
   _idx->AddHnsw(_info.index_id, HnswMeta{
                                   .offset = offset,
                                   .header = header,
+                                  .graph_compression = std::move(graph),
                                 });
 
   _vectors.clear();

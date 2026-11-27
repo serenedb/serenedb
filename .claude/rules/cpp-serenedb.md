@@ -36,7 +36,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - `std::unique_ptr` for ownership, `std::shared_ptr` only for real shared ownership, `make_unique`/`make_shared`; no raw owning pointers; references where ownership doesn't matter; values on the stack over the heap; no `&&` for trivially copyable types.
 - Errors are `THROW_SQL_ERROR` (`check-no-raw-throw` rejects any other `throw` in `server/` except a rethrow, `irs::SqlException` and `duckdb::NotImplementedException`).
 - Cleanup on every way out is an `absl::Cleanup` declared before the call, never `catch (...) { Clean(); throw; }`.
-- `SDB_ASSERT(cond)`, without a message, states an invariant, also where a comment would; `SDB_ENSURE`/`SDB_VERIFY` only for guarantees that are hard to see locally. A condition that can really fail gets real handling.
+- `SDB_ASSERT(cond)`, without a message, states an invariant, also where a comment would; `SDB_ENSURE`/`SDB_VERIFY` only for guarantees that are hard to see locally. A condition that can really fail gets real handling. Its condition has no side effects: only `SDB_DEV` builds evaluate it, so work done inside it silently vanishes from release builds.
 
 ## Libraries
 
@@ -64,6 +64,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 
 - SereneDB is a fast, good analytical database first and PostgreSQL-compatible second. PostgreSQL is the default direction where nothing else decides: our own errors and the semantics PostgreSQL defines (how a foreign key meets a trigger) follow it. It is never a spec to copy, nor an argument against a feature it lacks. We differ on purpose where its choice is worse, where following it would slow down paths unrelated to the PostgreSQL-only behavior, where the code lives in a dependency, or where matching it costs more than it gives; and we keep designs it doesn't share, such as optimistic MVCC.
 - SQL the server issues itself is built with DuckDB's C++ API, not as text. Client SQL is the parser's job: never match or rewrite it as text; patch the parser or transformer.
+- An oid never carries meaning in its bits or another object's oid: an object PostgreSQL gives an oid of its own (a constraint, a rule, a row type) gets one allocated, stored with its owner and aliased to it.
 - Internal work uses the `ClientContext` already in play, passed as the first parameter; never a new `duckdb::Connection`.
 - A new cap or limit is a `SET` variable read through the `Get*Setting` functions of `query/config.h`.
 - A name a user sees that SereneDB adds starts with `sdb_`/`SDB_`: a setting, function, system table, storage version, environment variable or file. DuckDB's own system objects take the same prefix (`system_object_prefix`). A name that mirrors one of PostgreSQL's takes its form instead: `POSTGRES`, `postgres` and `PostgreSQL` become `SERENEDB`, `serenedb` and `SereneDB`; `PG` and `pg` become `SDB` and `sdb` (`SERENEDB_HOST_AUTH_METHOD`, `serenedb (SereneDB) 26.11.0`). User-facing text names DuckDB only where it means DuckDB: its database files and storage versions, `read_duckdb`, its extensions.

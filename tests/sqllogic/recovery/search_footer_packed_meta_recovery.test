@@ -1,0 +1,108 @@
+control substitution on
+
+statement ok
+CREATE TABLE fpm (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX fpm_tag ON fpm USING inverted (tag);
+
+
+statement ok
+SET sdb_faults = 'irs::FooterMetaUnpacked';
+
+
+statement ok
+INSERT INTO fpm SELECT i, 'old' || (i % 10)::TEXT FROM range(0, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) fpm;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO fpm SELECT i, 'new' || (i % 10)::TEXT FROM range(1000, 3000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) fpm;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*), sum(id) FROM fpm;
+----
+count	sum
+3000	4498500
+
+
+connection after_crash
+query
+SELECT id, tag FROM fpm_tag WHERE tag @@ 'old3' ORDER BY id LIMIT 3;
+----
+id	tag
+3	old3
+13	old3
+23	old3
+
+
+connection after_crash
+query
+SELECT count(*) FROM fpm_tag WHERE tag @@ 'new7';
+----
+count
+200
+
+
+connection after_crash
+statement ok
+VACUUM (COMPACT_TABLE) fpm;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*), sum(id) FROM fpm;
+----
+count	sum
+3000	4498500
+
+
+connection after_second_crash
+query
+SELECT id, tag FROM fpm_tag WHERE tag @@ 'old3' ORDER BY id LIMIT 3;
+----
+id	tag
+3	old3
+13	old3
+23	old3
+
+
+connection after_second_crash
+query
+SELECT count(*) FROM fpm_tag WHERE tag @@ 'new7';
+----
+count
+200

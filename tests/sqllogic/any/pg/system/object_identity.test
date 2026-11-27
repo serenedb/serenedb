@@ -321,6 +321,17 @@ integer[]	type	pg_catalog	_int4	integer[]
 ident_s.mood[]	type	ident_s	_mood	ident_s.mood[]
 
 
+query
+SELECT t, (pg_identify_object('pg_type'::regclass, t::regtype, 0)).*,
+       pg_describe_object('pg_type'::regclass, t::regtype, 0) AS description
+FROM (VALUES (1, 'ident_s.w'), (2, 'ident_s.w[]'), (3, 'ident_s.t[]')) v(i, t) ORDER BY i;
+----
+t	type	schema	name	identity	description
+ident_s.w	type	ident_s	w	ident_s.w	type ident_s.w
+ident_s.w[]	type	ident_s	_w	ident_s.w[]	type ident_s.w[]
+ident_s.t[]	type	ident_s	_t	ident_s.t[]	type ident_s.t[]
+
+
 # A builtin type's identity is format_type's SQL-standard name where it has
 # one, else its schema-qualified, quoted name.
 query

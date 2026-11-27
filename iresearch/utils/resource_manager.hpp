@@ -54,15 +54,6 @@ struct IResourceManager {
 #endif
     SDB_ASSERT(v != 0);
   }
-
-  IRS_FORCE_INLINE void DecreaseChecked(size_t v) noexcept {
-#ifdef SDB_DEV
-    SDB_ASSERT(this != &gForbidden);
-#endif
-    if (v != 0) {
-      Decrease(v);
-    }
-  }
 };
 
 // TODO(mbkkt) rename to ManagedStdAllocator

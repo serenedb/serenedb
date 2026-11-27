@@ -1,8 +1,9 @@
 """Concurrent OTLP/HTTP and Elasticsearch _bulk ingestion on one server.
 
-Writers on separate keep-alive connections interleave every OTLP signal and
-_bulk into two indexes, while readers query over pg-wire and _search. Then the
-server must still be alive and every row must be readable.
+Writers, each with a keep-alive connection to the OTLP listener and one to the
+Elasticsearch listener, interleave every OTLP signal and _bulk into two
+indexes, while readers query over pg-wire and _search. Then the server must
+still be alive and every row must be readable.
 """
 
 from __future__ import annotations
@@ -76,11 +77,11 @@ def _call(conn: http.client.HTTPConnection, method: str, path: str,
 def server(tmp_path: Path):
     serened = Serened(SERENED_BIN, datadir_root=str(tmp_path),
                       log_path=str(tmp_path / "serened.log"),
-                      http="api=otel&api=es")
+                      http=("api=otel", "api=es"))
     serened.start()
     pg = psycopg.connect(serened.dsn(), autocommit=True)
     try:
-        yield serened.proc, pg, serened.http_port
+        yield serened.proc, pg, *serened.http_ports
     finally:
         pg.close()
         returncode = serened.graceful_stop(timeout=60)
@@ -107,51 +108,55 @@ def _bulk_payload(writer: int, round_: int) -> str:
 
 
 def test_concurrent_otel_and_es_ingest(server) -> None:
-    proc, pg, http_port = server
+    proc, pg, otel_port, es_port = server
 
-    setup = http.client.HTTPConnection("127.0.0.1", http_port, timeout=120)
+    otel = http.client.HTTPConnection("127.0.0.1", otel_port, timeout=120)
+    es = http.client.HTTPConnection("127.0.0.1", es_port, timeout=120)
     mapping = json.dumps({"mappings": {"properties": {
         "n": {"type": "integer"}, "writer": {"type": "integer"},
         "title": {"type": "text"}}}}).encode()
     for index in INDEXES:
-        assert _call(setup, "PUT", f"/{index}", mapping)[0] == 200
+        assert _call(es, "PUT", f"/{index}", mapping)[0] == 200
 
     before = _counts(pg)
     for path, fixture, content_type in OTLP:
-        status, body = _call(setup, "POST", path,
+        status, body = _call(otel, "POST", path,
                              _body(fixture, content_type), content_type)
         assert status == 200, (path, fixture, body)
     per_round = {t: n - before[t] for t, n in _counts(pg).items()}
     assert all(per_round[t] > 0 for t in OTEL_TABLES), per_round
-    setup.close()
+    otel.close()
+    es.close()
     start = _counts(pg)
 
     stop = threading.Event()
     failures: list[str] = []
 
     def writer(w: int) -> None:
-        conn = http.client.HTTPConnection("127.0.0.1", http_port, timeout=120)
+        otel = http.client.HTTPConnection("127.0.0.1", otel_port, timeout=120)
+        es = http.client.HTTPConnection("127.0.0.1", es_port, timeout=120)
         try:
             for r in range(ROUNDS):
                 for path, fixture, content_type in OTLP:
-                    status, body = _call(conn, "POST", path,
+                    status, body = _call(otel, "POST", path,
                                          _body(fixture, content_type),
                                          content_type)
                     if status != 200:
                         failures.append(f"{path} {fixture}: {status} {body!r}")
                 index = INDEXES[(w + r) % len(INDEXES)]
-                status, body = _call(conn, "POST", f"/{index}/_bulk",
+                status, body = _call(es, "POST", f"/{index}/_bulk",
                                      _bulk_payload(w, r).encode(),
                                      "application/x-ndjson")
                 reply = json.loads(body) if status == 200 else {}
                 if status != 200 or reply.get("errors"):
                     failures.append(f"_bulk {index}: {status} {body[:500]!r}")
         finally:
-            conn.close()
+            otel.close()
+            es.close()
 
     def reader() -> None:
         pg_conn = psycopg.connect(pg.info.dsn, autocommit=True)
-        http_conn = http.client.HTTPConnection("127.0.0.1", http_port,
+        http_conn = http.client.HTTPConnection("127.0.0.1", es_port,
                                                timeout=120)
         try:
             while not stop.is_set():
@@ -186,7 +191,7 @@ def test_concurrent_otel_and_es_ingest(server) -> None:
     for table in OTEL_TABLES:
         assert counts[table] - start[table] == per_round[table] * WRITERS * ROUNDS, table
 
-    check = http.client.HTTPConnection("127.0.0.1", http_port, timeout=120)
+    check = http.client.HTTPConnection("127.0.0.1", es_port, timeout=120)
     assert _call(check, "POST", "/_refresh")[0] == 200
     expected_docs = {index: 0 for index in INDEXES}
     for w in range(WRITERS):

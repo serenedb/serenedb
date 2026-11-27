@@ -20,6 +20,7 @@
 
 #include <absl/strings/ascii.h>
 #include <re2/byte_set_finder.h>
+#include <util/utf.h>
 
 #include <algorithm>
 #include <array>
@@ -29,6 +30,7 @@
 #include <iresearch/analysis/text/words/masks.hpp>
 #include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/utils/byte_set.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -581,9 +583,9 @@ TEST(split_by_non_alpha_tokenizer_test, fast_word_ranges_are_words) {
     auto a = SplitByNonAlphaTokenizer::Make({.chars = chars});
     for (const auto [lo, hi] : kRanges) {
       for (uint32_t cp = lo; cp <= hi; ++cp) {
-        std::string v(2 + irs::utf8_utils::kMaxCharSize, 'a');
-        v.resize(1 + irs::utf8_utils::FromChar32(
-                       cp, reinterpret_cast<irs::byte_type*>(v.data() + 1)));
+        const re2::Rune rune = cp;
+        std::string v(2 + re2::UTFmax, 'a');
+        v.resize(1 + re2::runetochar(v.data() + 1, &rune));
         v += 'b';
         const auto tokens = Pull(*a, v);
         ASSERT_EQ(1u, tokens.size()) << std::hex << cp;
@@ -920,7 +922,7 @@ TEST(classify_block_test, ByteSetFinderAgainstScalar) {
   };
   irs::byte_type block[kBlock];
   for (size_t variant = 0; variant < 200; ++variant) {
-    irs::analysis::classify::ByteSet bytes;
+    irs::ByteSet bytes;
     const size_t count = 1 + next() % 40;
     for (size_t i = 0; i < count; ++i) {
       bytes.Add(static_cast<irs::byte_type>(variant % 2 == 0 ? next() % 128
@@ -954,7 +956,7 @@ TEST(classify_block_test, ByteSet16AgainstScalar) {
     return static_cast<size_t>(seed >> 33);
   };
   irs::byte_type block[kBlock];
-  const auto check = [&](const irs::analysis::classify::ByteSet& bytes,
+  const auto check = [&](const irs::ByteSet& bytes,
                          const std::array<bool, 256>& members, size_t variant) {
     for (size_t first = 0; first < 256; first += kBlock) {
       const size_t rotate = next();
@@ -966,8 +968,7 @@ TEST(classify_block_test, ByteSet16AgainstScalar) {
         for (size_t i = 0; i < kBlock; ++i) {
           expect |= static_cast<uint32_t>(members[block[i]]) << i;
         }
-        ASSERT_EQ(expect,
-                  irs::analysis::classify::ClassifyByteSet16(block, bytes))
+        ASSERT_EQ(expect, irs::ClassifyByteSet16(block, bytes))
           << "variant=" << variant << " first=" << first;
         for (size_t i = 0; i < kBlock; ++i) {
           block[i] = static_cast<irs::byte_type>(next() % 256);
@@ -976,14 +977,14 @@ TEST(classify_block_test, ByteSet16AgainstScalar) {
     }
   };
   for (size_t member = 0; member < 256; ++member) {
-    irs::analysis::classify::ByteSet bytes;
+    irs::ByteSet bytes;
     std::array<bool, 256> members{};
     bytes.Add(static_cast<irs::byte_type>(member));
     members[member] = true;
     check(bytes, members, member);
   }
   for (size_t variant = 0; variant < 400; ++variant) {
-    irs::analysis::classify::ByteSet bytes;
+    irs::ByteSet bytes;
     std::array<bool, 256> members{};
     const size_t count = variant % 2 == 0 ? next() % 24 : next() % 512;
     for (size_t i = 0; i < count; ++i) {

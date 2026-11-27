@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -87,14 +88,10 @@ bool ParseBool(std::string_view option, const duckdb::Value& value) {
   if (value.type().id() == duckdb::LogicalTypeId::BOOLEAN) {
     return value.GetValue<bool>();
   }
-  const auto text = absl::AsciiStrToLower(value.ToString());
-  if (text == "true" || text == "on" || text == "yes" || text == "1" ||
-      text == "t" || text == "y") {
-    return true;
-  }
-  if (text == "false" || text == "off" || text == "no" || text == "0" ||
-      text == "f" || text == "n") {
-    return false;
+  const auto text = value.ToString();
+  if (bool parsed = false;
+      duckdb::TryCastStringBool(text.data(), text.size(), parsed, false)) {
+    return parsed;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                   ERR_MSG(option, " requires a Boolean value"));

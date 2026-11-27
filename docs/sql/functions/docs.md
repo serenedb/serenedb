@@ -257,11 +257,13 @@ wraps for itself.
 ## Documentation for AI agents over MCP
 
 An HTTP listener with `?api=mcp` serves this documentation to AI agents over the
-[Model Context Protocol](https://modelcontextprotocol.io). The endpoint is `POST /_mcp`.
+[Model Context Protocol](https://modelcontextprotocol.io). The endpoint is `POST /mcp`.
 It speaks JSON-RPC 2.0 and accepts protocol versions `2025-06-18`, `2025-03-26` and
 `2024-11-05`. A request body is at most 4 MiB, the limit of the MCP TypeScript SDK's
 HTTP transport, and a larger one answers `413`. A listener that also serves other
-APIs (`?api=mcp&api=es`) applies the largest of their limits to every request.
+APIs (`?api=mcp&api=otel`) applies the largest of their limits to every request. The
+[Elasticsearch API](../../clients/elasticsearch-api.md#enabling-the-api) takes a
+listener of its own, so it never shares a port with this endpoint.
 
 ```bash
 serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:8080?api=mcp'
@@ -270,13 +272,13 @@ serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:8080?api=mcp
 `--listen` takes every endpoint in one comma-separated value. A second `--listen`
 replaces the first, so keep the PostgreSQL endpoint in the same list.
 
-Point your agent at `http://127.0.0.1:8080/_mcp`. Auth works like every other HTTP API:
+Point your agent at `http://127.0.0.1:8080/mcp`. Auth works like every other HTTP API:
 Basic auth against the catalog roles. Every request needs the header, from the local
 machine too, and the endpoint answers 401 without it. A role without a password only
 works from the local machine. To register the endpoint with Claude Code:
 
 ```bash
-claude mcp add --transport http serenedb http://127.0.0.1:8080/_mcp \
+claude mcp add --transport http serenedb http://127.0.0.1:8080/mcp \
   --header "Authorization: Basic $(printf 'postgres:' | base64)"
 ```
 
@@ -299,6 +301,6 @@ serves, so the plan shows whether an inverted index serves a predicate.
 Check that the endpoint answers:
 
 ```bash
-curl -s -u postgres: http://127.0.0.1:8080/_mcp -H 'Content-Type: application/json' \
+curl -s -u postgres: http://127.0.0.1:8080/mcp -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```

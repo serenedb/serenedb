@@ -199,8 +199,8 @@ class RawVectorReader {
     }
     const auto& m = blocks[w.block];
     const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
-    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
-        elem < w.begin || elem + _d > w.end) {
+    SDB_ASSERT(elem >= w.begin && elem < w.end);
+    if (m.codec->type != codecs::CodecType::Uncompressed || elem + _d > w.end) {
       return nullptr;
     }
     const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
@@ -239,12 +239,12 @@ class RawVectorReader {
       return;
     }
     const auto& m = blocks[w.block];
-    const uint64_t end =
-      std::min<uint64_t>(elem + static_cast<uint64_t>(count) * _d, w.end);
-    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
-        elem < w.begin || end <= elem) {
+    SDB_ASSERT(elem >= w.begin && elem < w.end && count != 0);
+    if (m.codec->type != codecs::CodecType::Uncompressed) {
       return;
     }
+    const uint64_t end =
+      std::min<uint64_t>(elem + static_cast<uint64_t>(count) * _d, w.end);
     file->Hint(m.file_offset + (elem - w.begin) * sizeof(float),
                (end - elem) * sizeof(float));
   }
@@ -263,8 +263,8 @@ class RawVectorReader {
     const auto window = _win;
     const auto& blocks = child->DataBlocks();
     const auto& meta = blocks[window.block];
-    if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
-        elem >= window.begin && elem < window.end) {
+    SDB_ASSERT(elem >= window.begin && elem < window.end);
+    if (meta.codec->type == codecs::CodecType::Uncompressed) {
       const uint64_t want = elem + static_cast<uint64_t>(count) * _d;
       uint64_t end = window.end;
       for (auto w = window; end < want;) {
@@ -273,8 +273,7 @@ class RawVectorReader {
           break;
         }
         const auto& m = blocks[next.block];
-        if (m.codec->type !=
-              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+        if (m.codec->type != codecs::CodecType::Uncompressed ||
             m.file_offset !=
               meta.file_offset + (next.begin - window.begin) * sizeof(float)) {
           break;

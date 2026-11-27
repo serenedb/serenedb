@@ -67,3 +67,28 @@ SELECT count(*) AS n, sum(n)::BIGINT AS total FROM rg_default WHERE body @@ 'fox
 ----
 n	total
 20000	599970000
+
+
+statement ok
+CREATE INDEX rg_small_n_idx ON rg_small USING inverted (n)
+
+
+query
+SELECT count(*) AS n FROM rg_small WHERE n >= 300 AND n < 3000;
+----
+n
+900
+
+
+query
+SELECT count(*) AS n FROM rg_small WHERE n @@ ts_between(300, 3000, true, false);
+----
+n
+900
+
+
+query
+SELECT count(*) AS n FROM rg_small WHERE n > 30000;
+----
+n
+9999

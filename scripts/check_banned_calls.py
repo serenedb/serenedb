@@ -32,8 +32,18 @@ BANNED = [
         "absl::c_{name} (a projection becomes a lambda)",
     ),
     (
-        re.compile(r"\bstd::(unordered_(?:map|set|multimap|multiset))\b"),
+        re.compile(
+            r"\b(std::unordered_(?:multi)?(?:map|set)"
+            r"|absl::(?:flat|node)_hash_(?:map|set))\b"
+        ),
         "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
+    ),
+    (
+        re.compile(
+            r"#\s*include\s*<(unordered_(?:map|set)"
+            r"|absl/container/(?:flat|node)_hash_(?:map|set)\.h)>"
+        ),
+        "the iresearch/utils/containers header",
     ),
     (
         re.compile(r"(?<![\w:])(?:std::)?(v?(?:f|s|sn)?printf)\s*\("),
@@ -53,8 +63,12 @@ BANNED = [
     ),
 ]
 
-EXCEPTIONS = {
-    "iresearch/utils/crash_handler.cpp": {"snprintf"},
+EXCEPTIONS: dict[str, set[str]] = {
+    f"iresearch/utils/containers/{kind}.hpp": {
+        f"absl::{kind}",
+        f"absl/container/{kind}.h",
+    }
+    for kind in ("flat_hash_map", "flat_hash_set", "node_hash_map", "node_hash_set")
 }
 
 

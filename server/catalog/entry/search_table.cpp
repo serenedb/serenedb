@@ -32,6 +32,7 @@
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/fault_points.hpp>
@@ -63,11 +64,13 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/composite_reader.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -276,6 +279,64 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
                                                std::move(fields));
 }
 
+irs::containers::FlatHashSet<duckdb::PhysicalType> LeafPhysicalTypes(
+  const duckdb::LogicalType& type) {
+  irs::containers::FlatHashSet<duckdb::PhysicalType> leaves;
+  const auto collect = [&](this const auto& self,
+                           const duckdb::LogicalType& t) -> void {
+    switch (t.id()) {
+      case duckdb::LogicalTypeId::ARRAY:
+        return self(duckdb::ArrayType::GetChildType(t));
+      case duckdb::LogicalTypeId::LIST:
+      case duckdb::LogicalTypeId::MAP:
+        return self(duckdb::ListType::GetChildType(t));
+      case duckdb::LogicalTypeId::STRUCT:
+      case duckdb::LogicalTypeId::TUPLE:
+      case duckdb::LogicalTypeId::UNION:
+        for (const auto& field : duckdb::StructType::GetChildTypes(t)) {
+          self(field.second);
+        }
+        return;
+      default:
+        leaves.emplace(t.InternalType());
+    }
+  };
+  collect(type);
+  return leaves;
+}
+
+void CheckCompressionLevel(std::string_view column_name,
+                           irs::codecs::CodecType codec, uint32_t level) {
+  if (level == 0) {
+    return;
+  }
+  const uint32_t max_level = irs::codecs::MaxLevel(codec);
+  const auto name =
+    duckdb::StringUtil::Lower(std::string{magic_enum::enum_name(codec)});
+  if (max_level == 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column \"", column_name, "\": compression '", name,
+                            "' takes no compression_level"));
+  }
+  if (level > max_level) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column \"", column_name, "\": compression_level ", level,
+              " is out of range for '", name, "' (1 to ", max_level, ")"));
+  }
+}
+
+[[noreturn]] void ThrowCodecMismatch(std::string_view column_name,
+                                     std::string_view codec,
+                                     const duckdb::LogicalType& column_type,
+                                     duckdb::PhysicalType physical) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                  ERR_MSG("Can't compress column \"", column_name,
+                          "\" with type '", column_type.ToString(),
+                          "' (physical: ", duckdb::EnumUtil::ToString(physical),
+                          ") using compression type '", codec, "'"));
+}
+
 }  // namespace
 
 void RequireSearchTableIndexOption(std::string_view name) {
@@ -295,6 +356,34 @@ void RequireSearchTableIndexOption(std::string_view name) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG(name, " does not apply to an index on a table"));
   }
+}
+
+irs::codecs::CodecType CheckColumnCodec(
+  std::string_view column_name, irs::codecs::CodecType codec,
+  std::string_view codec_name, uint32_t level,
+  const duckdb::LogicalType& column_type) {
+  if (codec == irs::codecs::kNoCodec) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column \"", column_name,
+                            "\": unknown compression '", codec_name, "'"));
+  }
+  CheckCompressionLevel(column_name, codec, level);
+  if (codec == irs::codecs::CodecType::Auto) {
+    return codec;
+  }
+  const auto compresses = [&](duckdb::PhysicalType physical) {
+    return irs::codecs::Writes(codec, physical);
+  };
+  const auto physical = column_type.InternalType();
+  if (compresses(physical)) {
+    return codec;
+  }
+  if (const auto leaves = LeafPhysicalTypes(column_type);
+      !leaves.empty() && absl::c_all_of(leaves, compresses)) {
+    return codec;
+  }
+  ThrowCodecMismatch(column_name, magic_enum::enum_name(codec), column_type,
+                     physical);
 }
 
 SearchTableEntry::SearchTableEntry(
@@ -380,12 +469,12 @@ void SearchTableEntry::ApplyKeys() const {
 namespace {
 
 void AppendIResearchBlockRows(
-  const duckdb::QueryContext& context, irs::ReadContext* read,
-  const irs::ColumnReader& node, duckdb::idx_t column_id,
-  std::vector<duckdb::idx_t>& path, std::string_view type_name, size_t segment,
+  irs::ReadContext* read, const irs::ColumnReader& node,
+  duckdb::idx_t column_id, std::vector<duckdb::idx_t>& path, size_t segment,
   uint64_t row_base, const duckdb::virtual_column_map_t& virtual_columns,
   duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
   const auto blocks = node.DataBlocks();
+  const auto type_name = node.Type().ToString();
   std::string path_str = "[";
   for (size_t i = 0; i < path.size(); ++i) {
     if (i > 0) {
@@ -408,65 +497,54 @@ void AppendIResearchBlockRows(
     info.column_id = column_id;
     info.column_path = path_str;
     info.segment_idx = segment;
-    info.segment_type.assign(type_name);
+    info.segment_type = type_name;
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
+    SDB_ASSERT(meta.codec);
     info.compression_type =
-      meta.codec ? duckdb::CompressionTypeToString(meta.codec->type)
-                 : std::string{"Uncompressed"};
+      std::string{magic_enum::enum_name(meta.codec->type)};
     info.segment_stats = meta.statistics.ToStruct();
     info.has_updates = false;
     info.persistent = true;
     info.block_id = INVALID_BLOCK;
     info.block_offset = meta.file_offset;
-    if (read && meta.codec && meta.codec->get_segment_info) {
+    info.segment_info = absl::StrCat("byte_size: ", meta.byte_size);
+    if (meta.shared_size != 0) {
+      absl::StrAppend(&info.segment_info,
+                      ", shared_offset: ", meta.shared_offset,
+                      ", shared_size: ", meta.shared_size);
+    }
+    if (read && meta.byte_size != 0 &&
+        meta.codec->decompression.get_segment_info) {
       const auto opened = node.OpenSegment(block, *read);
-      std::vector<std::string> modes;
       for (const auto& [mode, count] :
-           meta.codec->get_segment_info(context, *opened)) {
-        modes.push_back(absl::StrCat(mode, ": ", count));
+           meta.codec->decompression.get_segment_info(*opened)) {
+        absl::StrAppend(&info.segment_info, ", ", mode, ": ", count);
       }
-      info.segment_info = absl::StrJoin(modes, ", ");
     }
   }
 }
 
-void WalkIResearchColumn(const duckdb::QueryContext& context,
-                         irs::ReadContext* read, const irs::ColumnReader& node,
+void WalkIResearchColumn(irs::ReadContext* read, const irs::ColumnReader& node,
                          duckdb::idx_t column_id,
                          std::vector<duckdb::idx_t>& path, size_t segment,
                          uint64_t row_base,
                          const duckdb::virtual_column_map_t& virtual_columns,
                          duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
-  AppendIResearchBlockRows(context, read, node, column_id, path,
-                           node.Type().ToString(), segment, row_base,
+  AppendIResearchBlockRows(read, node, column_id, path, segment, row_base,
                            virtual_columns, out);
-  if (const auto* validity = node.Validity()) {
-    path.emplace_back(0);
-    AppendIResearchBlockRows(context, read, *validity, column_id, path,
-                             "VALIDITY", segment, row_base, virtual_columns,
-                             out);
+  node.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    path.emplace_back(sub.index);
+    WalkIResearchColumn(read, sub.column, column_id, path, segment,
+                        row_base + sub.first_row, virtual_columns, out);
     path.pop_back();
-  }
-  if (duckdb::StructType::IsStruct(node.Type())) {
-    for (size_t i = 0; i < node.StructFieldCount(); ++i) {
-      path.emplace_back(i + 1);
-      WalkIResearchColumn(context, read, node.StructField(i), column_id, path,
-                          segment, row_base, virtual_columns, out);
-      path.pop_back();
-    }
-  } else if (const auto* child = node.Child()) {
-    path.emplace_back(1);
-    WalkIResearchColumn(context, read, *child, column_id, path, segment,
-                        row_base, virtual_columns, out);
-    path.pop_back();
-  }
+  });
 }
 
 }  // namespace
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
-  const duckdb::QueryContext& context, const irs::CompositeReader& reader,
+  const duckdb::QueryContext&, const irs::CompositeReader& reader,
   const duckdb::TableCatalogEntry& table, duckdb::column_t key_column,
   bool segment_info) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
@@ -496,9 +574,8 @@ duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
           continue;
         }
         std::vector<duckdb::idx_t> path{*column_id};
-        WalkIResearchColumn(context, read ? &*read : nullptr, *column,
-                            *column_id, path, segment, start, virtual_columns,
-                            result);
+        WalkIResearchColumn(read ? &*read : nullptr, *column, *column_id, path,
+                            segment, start, virtual_columns, result);
       }
     }
     start += sub.docs_count();
@@ -1237,6 +1314,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
       return AlterColumnType(context,
                              alter.Cast<duckdb::ChangeColumnTypeInfo>());
+    case duckdb::AlterTableType::SET_COLUMN_COMPRESSION:
+      return AlterColumnCompression(
+        context, alter.Cast<duckdb::SetColumnCompressionInfo>());
     case duckdb::AlterTableType::SET_TABLE_OPTIONS:
     case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
       return AlterOptions(context, alter);
@@ -1595,6 +1675,24 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
     .DeferToCommit([storage = _storage, options = altered->_options] {
       storage->ApplyOptions(options);
     });
+  return altered;
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry>
+SearchTableEntry::AlterColumnCompression(
+  duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info) {
+  auto definition = Definition();
+  auto& column =
+    definition->columns.GetColumnMutable(GetColumnIndex(info.column_name));
+  if (column.Category() == duckdb::TableColumnType::GENERATED_VIRTUAL) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot SET COMPRESSION for generated column \"",
+                            column.Name().GetIdentifierName(), "\""));
+  }
+  column.SetCompressionType(info.compression_type);
+  column.SetCompressionLevel(info.compression_level);
+  auto altered = Altered(context, info, std::move(definition));
+  altered->ReplaceStoreColumnsAtCommit(context);
   return altered;
 }
 

@@ -67,9 +67,9 @@ id	d
 
 
 statement error
-CREATE INDEX pit_inv ON pit USING inverted (amt);
+CREATE INDEX pit_inv ON pit USING inverted (m);
 ----
-db error: ERROR: Column 'amt' has unsupported type DECIMAL(10,2) and can not be indexed
+db error: ERROR: Column 'm' has unsupported type pit_mood and can not be indexed
 
 
 statement ok

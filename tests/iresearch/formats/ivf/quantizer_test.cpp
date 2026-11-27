@@ -34,7 +34,6 @@
 #include <iresearch/formats/ivf/quantizers/common.hpp>
 #include <iresearch/index/vector_distance.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
-#include <iresearch/utils/misc.hpp>
 #include <limits>
 #include <memory>
 #include <numeric>

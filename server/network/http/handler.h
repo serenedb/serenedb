@@ -40,6 +40,7 @@ namespace duckdb {
 
 class Connection;
 class PreparedStatement;
+class SQLStatement;
 
 }  // namespace duckdb
 namespace sdb::network {
@@ -69,6 +70,11 @@ constexpr size_t PreparedSlotCapacity(PreparedSlotId slot) noexcept {
 
 using PreparedCache = query::PreparedCache<std::string>;
 
+enum class SessionScope : uint8_t {
+  Connection,
+  Request,
+};
+
 // Session-scoped services a handler may need; implemented by the session and
 // valid for the duration of one Handle call (on the session's duckdb task).
 class RequestContext {
@@ -89,6 +95,8 @@ class RequestContext {
   // RunQuery for a statement prepared on Connection(), with no parameters.
   virtual yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunPrepared(
     duckdb::PreparedStatement& statement) = 0;
+  virtual yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunStatement(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement) = 0;
   // A per-session slot for a statement prepared on Connection(); a handler
   // prepares into it once and re-executes it on later requests.
   virtual PreparedCache& PreparedSlot(PreparedSlotId slot) = 0;

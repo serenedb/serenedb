@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 #include <absl/synchronization/mutex.h>
@@ -77,11 +76,12 @@ class HotKeys {
     irs::containers::FlatHashMap<HashedKey, irs::doc_id_t, HashedKeyHash,
                                  HashedKeyEq>
       newest;
-    absl::flat_hash_map<irs::doc_id_t, irs::doc_id_t> previous;
+    irs::containers::FlatHashMap<irs::doc_id_t, irs::doc_id_t> previous;
   };
 
   mutable absl::Mutex _mutex;
-  absl::flat_hash_map<irs::field_id, Field> _fields ABSL_GUARDED_BY(_mutex);
+  irs::containers::FlatHashMap<irs::field_id, Field> _fields
+    ABSL_GUARDED_BY(_mutex);
   duckdb::StringHeap _keys ABSL_GUARDED_BY(_mutex);
 };
 

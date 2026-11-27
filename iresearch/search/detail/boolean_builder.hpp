@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -37,13 +39,16 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_count.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
+#include "iresearch/search/lead/disjoint_disjunction.hpp"
 #include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/lead/posting_docs.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -132,12 +137,45 @@ Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
   });
 }
 
+inline bool DisjointDisjunctionIsCheaper(size_t terms, uint64_t docs,
+                                         doc_id_t docs_count) noexcept {
+  const uint64_t windows = docs_count / kWindowDocs + 1;
+  return docs * std::bit_width(terms) <=
+         std::min(SegmentWords(docs_count), terms * windows);
+}
+
+template<typename Family, typename P = NoPins, typename Term, typename Ctx>
+Result<Family> MakeDisjointDisjunctionOfTerms(std::span<const Term> terms,
+                                              const TermReader* field,
+                                              const duckdb::InputFile& doc,
+                                              doc_id_t docs_count,
+                                              const Ctx& ctx) {
+  if (!DisjointDisjunctionIsCheaper(terms.size(), SumDocs(terms), docs_count)) {
+    return {};
+  }
+  return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
+    using Leaf = PostingLead<Input>;
+    return Family::template Docs<lead::DisjointDisjunction<Leaf>>(
+      ctx, terms.size(), [&](Leaf& leaf, size_t i) {
+        const auto& own = FieldOf(terms[i], field);
+        const auto& meta = CookieOf(terms[i]);
+        SDB_ASSERT(meta.docs_count != 0);
+        leaf.Prepare(meta, doc, LayoutOf(own),
+                     meta.docs_count != 1 && BoundsOf(own));
+      });
+  });
+}
+
 template<typename Family, typename P = NoPins, typename Term, typename Ctx>
 Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
                                       const TermReader* field,
                                       const duckdb::InputFile& doc,
                                       doc_id_t docs_count, const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
+  if (auto merged = MakeDisjointDisjunctionOfTerms<Family, P>(
+        terms, field, doc, docs_count, ctx)) {
+    return merged;
+  }
   if (Family::BitsetSpan(ctx, docs_count) >= docs_count) {
     if (auto folded = MakeBitsetOf<Result<Family>, P>(
           terms, field, doc, docs_count, Family::BitsetTable(ctx))) {
@@ -662,6 +700,13 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
     return {};
   }
   if constexpr (!kScores<Scoring>) {
+    if (filters.empty()) {
+      if (auto merged = MakeDisjointDisjunctionOfTerms<Family, P>(
+            terms, field, *doc, static_cast<doc_id_t>(segment.docs_count()),
+            ctx)) {
+        return merged;
+      }
+    }
     if (auto folded = MakeBitset<Family, P>(
           {.should = terms, .should_filters = filters, .should_fills = &rest},
           segment, ctx)) {

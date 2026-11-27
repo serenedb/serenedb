@@ -80,6 +80,8 @@ Rules are matched first-to-last against the connection's type (`local` or `host`
 
 The remaining PostgreSQL methods — `peer`, `ident`, `cert`, `ldap`, `gss` — are accepted by the parser for compatibility but refuse the connection if matched.
 
+The same rules decide a Basic login to the HTTP APIs, such as the [Elasticsearch API](../clients/elasticsearch-api.md#authentication): the request's client address, its role and the listener's database pick the rule, and the password in the `Authorization` header is checked against the role's stored password. `trust` accepts the request whatever the password, `scram-sha-256` needs a SCRAM-SHA-256 password, `md5` and `password` accept either stored form, and every other method refuses it with `401`. Basic sends the password in cleartext, so expose an HTTP listener only over `https://` or a trusted network.
+
 <DocCallout type="attention" title="The superuser cannot be locked out">
 
 Whatever ruleset you install, the bootstrap superuser keeps its trusted local access — an un-droppable safety rule is checked first. A configuration mistake can never cut off local administrative access; to restrict the superuser, restrict where the server listens instead.

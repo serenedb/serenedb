@@ -40,7 +40,7 @@ const ParametricDescription& DefaultPDP(uint8_t distance,
   };
 
   const size_t idx = 2 * size_t(distance) + size_t(with_transpositions);
-  return irstd::StaticLazyArray<Builder, 9>::at(idx);
+  return utils::StaticLazyArray<Builder, 9>::at(idx);
 }
 
 }  // namespace irs

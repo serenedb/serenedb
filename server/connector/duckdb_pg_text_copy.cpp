@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -56,8 +57,9 @@ bool ParseCopyBool(std::string_view value) {
   if (value.empty()) {
     return true;
   }
-  if (const auto parsed = irs::utils::ParseBool(value)) {
-    return *parsed;
+  if (bool parsed = false;
+      duckdb::TryCastStringBool(value.data(), value.size(), parsed, false)) {
+    return parsed;
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

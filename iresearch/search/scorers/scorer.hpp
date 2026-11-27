@@ -44,7 +44,6 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -221,9 +220,7 @@ class ScorerBase : public Scorer {
       return 0;
     } else {
       static_assert(alignof(StatsType) <= alignof(std::max_align_t));
-      static_assert(math::IsPower2(alignof(StatsType)));
-
-      return memory::AlignUp(sizeof(StatsType), alignof(StatsType));
+      return sizeof(StatsType);
     }
   }
 };

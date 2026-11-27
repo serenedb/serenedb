@@ -25,7 +25,6 @@
 #include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/dispatch.hpp"
 
 namespace irs {
@@ -64,7 +63,7 @@ void Loop(Row* row, uint32_t classes) noexcept {
 template<typename KeyOf>
 uint32_t Refine(KeyOf&& key_of, std::array<uint8_t, kLabels>& bytemap,
                 std::array<uint8_t, kLabels>& representative) {
-  absl::flat_hash_map<uint64_t, uint8_t> ids;
+  containers::FlatHashMap<uint64_t, uint8_t> ids;
   uint32_t classes = 0;
   for (uint32_t label = 0; label != kLabels; ++label) {
     const auto [it, inserted] =
@@ -110,7 +109,8 @@ LevenshteinPrefixAcceptor::State StateOf(
 void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
              std::span<std::shared_ptr<const RegexpAcceptor>> owned,
              RegexpConjunction::Parts& start, bytes_view& lower,
-             std::span<const bstring>& suffixes, bytes_view& infix) {
+             std::span<const bstring>& suffixes, bytes_view& infix,
+             KeyBytes& bytes) {
   SDB_ASSERT(patterns.size() <= owned.size());
   const auto shortest = [](std::span<const bstring> set) {
     size_t size = set.empty() ? 0 : std::numeric_limits<size_t>::max();
@@ -132,6 +132,7 @@ void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     if (pattern.RequiredInfix().size() > infix.size()) {
       infix = pattern.RequiredInfix();
     }
+    Join(bytes, pattern.Bytes());
   }
 }
 
@@ -155,14 +156,14 @@ std::byte* RowArena::Allocate(size_t bytes) {
 RegexpConjunction::RegexpConjunction(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
   size_t max_mem)
-  : _size{patterns.size()}, _max_mem{max_mem} {
+  : _size{patterns.size()}, _bytes{.dead = {}}, _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _bytes);
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
 
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _dead = NewRow<Row>(_arena, _classes);
   _dead->dead = true;
   Loop(_dead, _classes);
@@ -171,7 +172,7 @@ RegexpConjunction::RegexpConjunction(
   _unknown->unknown = true;
   _unknown->lo = 0;
   _unknown->hi = RegexpAcceptor::kMaxLabel;
-  _unknown->loop.fill(~bitset::word_t{0});
+  _unknown->loop.words.fill(~uint64_t{0});
   Loop(_unknown, _classes);
   _unknown->built.store(true, std::memory_order_relaxed);
   _start = InternLocked(start);
@@ -193,7 +194,7 @@ RegexpConjunction::State RegexpConjunction::StepSlow(State from,
 }
 
 void RegexpConjunction::Build(Row* row) const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   BuildLocked(row);
 }
 
@@ -227,7 +228,7 @@ void RegexpConjunction::BuildLocked(Row* row) const {
     }
     hi = static_cast<uint8_t>(label);
     if (target == row) {
-      row->loop[bitset::word(label)] |= bitset::word_t{1} << bitset::bit(label);
+      row->loop.Add(static_cast<byte_type>(label));
     }
   }
   row->lo = lo;
@@ -262,14 +263,16 @@ RegexpConjunction::State RegexpConjunction::InternLocked(
 
 FuzzyConjunction::FuzzyConjunction(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
-  bytes_view lower, const std::array<uint8_t, 256>& fuzzy_bytemap,
-  size_t max_mem, bool starts_with)
+  bytes_view lower, const KeyBytes& bytes,
+  const std::array<uint8_t, 256>& fuzzy_bytemap, size_t max_mem,
+  bool starts_with)
   : _size{patterns.size()},
     _starts_with{starts_with},
     _lower{lower},
+    _bytes{bytes},
     _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _bytes);
   if (patterns.empty()) {
     _bytemap = fuzzy_bytemap;
     for (uint32_t label = 0; label != kLabels; ++label) {
@@ -285,7 +288,7 @@ FuzzyConjunction::FuzzyConjunction(
       _bytemap, _representative);
   }
 
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _dead = NewRow<Row>(_arena, _classes);
   _dead->dead = true;
   Loop(_dead, _classes);
@@ -323,9 +326,8 @@ IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::Link(
     slot.store(_dead, std::memory_order_release);
     return _dead;
   }
-  std::lock_guard lock{_mutex};
-  if (const auto* next = slot.load(std::memory_order_relaxed);
-      next != nullptr) {
+  absl::MutexLock lock{&_mutex};
+  if (const auto* next = slot.load(std::memory_order_relaxed)) {
     return next;
   }
   const State next = intern();
@@ -414,7 +416,7 @@ FuzzyConjunction::State FuzzyConjunctionOf<A>::InternLocked(
 }
 
 void FuzzyConjunction::InternStart() {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _start = Resolve(_starts_with, [&]<bool kPrefix> {
     return static_cast<const FuzzyConjunctionFor<kPrefix>&>(*this)
       .StartLocked();

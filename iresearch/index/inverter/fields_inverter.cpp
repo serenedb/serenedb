@@ -50,7 +50,9 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
       } else if (const auto* field =
                    _terms[entry.terms + TermIndex(member)].field;
                  HasTerms(field)) {
-        keyed_dicts += field->Dictionary().Size() != 1;
+        if (field->Dictionary().Size() != 1) {
+          keyed_dicts += term_dict::KeyedDictsOf(field->Meta().index_features);
+        }
         index_features |= field->Meta().index_features;
         used = true;
       }

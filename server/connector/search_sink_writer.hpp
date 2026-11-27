@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
 
 #include <array>
@@ -52,7 +51,6 @@
 #include "pg/types/logical.h"
 #include "search/search_analyzer_impl.h"
 #include "search/store.h"
-#include "server/utils/primary_key.h"
 
 namespace duckdb {
 

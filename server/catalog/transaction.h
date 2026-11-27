@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
@@ -224,7 +223,8 @@ class Transactions final {
   }
 
   absl::Status TruncateLog(
-    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT);
+    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT,
+    duckdb::ClientContext* context = nullptr);
   void SettleLog();
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {
@@ -405,8 +405,8 @@ class TransactionManager final : public duckdb::TransactionManager {
   void Remove(duckdb::Transaction& transaction);
 
   absl::Mutex _mutex;
-  absl::flat_hash_map<const duckdb::Transaction*,
-                      std::unique_ptr<DatabaseTransaction>>
+  irs::containers::FlatHashMap<const duckdb::Transaction*,
+                               std::unique_ptr<DatabaseTransaction>>
     _active ABSL_GUARDED_BY(_mutex);
 };
 

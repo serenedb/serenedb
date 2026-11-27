@@ -101,10 +101,9 @@ struct Family : detail::RootFamily<Context> {
     return MakeConstant(0);
   }
 
-  static Result MakeNegation(
-    std::span<const detail::PostingClause> exclude_terms,
-    std::span<const QueryBuilder::ptr> exclude_filters,
-    const SubReader& segment, uint64_t candidates, const Context& ctx);
+  static Result MakeNegation(const BooleanQuery& query,
+                             const SubReader& segment, uint64_t candidates,
+                             const Context& ctx);
 };
 
 }  // namespace irs::count

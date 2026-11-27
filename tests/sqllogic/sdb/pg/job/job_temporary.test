@@ -133,5 +133,32 @@ jobs
 0
 
 
+control substitution off
+
+statement ok
+CREATE JOB jtmp_outer AFTER 1 HOUR AS $o$CREATE TEMPORARY JOB jtmp_inner AFTER 1 SECOND AS $i$INSERT INTO jtmp_kept VALUES (7); DROP JOB jtmp_inner$i$$o$;
+
+
+control substitution on
+
+statement ok
+EXECUTE JOB jtmp_outer;
+
+
+statement ok
+DROP JOB jtmp_outer;
+
+
+statement ok
+SELECT pg_sleep(2);
+
+
+query
+SELECT count(*) AS inner_runs FROM jtmp_kept WHERE n = 7;
+----
+inner_runs
+0
+
+
 statement ok
 DROP TABLE jtmp_kept;

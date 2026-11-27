@@ -26,4 +26,6 @@ namespace sdb::app {
 
 int RunWithEngine(int argc, char* argv[], absl::FunctionRef<int()> body);
 
+int Serve();
+
 }  // namespace sdb::app

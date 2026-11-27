@@ -27,7 +27,7 @@ namespace sdb::network::http {
 void AddRoutes(HttpRouter& router, std::span<const Api* const> apis) {
   for (const auto* api : apis) {
     for (const auto& route : api->routes) {
-      router.Add(route.method, route.pattern, route.make());
+      router.Add(route.method, route.pattern, route.make(), route.session);
     }
   }
 }

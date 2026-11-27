@@ -44,9 +44,9 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
                "bulk cs scan: segment has no columnstore reader");
     std::vector<MultiColumnCheck> multi;
     BuildMultiColumnChecks(g, *col_reader, multi);
-    slot = std::make_unique<FullScanner>(*col_reader, g.cs_projections,
-                                         l.seg_cls.active, multi,
-                                         g.client_context, l.filter_states);
+    slot = std::make_unique<FullScanner>(
+      *col_reader, g.cs_projections, l.seg_cls.active, multi, g.client_context,
+      l.filter_states, g.Bind().share_payloads);
   }
   l.scanner = slot.get();
 }

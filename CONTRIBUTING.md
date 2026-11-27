@@ -108,7 +108,7 @@ Code plugs into `serenedb` by registering itself in its own file, one line per e
 
 ### Commands
 
-`serenedb <command>` runs one of the registered commands, such as `server` in `server/app/server.cpp` and `shell` and `psql` in `server/app/cli.cpp`; `serenedb` alone lists them. `serened`, a link to `serenedb` next to it, always runs `server`.
+`serenedb <command>` runs one of the registered commands, such as `server` in `server/app/server.cpp` and `shell` and `psql` in `server/app/cli.cpp`; `serenedb` alone lists them. `serened`, a link to `serenedb` next to it, always runs `server`. A command that needs the server between steps of its own, such as filling the data directory before it starts or reading it after a clean stop, runs `app::Serve()` inside `app::RunWithEngine()` (`server/app/server.h`), as `server` does.
 
 ### Launch
 

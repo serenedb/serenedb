@@ -21,11 +21,11 @@
 #include "catalog/entry_set.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_versions.hpp>
 #include <duckdb/catalog/schema_info.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
@@ -804,6 +804,9 @@ duckdb::CatalogEntry& EntrySet::Push(
       *head);
   } else if (head->type == duckdb::CatalogType::TABLE_ENTRY) {
     _oids.Alias(head->Cast<duckdb::TableCatalogEntry>().GetSubObjectOids(),
+                head->oid);
+  } else if (head->type == duckdb::CatalogType::VIEW_ENTRY) {
+    _oids.Alias(head->Cast<duckdb::ViewCatalogEntry>().GetSubObjectOids(),
                 head->oid);
   }
   PushChange(transaction, Change{.set = this,

@@ -29,6 +29,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 #ifndef IRESEARCH_NO_VECTOR
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
@@ -36,6 +37,33 @@
 #endif
 
 namespace irs {
+
+#ifndef IRESEARCH_NO_VECTOR
+
+namespace {
+
+void ReadGraphFrames(duckdb::BinaryDeserializer& graph,
+                     std::string_view filename, HnswGraphFrames& frames) {
+  graph.ReadObject(kHnswGraphLevels, "levels",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.levels = compression::ReadFrames(object);
+                   });
+  graph.ReadObject(kHnswGraphBase, "base",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.base = compression::ReadFrames(object);
+                   });
+  graph.ReadObject(kHnswGraphUpper, "upper",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.upper = compression::ReadFrames(object);
+                   });
+  if (!frames.Packed()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("HNSW graph in ", filename, " has no levels"));
+  }
+}
+
+}  // namespace
+#endif
 
 IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
                      std::string_view segment_name, bool present,
@@ -71,7 +99,7 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
         kIdxFieldHnsw, "hnsw",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            footer.hnsw.push_back({
+            auto& entry = footer.hnsw.emplace_back(HnswEntry{
               .id = obj.ReadProperty<uint64_t>(0, "id"),
               .meta =
                 {
@@ -92,6 +120,11 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
                     },
                 },
             });
+            obj.ReadOptionalObject(
+              kHnswMetaGraphCompression, "graph_compression",
+              [&](duckdb::BinaryDeserializer& graph) {
+                ReadGraphFrames(graph, filename, entry.meta.graph_compression);
+              });
           });
         });
 #endif
@@ -118,9 +151,9 @@ void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
     entry.SetQuantStatsOffset(meta.stats_offset);
     _anns.emplace(id, std::make_unique<IvfIndex>(std::move(entry), *_file));
   }
-  for (const auto& [id, meta] : footer.hnsw) {
-    _anns.emplace(id,
-                  std::make_unique<HnswIndex>(meta, id, hnsw_bases, *_file));
+  for (auto& [id, meta] : footer.hnsw) {
+    _anns.emplace(
+      id, std::make_unique<HnswIndex>(std::move(meta), id, hnsw_bases, *_file));
   }
 #else
   SDB_ASSERT(footer.ivf.empty() && footer.hnsw.empty());

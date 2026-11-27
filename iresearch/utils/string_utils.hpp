@@ -42,18 +42,6 @@
 
 namespace irs::utils {
 
-static constexpr size_t kMaxU64B10StringSize = 21;
-static constexpr size_t kMaxU64B64StringSize = 11;
-
-template<typename Str>
-IRS_FORCE_INLINE void StrReserveAmortized(Str& str, size_t len) {
-  const size_t cap = str.capacity();
-  if (len > cap) {
-    // Make sure to always grow by at least a factor of 2x.
-    str.reserve(std::max(len, 2 * cap));
-  }
-}
-
 template<typename Str>
 IRS_FORCE_INLINE void StrResize(Str& str, size_t len) {
   absl::strings_internal::STLStringResizeUninitialized(&str, len);
@@ -69,45 +57,4 @@ IRS_FORCE_INLINE void StrAppend(Str& str, size_t len) {
   str.__append_default_init(len);
 }
 
-// Parses a boolean spelled as on/true/yes/1/t/y or off/false/no/0/f/n
-// (case-insensitive); nullopt for anything else. The caller decides how an
-// unrecognized value is reported.
-inline std::optional<bool> ParseBool(std::string_view value) {
-  if (value == "1" || absl::EqualsIgnoreCase(value, "on") ||
-      absl::EqualsIgnoreCase(value, "true") ||
-      absl::EqualsIgnoreCase(value, "yes") ||
-      absl::EqualsIgnoreCase(value, "t") ||
-      absl::EqualsIgnoreCase(value, "y")) {
-    return true;
-  }
-  if (value == "0" || absl::EqualsIgnoreCase(value, "off") ||
-      absl::EqualsIgnoreCase(value, "false") ||
-      absl::EqualsIgnoreCase(value, "no") ||
-      absl::EqualsIgnoreCase(value, "f") ||
-      absl::EqualsIgnoreCase(value, "n")) {
-    return false;
-  }
-  return std::nullopt;
-}
-
-/// collection of string utility functions
-///
-/// This namespace holds function used for string manipulation.
-namespace string_utils {
-
-// -----------------------------------------------------------------------------
-// ADDITIONAL STRING UTILITIES
-// -----------------------------------------------------------------------------
-
-/// returns "an" for words starting with a vowel sound, "a" otherwise
-std::string_view GetArticle(std::string_view word) noexcept;
-
-// Returns the English plural form of a word
-// doesn't work for all the cases, cause applies basic rules:
-// -s, -sh, -ch, -x, -z -> +es;
-// consonant + y -> -y +ies;
-// otherwise -> +s.
-std::string GetPluralFormLowerCase(std::string_view word);
-
-}  // namespace string_utils
 }  // namespace irs::utils

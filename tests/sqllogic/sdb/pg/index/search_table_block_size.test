@@ -55,11 +55,11 @@ bsz_small	{compaction_interval=0,block_size=16384}
 
 
 query
-SELECT (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('bsz_small') WHERE column_name = 'id') AS small,
-       (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('bsz_default') WHERE column_name = 'id') AS default_size;
+SELECT (SELECT count(*) FROM pragma_storage_info('bsz_small') WHERE column_name = 'body' AND segment_type = 'VARCHAR')
+       > (SELECT count(*) FROM pragma_storage_info('bsz_default') WHERE column_name = 'body' AND segment_type = 'VARCHAR') AS small_blocks_cut_more;
 ----
-small	default_size
-Uncompressed	BitPacking
+small_blocks_cut_more
+t
 
 
 query

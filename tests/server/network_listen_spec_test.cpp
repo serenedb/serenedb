@@ -157,22 +157,26 @@ TEST(ListenSpec, MultipleCommaSeparated) {
 
 TEST(ListenSpec, HttpRepeatedApiListedOnce) {
   const auto specs =
-    Parse({"http://127.0.0.1:9200?api=es&api=otel&api=es&api=otel"});
+    Parse({"http://127.0.0.1:9200?api=mcp&api=otel&api=mcp&api=otel"});
   ASSERT_EQ(specs.size(), 1u);
   const auto& apis = HttpOptions(specs[0]).apis;
   ASSERT_EQ(apis.size(), 2u);
-  EXPECT_EQ(apis[0], Api("es"));
+  EXPECT_EQ(apis[0], Api("mcp"));
   EXPECT_EQ(apis[1], Api("otel"));
+  const auto es = Parse({"http://127.0.0.1:9200?api=es&api=es"});
+  ASSERT_EQ(HttpOptions(es[0]).apis.size(), 1u);
+  EXPECT_EQ(HttpOptions(es[0]).apis[0], Api("es"));
 }
 
 TEST(ListenSpec, HttpRegisteredApi) {
-  const auto specs = Parse(
-    {"http://127.0.0.1:9300?api=listen-spec-test&api=es&api=listen-spec-test"});
+  const auto specs =
+    Parse({"http://127.0.0.1:9300?api=listen-spec-test&api=mcp&"
+           "api=listen-spec-test"});
   ASSERT_EQ(specs.size(), 1u);
   const auto& apis = HttpOptions(specs[0]).apis;
   ASSERT_EQ(apis.size(), 2u);
   EXPECT_EQ(apis[0], Api("listen-spec-test"));
-  EXPECT_EQ(apis[1], Api("es"));
+  EXPECT_EQ(apis[1], Api("mcp"));
 }
 
 TEST(ListenSpec, UnknownApiIsRejected) {
@@ -251,6 +255,12 @@ constexpr Refused kRefused[] = {
   {"http://127.0.0.1:1?api=es&schema=", "empty 'schema' in endpoint"},
   {"http://127.0.0.1:1?api=es&color=red", "unknown parameter 'color'"},
   {"http://127.0.0.1:1", "requires \\?api="},
+  {"http://127.0.0.1:1?api=es&api=mcp",
+   "api 'es' in endpoint '[^']*' needs a listener of its own"},
+  {"https://127.0.0.1:1?api=otel&api=es&api=otel",
+   "api 'es' in endpoint '[^']*' needs a listener of its own"},
+  {"http://127.0.0.1:1?api=test&api=test-open",
+   "api 'test-open' in endpoint '[^']*' needs a listener of its own"},
 };
 
 TEST(ListenSpec, ProtocolParamsAreChecked) {

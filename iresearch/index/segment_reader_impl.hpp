@@ -22,8 +22,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <duckdb/common/file_system.hpp>
 #include <memory>
 #include <span>
@@ -40,7 +38,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
 

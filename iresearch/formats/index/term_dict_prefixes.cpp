@@ -37,16 +37,16 @@ constexpr size_t kWindow = kTrieMaxSpan + 1;
 
 }  // namespace
 
-PrefixTrie::PrefixTrie(const TrieShape& shape, LocalBudget& budget)
-  : _dense_words{TrackedAllocator<uint64_t>{budget}},
-    _dense_first{TrackedAllocator<uint32_t>{budget}},
-    _chain{TrackedAllocator<byte_type>{budget}},
-    _labels{TrackedAllocator<byte_type>{budget}},
-    _inner{TrackedAllocator<uint64_t>{budget}},
-    _inner_rank{TrackedAllocator<uint32_t>{budget}},
-    _first{TrackedAllocator<uint32_t>{budget}},
-    _terminal{TrackedAllocator<uint64_t>{budget}},
-    _open{TrackedAllocator<uint64_t>{budget}} {
+PrefixTrie::PrefixTrie(const TrieShape& shape, TrackedAllocator<> alloc)
+  : _dense_words{alloc},
+    _dense_first{alloc},
+    _chain{alloc},
+    _labels{alloc},
+    _inner{alloc},
+    _inner_rank{alloc},
+    _first{alloc},
+    _terminal{alloc},
+    _open{alloc} {
   const auto nodes = static_cast<uint32_t>(shape.flags.size());
   SDB_ASSERT(nodes != 0 && shape.labels.size() == nodes &&
              shape.depths.size() == nodes &&
@@ -111,7 +111,19 @@ PrefixTrie::PrefixTrie(const TrieShape& shape, LocalBudget& budget)
   }
 }
 
-PrefixTrie::PrefixTrie(duckdb::ReadStream& in) {
+PrefixTrie::PrefixTrie(TrackedAllocator<> alloc)
+  : _dense_words{alloc},
+    _dense_first{alloc},
+    _chain{alloc},
+    _labels{alloc},
+    _inner{alloc},
+    _inner_rank{alloc},
+    _first{alloc},
+    _terminal{alloc},
+    _open{alloc} {}
+
+PrefixTrie::PrefixTrie(duckdb::ReadStream& in, TrackedAllocator<> alloc)
+  : PrefixTrie{alloc} {
   _nodes = in.Read<uint32_t>();
   _dense = in.Read<uint32_t>();
   ReadArray(in, _dense_words);
@@ -278,7 +290,7 @@ void PrefixTrieBuilder::Add(bytes_view term) {
 
 PrefixTrie PrefixTrieBuilder::Finish() {
   if (_nodes.empty()) {
-    return {};
+    return PrefixTrie{TrackedAllocator<>{_nodes.get_allocator()}};
   }
   const auto chain = bytes_view{_first}.substr(0, _origin);
   uint32_t root = 0;
@@ -293,8 +305,8 @@ PrefixTrie PrefixTrieBuilder::Finish() {
            (depth < kTrieFull ||
             (node.count > kTrieSpan && depth < kTrieDepth));
   };
-  auto& budget = *_nodes.get_allocator().budget;
-  TrackedVector<uint32_t> queue{TrackedAllocator<uint32_t>{budget}};
+  const TrackedAllocator<> alloc = _nodes.get_allocator();
+  TrackedVector<uint32_t> queue{alloc};
   queue.reserve(_nodes.size());
   queue.push_back(root);
   for (size_t at = 0; at != queue.size(); ++at) {
@@ -307,10 +319,10 @@ PrefixTrie PrefixTrieBuilder::Finish() {
     }
   }
   const size_t count = queue.size();
-  TrackedVector<byte_type> flags(count, TrackedAllocator<byte_type>{budget});
-  TrackedVector<byte_type> labels(count, TrackedAllocator<byte_type>{budget});
-  TrackedVector<uint32_t> depths(count, TrackedAllocator<uint32_t>{budget});
-  TrackedVector<uint32_t> first(count + 1, TrackedAllocator<uint32_t>{budget});
+  TrackedVector<byte_type> flags(count, alloc);
+  TrackedVector<byte_type> labels(count, alloc);
+  TrackedVector<uint32_t> depths(count, alloc);
+  TrackedVector<uint32_t> first(count + 1, alloc);
   uint32_t next = 1;
   for (size_t at = 0; at != count; ++at) {
     const auto& node = _nodes[queue[at]];
@@ -341,7 +353,7 @@ PrefixTrie PrefixTrieBuilder::Finish() {
       .depths = depths,
       .first = first,
     },
-    budget,
+    alloc,
   };
   Reset();
   return trie;

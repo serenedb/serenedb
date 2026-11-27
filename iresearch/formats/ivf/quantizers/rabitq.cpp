@@ -176,7 +176,8 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     return true;
   }
 
-  std::unique_ptr<QuantizerWriter> CloneForEncode() const final {
+  std::unique_ptr<QuantizerWriter> CloneForEncode(
+    TrackedAllocator<> /*alloc*/) const final {
     if (!_lay.row_major) {
       return nullptr;
     }

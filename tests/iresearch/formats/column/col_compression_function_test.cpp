@@ -180,7 +180,7 @@ class Rows {
       }
       pos += take;
     }
-    irs::ColumnReader::PointReader reader{r, *col};
+    irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
     duckdb::Vector one{col->Type(), 1};
     for (uint64_t g = _values.size(); g-- > 0;) {
       if (g % 37 != 0 && g + 1 != _values.size()) {
@@ -251,6 +251,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
     ColumnDataCheckpointData data{
       .type = type,
       .ctx = &ctx,
+      .alloc = TestAlloc(),
       .flush = flush,
       .params = {.tier = tier},
       .tuning = _tuning,
@@ -287,6 +288,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
     ColumnDataCheckpointData data{
       .type = type,
       .ctx = &ctx,
+      .alloc = TestAlloc(),
       .flush = flush,
       .params = params,
       .tuning = tuning,

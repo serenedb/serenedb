@@ -64,25 +64,25 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : Base{data.budget,         kCodec,
+    : Base{data.alloc,          kCodec,
            data.type,           dedup,
            data.tuning.strings, data.params.segment_target},
       _codec{data.Get<fsst::SharedEncoder<fsst::Fsst8, kCodec>>().encoder},
-      _encoded{TrackedAllocator<char>{data.budget}},
-      _prefixes{TrackedAllocator<char>{data.budget}},
-      _side{TrackedAllocator<char>{data.budget}},
-      _encoded_lengths{TrackedAllocator<uint32_t>{data.budget}},
-      _codes{TrackedAllocator<std::string_view>{data.budget}},
-      _shared{TrackedAllocator<uint32_t>{data.budget}},
-      _ids{TrackedAllocator<uint32_t>{data.budget}},
-      _ends{TrackedAllocator<uint32_t>{data.budget}},
-      _lcp{TrackedAllocator<uint32_t>{data.budget}},
-      _tree{TrackedAllocator<Node>{data.budget}},
-      _order{TrackedAllocator<uint32_t>{data.budget}},
-      _size{TrackedAllocator<uint32_t>{data.budget}},
-      _saved{TrackedAllocator<uint64_t>{data.budget}},
-      _whole{TrackedAllocator<uint8_t>{data.budget}},
-      _ranges{TrackedAllocator<Range>{data.budget}} {}
+      _encoded{data.alloc},
+      _prefixes{data.alloc},
+      _side{data.alloc},
+      _encoded_lengths{data.alloc},
+      _codes{data.alloc},
+      _shared{data.alloc},
+      _ids{data.alloc},
+      _ends{data.alloc},
+      _lcp{data.alloc},
+      _tree{data.alloc},
+      _order{data.alloc},
+      _size{data.alloc},
+      _saved{data.alloc},
+      _whole{data.alloc},
+      _ranges{data.alloc} {}
 
   void FinalizeCompress();
 
@@ -195,8 +195,13 @@ struct Scan {
   using Fetch = fsst_plus::Fetch;
 
   template<typename Frames>
-  Scan(const ColumnSegment&, const Frames& s)
-    : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
+  Scan(const ColumnSegment& segment, const Frames& s)
+    : ids{s.base + s.header.off_lcps, s.header.lcp_width},
+      groups{segment.ctx.Allocator()},
+      heap{segment.ctx.Allocator()},
+      prefix_ends{segment.ctx.Allocator()},
+      entry_decoded{segment.ctx.Allocator()},
+      probe{segment.ctx.Allocator()} {
     if (!prefixes.Open(SymbolTable(s.header, s.base), s.header.dictionary_size,
                        decoder)) [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
@@ -348,6 +353,8 @@ struct Scan {
 };
 
 struct Fetch {
+  explicit Fetch(TrackedAllocator<> alloc) : groups{alloc}, buf{alloc} {}
+
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
     groups.Clear();

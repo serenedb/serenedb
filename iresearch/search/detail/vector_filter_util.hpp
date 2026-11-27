@@ -52,11 +52,11 @@ enum class CodebookUse : uint8_t {
 };
 
 inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
-  const CentroidsTree& ivf, duckdb::InputFileReader& idx_in,
-  VectorQuantization quant, uint32_t d, VectorMetric metric,
-  std::span<const float> query, CodebookUse use) {
+  MemoryBudget& parent, const CentroidsTree& ivf,
+  duckdb::InputFileReader& idx_in, VectorQuantization quant, uint32_t d,
+  VectorMetric metric, std::span<const float> query, CodebookUse use) {
   idx_in.Seek(ivf.QuantStatsOffset());
-  auto quant_stats = ReadQuantizerStats(idx_in, quant, d, metric);
+  auto quant_stats = ReadQuantizerStats(parent, idx_in, quant, d, metric);
   if (!quant_stats) {
     return nullptr;
   }
@@ -91,14 +91,15 @@ inline bool PrepareVectorState(
   }
 
   auto codebook =
-    ReadQuantizerCodebook(ivf, idx_in, opts.quant, d, opts.metric, query, use);
+    ReadQuantizerCodebook(ctx.memory.Allocator().Budget().Parent(), ivf, idx_in,
+                          opts.quant, d, opts.metric, query, use);
   if (!codebook) {
     return false;
   }
   const bool needs_centroids = QuantizerNeedsCentroid(opts.quant);
 
-  TrackedVector<uint32_t> fine_ids;
-  TrackedVector<float> probed_centroids;
+  TrackedVector<uint32_t> fine_ids{ctx.memory.Allocator()};
+  TrackedVector<float> probed_centroids{ctx.memory.Allocator()};
   ivf.Search(query, idx_in, nprobe, fine_ids,
              needs_centroids ? &probed_centroids : nullptr, beam);
   if (fine_ids.empty()) {

@@ -27,6 +27,7 @@
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <iterator>
 
 namespace tests {
@@ -62,7 +63,9 @@ IndexDir::IndexDir(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
 
 std::unique_ptr<duckdb::BufferedFileWriter> IndexDir::Create(
   std::string_view name) const {
-  return irs::format_utils::OpenOutput(Fs(), Root(), name, irs::kEmpty);
+  irs::LocalBudget budget{irs::gRootBudget};
+  return irs::format_utils::OpenOutput(Fs(), Root(), name,
+                                       irs::TrackedAllocator<>{budget});
 }
 
 duckdb::shared_ptr<duckdb::InputFile> IndexDir::Open(

@@ -41,7 +41,10 @@ struct DefaultInitAllocator : std::allocator<T> {
 };
 
 template<typename T>
-using ScratchVector =
-  std::vector<T, TrackedAllocator<T, DefaultInitAllocator<T>>>;
+using ScratchVector = std::vector<T, DefaultInitAllocator<T>>;
+
+template<typename T>
+using TrackedScratchVector =
+  std::vector<T, TrackedAllocator<T, TrackedPolicy::DefaultInit>>;
 
 }  // namespace irs

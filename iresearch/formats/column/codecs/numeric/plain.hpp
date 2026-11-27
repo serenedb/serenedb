@@ -52,7 +52,7 @@ class Raw {
   }
 
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
-                                 ScratchVector<uint8_t>&) {
+                                 TrackedScratchVector<uint8_t>&) {
     return {reinterpret_cast<const uint8_t*>(_values.Get().data()) +
               size_t{begin} * sizeof(T),
             size_t{count} * sizeof(T)};
@@ -106,7 +106,7 @@ class For {
   }
 
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
-                                 ScratchVector<uint8_t>&) {
+                                 TrackedScratchVector<uint8_t>&) {
     if (_narrowed.empty()) {
       const auto rows = _values.Get();
       _narrowed.resize(rows.size() * _stored);
@@ -125,7 +125,7 @@ class For {
 
  private:
   Values<T>& _values;
-  ScratchVector<uint8_t> _narrowed;
+  TrackedScratchVector<uint8_t> _narrowed;
   U _lo = 0;
   uint8_t _stored = 0;
 };
@@ -140,7 +140,7 @@ class Bitpacking {
   using U = Bits<sizeof(T)>;
 
   Bitpacking(ColumnDataCheckpointData& data, double)
-    : _values{data.Get<Values<T>>()}, _blocks{data.budget} {
+    : _values{data.Get<Values<T>>()}, _blocks{data.alloc} {
     if (!_values.Usable()) {
       return;
     }
@@ -192,8 +192,9 @@ class PlainReader final : public FrameReader<T> {
   static constexpr bool kPacks = !std::is_floating_point_v<T>;
 
   PlainReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-              CodecType codec, const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, codec, slot},
+              CodecType codec, TrackedAllocator<> alloc,
+              const ReadContext::CacheSlot& slot = {})
+    : Base{base, frames, codec, alloc, slot},
       _own{duckdb::Load<PlainHeader>(base + OwnHeaderOffset(frames.flags))} {
     if constexpr (!kPacks) {
       if (this->Packed()) [[unlikely]] {

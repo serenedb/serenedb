@@ -236,6 +236,10 @@ class ScanBarrier {
 };
 
 struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
+  explicit ScanGlobalState(irs::MemoryBudget& session)
+    : shared_budget{session} {}
+
+  irs::LocalBudget shared_budget;
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
@@ -322,6 +326,15 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::deque<irs::QueryMemory> query_memories
     ABSL_GUARDED_BY(query_memories_mutex);
   std::vector<irs::QueryBuilder::ptr> queries;
+  struct StatsMemory {
+    explicit StatsMemory(irs::MemoryBudget& parent)
+      : budget{parent},
+        allocator{irs::DuckAllocator(irs::TrackedAllocator<>{budget})} {}
+
+    irs::LocalBudget budget;
+    duckdb::Allocator allocator;
+  };
+  std::optional<StatsMemory> stats_memory;
   std::optional<irs::StatsArena> stats_arena;
   std::optional<irs::PreparedCollector> collector;
   irs::explain::StatsIndex explain_stats;
@@ -375,24 +388,34 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   bool Ordered() const noexcept { return ordered; }
 
   struct TsDictCounts {
-    irs::TrackedArray<std::atomic_uint64_t> slots;
+    explicit TsDictCounts(irs::TrackedAllocator<> alloc) : slots{alloc} {}
+
+    irs::TrackedVector<std::atomic_uint64_t> slots;
     uint32_t terms = 0;
 
     void Reset(uint32_t n) {
-      slots = irs::MakeTrackedArray<std::atomic_uint64_t>(n + 1);
+      irs::TrackedVector<std::atomic_uint64_t> fresh(n + 1,
+                                                     slots.get_allocator());
+      slots.swap(fresh);
       terms = n;
-      for (uint32_t i = 0; i <= n; ++i) {
-        slots[i].store(0, std::memory_order_relaxed);
-      }
     }
 
-    std::atomic_uint64_t& Term(uint32_t i) const noexcept { return slots[i]; }
-    std::atomic_uint64_t& Nulls() const noexcept { return slots[terms]; }
+    template<typename Self>
+    auto& Term(this Self& self, uint32_t i) noexcept {
+      return self.slots[i];
+    }
+    template<typename Self>
+    auto& Nulls(this Self& self) noexcept {
+      return self.slots[self.terms];
+    }
   };
 
   std::vector<std::vector<TsDictCounts>> ts_dict_counts;
 
   struct TopKState {
+    explicit TopKState(irs::TrackedAllocator<> alloc)
+      : hits{alloc}, answer{alloc} {}
+
     std::atomic<irs::score_t> global_kth_score{
       std::numeric_limits<irs::score_t>::lowest()};
     uint32_t pool = 0;
@@ -417,9 +440,12 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     duckdb::idx_t offset = 0;
     duckdb::idx_t limit = 0;
   };
-  TopKState topk;
+  TopKState topk{irs::TrackedAllocator<>{shared_budget}};
 
   struct AnnState {
+    explicit AnnState(irs::TrackedAllocator<> alloc)
+      : best{alloc}, rescored{alloc} {}
+
     bool rescore = false;
     std::optional<irs::ann::SharedFloor> floor;
     ABSL_CACHELINE_ALIGNED std::atomic<irs::score_t> rescore_bar{
@@ -428,7 +454,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     irs::TrackedVector<irs::ScoreDoc> best ABSL_GUARDED_BY(best_mutex);
     irs::TrackedVector<irs::ScoreDoc> rescored ABSL_GUARDED_BY(best_mutex);
   };
-  AnnState ann;
+  AnnState ann{irs::TrackedAllocator<>{shared_budget}};
 
   std::unique_ptr<ScanProfile> profile;
 
@@ -473,7 +499,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t worker = std::numeric_limits<uint32_t>::max();
   uint32_t thread_slot = std::numeric_limits<uint32_t>::max();
   irs::QueryMemory* query_memory = nullptr;
-  irs::ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states{irs::gRootBudget};
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;
   irs::ColFilterClassification column_form_cls;
@@ -512,12 +538,20 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 
+  virtual void BindMemory(irs::MemoryBudget& memory) {
+    plan_memory.Bind(memory);
+    filter_states.Bind(memory);
+  }
+
   virtual void ReleasePlans() {}
 };
 
 duckdb::RandomEngine& SampleRandom(const ScanGlobalState& g, ScanLocalState& l);
 
 struct FetchLocalState {
+  explicit FetchLocalState(irs::TrackedAllocator<> alloc) : fetch_alloc{alloc} {}
+
+  irs::TrackedAllocator<> fetch_alloc;
   std::unique_ptr<irs::HitBatcher> hit_batcher;
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
@@ -553,6 +587,8 @@ struct ColScanLocalState final : public ScanLocalState {
 };
 
 struct StreamLocalState final : public ScanLocalState, FetchLocalState {
+  StreamLocalState() : FetchLocalState{plan_memory.Allocator()} {}
+
   irs::memory::managed_ptr<irs::memory::Managed> root;
   bool scored = false;
   irs::ColumnArgsFetcher score_fetcher;
@@ -567,6 +603,8 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
 };
 
 struct RankedLocalState : public ScanLocalState, FetchLocalState {
+  RankedLocalState() : FetchLocalState{plan_memory.Allocator()} {}
+
   irs::ColumnArgsFetcher score_fetcher;
   ColFilterVerify col_verify;
   bool claimed = false;
@@ -575,7 +613,7 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
   duckdb::idx_t emitted = 0;
   duckdb::DataChunk fetch_tmp;
   std::unique_ptr<duckdb::DataChunk> answer_chunk;
-  irs::TrackedVector<uint32_t> answer_order;
+  irs::TrackedVector<uint32_t> answer_order{plan_memory.Allocator()};
   duckdb::SelectionVector emit_sel;
   duckdb::buffer_ptr<duckdb::SelectionData> emit_sel_data;
 };
@@ -595,8 +633,8 @@ struct AnnLocalState final : public RankedLocalState {
   std::optional<irs::ann::Collector> collector;
   irs::ann::Root::ptr root;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
-  irs::TrackedVector<irs::ScoreDoc> pending;
-  irs::TrackedVector<irs::ScoreDoc> rescored;
+  irs::TrackedVector<irs::ScoreDoc> pending{plan_memory.Allocator()};
+  irs::TrackedVector<irs::ScoreDoc> rescored{plan_memory.Allocator()};
   std::vector<std::unique_ptr<irs::detail::RawVectorReader>> rescorers;
   std::vector<irs::doc_id_t> rescore_docs;
   std::vector<irs::score_t> rescore_scores;

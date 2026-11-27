@@ -124,15 +124,16 @@ struct RawRecipe {
 class RawVectorReader {
  public:
   RawVectorReader(const ColumnReader& vector_column,
-                  const ColReader& col_reader, uint32_t d)
-    : _read_ctx{col_reader, true},
+                  const ColReader& col_reader, uint32_t d,
+                  TrackedAllocator<> alloc)
+    : _read_ctx{col_reader, alloc, true},
       _vreader{vector_column, _read_ctx},
       _column{&vector_column},
       _d{d},
       _in_memory{vector_column.InMemory()} {}
 
-  explicit RawVectorReader(const RawRecipe& recipe)
-    : RawVectorReader{*recipe.column, *recipe.reader, recipe.d} {
+  RawVectorReader(const RawRecipe& recipe, TrackedAllocator<> alloc)
+    : RawVectorReader{*recipe.column, *recipe.reader, recipe.d, alloc} {
     SetQuery(recipe.query, recipe.metric);
   }
 
@@ -643,7 +644,7 @@ class VectorSlots {
               probe::Node::ptr&& inner, const RawRecipe& raw)
     : _clusters{memory, count, std::forward<Args>(args)},
       _inner{std::move(inner)},
-      _raw{raw},
+      _raw{raw, memory.Allocator()},
       _edge{edge} {
     _clusters.SetThreshold(edge);
     if (!Rescore && raw.rescore_width > 0.f) {

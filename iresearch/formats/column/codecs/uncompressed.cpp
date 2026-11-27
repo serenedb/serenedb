@@ -107,8 +107,8 @@ struct PinnedScan final : SegmentScanState {
   duckdb::BufferHandle handle;
 };
 
-std::unique_ptr<SegmentScanState> InitPinnedScan(const ColumnSegment& segment) {
-  return std::make_unique<PinnedScan>(segment.Pin());
+SegmentScanStatePtr InitPinnedScan(const ColumnSegment& segment) {
+  return MakeScanState<PinnedScan>(segment.ctx.Allocator(), segment.Pin());
 }
 
 const_data_ptr_t ScanBase(ColumnScanState& state) {

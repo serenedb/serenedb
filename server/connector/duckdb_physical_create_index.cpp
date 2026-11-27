@@ -361,9 +361,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     writes.AddSearchTruncate(context, storage);
   }
   if (extras) {
-    auto removed = ResolveRemoves(writes.PinnedReader(context, *storage),
-                                  extras->removed_files, extras->removed_masks,
-                                  extras->removed_rows);
+    auto removed = ResolveRemoves(
+      ConnectionContext::Get(context).Memory(),
+      writes.PinnedReader(context, *storage), extras->removed_files,
+      extras->removed_masks,
+      extras->removed_rows
+        ? std::span<const std::pair<uint64_t, int64_t>>{extras->removed_rows
+                                                          ->rows}
+        : std::span<const std::pair<uint64_t, int64_t>>{});
     if (!removed.Empty()) {
       SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
       writes.AddRemoval(context, storage, std::move(removed));
@@ -424,7 +429,8 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
 
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    inverted_storage.GetTransaction());
+    inverted_storage.GetTransaction(
+      ConnectionContext::Get(context.client).Memory()));
   lstate->version = inverted_storage.Version();
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(

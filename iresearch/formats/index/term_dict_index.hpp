@@ -57,13 +57,22 @@ struct DictSections {
   TrackedVector<uint64_t> masks;
 };
 
+inline DictSections EmptySections(TrackedAllocator<> alloc) {
+  return {
+    .trie = PrefixTrie{alloc},
+    .selected = TrackedVector<byte_type>{alloc},
+    .masks = TrackedVector<uint64_t>{alloc},
+  };
+}
+
 class DictIndex {
  public:
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
             const Separators& separators, DictSections sections,
-            LocalBudget& budget);
+            TrackedAllocator<> alloc);
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-            const Separators& separators, duckdb::ReadStream& in);
+            const Separators& separators, duckdb::ReadStream& in,
+            TrackedAllocator<> alloc);
 
   void Write(duckdb::WriteStream& out) const;
 
@@ -145,7 +154,7 @@ class DictIndex {
 
  private:
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-            LocalBudget& budget);
+            TrackedAllocator<> alloc, Root root, PrefixTrie trie);
 
   TrackedBstring _min_key;
   TrackedBstring _max_key;
@@ -165,8 +174,8 @@ class DictIndex {
 
 class DictIndexBuilder {
  public:
-  explicit DictIndexBuilder(LocalBudget& budget)
-    : _trie{budget}, _seen{TrackedAllocator<ByteSet>{budget}} {}
+  explicit DictIndexBuilder(TrackedAllocator<> alloc)
+    : _trie{alloc}, _seen{alloc} {}
 
   void Reset(bool gated) noexcept {
     _trie.Reset();

@@ -280,7 +280,7 @@ class ColNumericCodecTest : public TestBase {
     const tests::IndexDir& dir, const duckdb::LogicalType& type,
     irs::ColCodecParams params, uint64_t rows, uint32_t rg_size, const Gen& gen,
     irs::codecs::CodecType compression = irs::codecs::CodecType::Auto) {
-    irs::ColWriter w{Db(), dir.Tracker(kSeg), params.tier};
+    irs::ColWriter w{Db(), dir.Tracker(kSeg), TestAlloc(), params.tier};
     auto& cw = w.OpenColumn(kField, type,
                             {.row_group_size = rg_size,
                              .compression = compression,
@@ -367,7 +367,7 @@ class ColNumericCodecTest : public TestBase {
       }
     }
     {
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       duckdb::Vector out{type, 1};
       for (uint64_t g = 0; g < rows; g += 97) {
         duckdb::FlatVector::ValidityMutable(out).Reset();
@@ -379,7 +379,7 @@ class ColNumericCodecTest : public TestBase {
       ExpectRow(out, 0, rows - 1, gen, type);
     }
     for (const uint64_t stride : {uint64_t{2}, uint64_t{41}, uint64_t{5003}}) {
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       std::vector<uint32_t> picked;
       for (uint64_t g = stride / 2; g < rows; g += stride) {
         picked.push_back(g);
@@ -431,7 +431,7 @@ class ColNumericCodecTest : public TestBase {
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     std::vector<std::string> out;
-    irs::ReadContext ctx{r};
+    irs::ReadContext ctx{r, TestAlloc()};
     irs::BlockWindow window{};
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
@@ -461,7 +461,7 @@ class ColNumericCodecTest : public TestBase {
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     std::vector<std::string> out;
-    irs::ReadContext ctx{r};
+    irs::ReadContext ctx{r, TestAlloc()};
     irs::BlockWindow window{};
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
@@ -763,7 +763,7 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecCompressesAtTheColumnsLevel) {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
-      irs::ReadContext ctx{r};
+      irs::ReadContext ctx{r, TestAlloc()};
       irs::BlockWindow window{};
       uint64_t row = 0;
       for (const auto& block : col->DataBlocks()) {
@@ -795,7 +795,7 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecMovesToABetterLayoutWithItsValues) {
   irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
-  irs::ReadContext ctx{r};
+  irs::ReadContext ctx{r, TestAlloc()};
   irs::BlockWindow window{};
   uint64_t row = 0;
   std::vector<std::string> layouts;
@@ -837,7 +837,7 @@ TEST_F(ColNumericCodecTest,
   irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
-  irs::ReadContext ctx{r};
+  irs::ReadContext ctx{r, TestAlloc()};
   irs::BlockWindow window{};
   uint64_t row = 0;
   std::vector<std::string> layouts;
@@ -2139,13 +2139,13 @@ TEST_F(ColNumericCodecTest, RowsOfDifferenceBlocksReadInAnyOrder) {
       ExpectRow(one, 0, g, rising, type);
     };
     {
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       for (uint64_t g = 5; g < kRows; g += 37) {
         expect_row(cursor, g);
       }
     }
     {
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       for (uint64_t g = kRows; g-- > 0;) {
         if (g % 53 == 0) {
           expect_row(cursor, g);
@@ -2154,13 +2154,13 @@ TEST_F(ColNumericCodecTest, RowsOfDifferenceBlocksReadInAnyOrder) {
       }
     }
     {
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       for (uint64_t g = 2000; g < 3500; ++g) {
         expect_row(cursor, g);
       }
     }
     {
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       for (uint64_t i = 0; i < 3000; ++i) {
         expect_row(cursor, Mix(i) % kRows);
       }
@@ -2168,7 +2168,7 @@ TEST_F(ColNumericCodecTest, RowsOfDifferenceBlocksReadInAnyOrder) {
     for (const uint64_t stride :
          {uint64_t{1}, uint64_t{2}, uint64_t{37}, uint64_t{700}}) {
       SCOPED_TRACE(stride);
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       std::vector<uint32_t> picked;
       for (uint64_t g = stride / 2; g < kRows; g += stride) {
         picked.push_back(static_cast<uint32_t>(g));
@@ -2197,7 +2197,7 @@ TEST_F(ColNumericCodecTest, FloatRowGroupsKeepTheirMinAndMax) {
                  std::string{magic_enum::enum_name(codec)});
     const auto write = [&](const tests::IndexDir& dir,
                            irs::codecs::CodecType compression) {
-      irs::ColWriter w{Db(), dir.Tracker(kSeg), irs::WriteTier::Merge};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg), TestAlloc(), irs::WriteTier::Merge};
       auto& cw = w.OpenColumn(
         kField, type, {.row_group_size = 8192, .compression = compression});
       for (uint64_t pos = 0; pos < kRows;) {
@@ -3071,7 +3071,7 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     const auto lookups = [&] {
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
       for (uint64_t g = 2501; g < kRows; g += 5003) {
         duckdb::FlatVector::ValidityMutable(out).Reset();
@@ -3154,7 +3154,7 @@ TEST_F(ColNumericCodecTest, PointReadsOnByteShuffledFrames) {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       duckdb::Vector out{c.type, 1};
       const auto expect = [&](uint64_t g) {
         duckdb::FlatVector::ValidityMutable(out).Reset();
@@ -3198,7 +3198,7 @@ TEST_F(ColNumericCodecTest, PointReadsInDescendingOrder) {
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       for (int pass = 0; pass < 3; ++pass) {
-        irs::ColumnReader::PointReader cursor{r, *col};
+        irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
         duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
         for (uint64_t g = kRows; g != 0;) {
           g = g > 31 ? g - 31 : 0;
@@ -3269,7 +3269,7 @@ TEST_F(ColNumericCodecTest, ScansLeaveHalfTheFrameCacheToPointReads) {
     }
   };
   const auto lookups = [&] {
-    irs::ColumnReader::PointReader cursor{r, *col};
+    irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
     duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
     for (uint64_t g = 2501; g < kRows; g += 5003) {
       duckdb::FlatVector::ValidityMutable(out).Reset();
@@ -3792,7 +3792,7 @@ TEST_F(ColNumericCodecTest, ConstantRowGroupsKeepZeroSigns) {
     };
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{Db(), dir.Tracker(kSeg), tier};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg), TestAlloc(), tier};
       auto& cw = w.OpenColumn(
         kField, type,
         {.row_group_size = kRowGroup, .codec_params = {.tier = tier}});
@@ -3863,7 +3863,7 @@ TEST_F(ColNumericCodecTest, FloatSpecialsKeepTheirBits) {
     };
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{Db(), dir.Tracker(kSeg), tier};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg), TestAlloc(), tier};
       auto& cw = w.OpenColumn(
         kField, type, {.row_group_size = 4096, .codec_params = {.tier = tier}});
       for (uint64_t pos = 0; pos < kRows;) {
@@ -3911,7 +3911,7 @@ TEST_F(ColNumericCodecTest, FloatSpecialsKeepTheirBits) {
       }
       pos += take;
     }
-    irs::ColumnReader::PointReader cursor{r, *col};
+    irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
     duckdb::Vector one{type, 1};
     for (uint64_t g = 0; g < kRows; g += 13) {
       duckdb::FlatVector::ValidityMutable(one).Reset();
@@ -4260,7 +4260,7 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       if (c.fetched) {
-        irs::ColumnReader::PointReader cursor{r, *col};
+        irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
         duckdb::Vector out{c.type, 1};
         cursor.FetchRow(*c.fetched, out, 0);
         return;
@@ -4926,6 +4926,7 @@ VariantSegment CompressVariant(duckdb::DatabaseInstance& db,
   irs::codecs::ColumnDataCheckpointData data{
     .type = type,
     .ctx = &ctx,
+    .alloc = TestAlloc(),
     .flush = flush,
     .tuning = tuning,
     .rows = {chunks, values.size()},
@@ -4957,7 +4958,7 @@ TEST_F(ColNumericCodecTest, AFrameOpenedByItsStartIsInflatedWholeForAScan) {
             "for");
   ASSERT_EQ(frames.flags & irs::codecs::kNumericShuffled, 0);
   irs::codecs::numeric::PlainReader<int64_t> reader{
-    base, frames, irs::codecs::CodecType::Lz4};
+    base, frames, irs::codecs::CodecType::Lz4, TestAlloc()};
   EXPECT_EQ(reader.FetchApart(5, irs::codecs::kNoRow), values[5]);
   std::vector<int64_t> read(values.size());
   reader.Read(0, read.size(), read.data());
@@ -4980,7 +4981,7 @@ TEST_F(ColNumericCodecTest, AConstantCheckInsideOneBlockReadsThatBlockAlone) {
   ASSERT_EQ(irs::codecs::TransformName(irs::codecs::Shape::Plain, frames),
             "bitpacking");
   irs::codecs::numeric::PlainReader<int64_t> reader{
-    base, frames, irs::codecs::CodecType::Bitpacking};
+    base, frames, irs::codecs::CodecType::Bitpacking, TestAlloc()};
   int64_t value = 0;
   EXPECT_TRUE(reader.ConstantRows(10, 100, value));
   EXPECT_EQ(value, 7);
@@ -5003,7 +5004,7 @@ TEST_F(ColNumericCodecTest, ABitPackedRowFetchedApartIsUnpackedFromItsBlock) {
   ASSERT_EQ(irs::codecs::TransformName(irs::codecs::Shape::Plain, frames),
             "bitpacking");
   irs::codecs::numeric::PlainReader<int64_t> reader{
-    base, frames, irs::codecs::CodecType::Bitpacking};
+    base, frames, irs::codecs::CodecType::Bitpacking, TestAlloc()};
   for (const uint64_t row :
        {kBlock + 5, uint64_t{3}, 2 * kBlock + 100, 3 * kBlock - 1}) {
     EXPECT_EQ(reader.FetchApart(row, irs::codecs::kNoRow), values[row])
@@ -5047,6 +5048,7 @@ TEST_F(ColNumericCodecTest, WideValuesGiveEmptyStatisticsForANonNumericType) {
   irs::codecs::ColumnDataCheckpointData data{
     .type = type,
     .ctx = &ctx,
+    .alloc = TestAlloc(),
     .flush = flush,
     .tuning = tuning,
   };
@@ -5114,7 +5116,7 @@ void WriteValues(duckdb::DatabaseInstance& db, const tests::IndexDir& dir,
                  uint64_t rows, uint32_t rg_size, irs::codecs::CodecType codec,
                  const ValueAt& value,
                  irs::DistinctStats distinct = irs::DistinctStats::None) {
-  irs::ColWriter w{db, dir.Tracker(kSeg), tier};
+  irs::ColWriter w{db, dir.Tracker(kSeg), TestAlloc(), tier};
   auto& cw = w.OpenColumn(kField, type,
                           {.row_group_size = rg_size,
                            .compression = codec,
@@ -5448,7 +5450,7 @@ TEST_F(ColNumericCodecTest, WideHalvesHoldARunOrAConstantOnlyWhenBothHalvesDo) {
       ASSERT_EQ(col->DataBlocks().size(), 1);
       EXPECT_EQ(col->DataBlocks().front().codec->type, codec);
       EXPECT_EQ(SegmentInfo(dir, "wide"), std::vector<std::string>{wide});
-      irs::ColumnReader::PointReader cursor{r, *col};
+      irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
       duckdb::Vector out{type, 1};
       for (const uint64_t g : {uint64_t{0}, uint64_t{999}, uint64_t{1000},
                                uint64_t{2048}, kRows - 1}) {
@@ -5524,7 +5526,7 @@ TEST_F(ColNumericCodecTest, PointReadsOfNeighboursInTwoFramesReadBack) {
   irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
-  irs::ColumnReader::PointReader cursor{r, *col};
+  irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
   std::vector<uint32_t> picked;
   for (uint64_t f = 1; f < 4; ++f) {
     for (const uint64_t g :
@@ -5574,14 +5576,14 @@ TEST_F(ColNumericCodecTest, UnsignedWideValuesReadBackInHalvesAndPlanes) {
     ASSERT_NE(col, nullptr);
     ASSERT_EQ(col->DataBlocks().size(), 1);
     ASSERT_EQ(col->DataBlocks().front().codec->type, codec);
-    irs::ReadContext ctx{r};
+    irs::ReadContext ctx{r, TestAlloc()};
     const auto segment = col->OpenSegment(0, ctx);
     const auto handle = segment->Pin();
     constexpr auto kHeader = sizeof(irs::codecs::numeric::WideHeader);
     const auto low = irs::codecs::ParseFrames(
       handle.Ptr() + kHeader, segment->size - kHeader, kRows, codec);
     EXPECT_EQ((low.flags & irs::codecs::kNumericShuffled) != 0, shuffled);
-    irs::ColumnReader::PointReader cursor{r, *col};
+    irs::ColumnReader::PointReader cursor{r, *col, TestAlloc()};
     duckdb::Vector out{type, 1};
     for (const uint64_t g :
          {uint64_t{0}, uint64_t{999}, uint64_t{1000}, kRows - 1}) {

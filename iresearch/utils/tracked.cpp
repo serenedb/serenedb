@@ -20,7 +20,7 @@
 
 #include "iresearch/utils/tracked.hpp"
 
-#include <absl/base/no_destructor.h>
+#include <absl/cleanup/cleanup.h>
 #include <malloc.h>
 
 #include <cstddef>
@@ -136,25 +136,11 @@ LocalBudget::~LocalBudget() {
 }
 
 void LocalBudget::Grow(size_t bytes) {
-  if (this == &kEmpty) {
-    ChargeRoot(bytes);
-    return;
-  }
   Take(bytes - Available());
   _used += bytes;
 }
 
-void LocalBudget::Release(size_t bytes) noexcept {
-  if (this == &kEmpty) {
-    FreeReservedMemory(kMemoryTag, bytes);
-    return;
-  }
-  SDB_ASSERT(bytes <= _used);
-  _used -= bytes;
-}
-
 void LocalBudget::Take(size_t bytes) {
-  SDB_ASSERT(this != &kEmpty);
   if (bytes == 0) {
     return;
   }
@@ -169,7 +155,6 @@ void LocalBudget::Reserve(size_t bytes) {
 }
 
 void LocalBudget::Rebind(MemoryBudget& parent) {
-  SDB_ASSERT(this != &kEmpty);
   if (&parent == _parent) {
     return;
   }
@@ -181,7 +166,6 @@ void LocalBudget::Rebind(MemoryBudget& parent) {
 }
 
 void LocalBudget::Return() noexcept {
-  SDB_ASSERT(this != &kEmpty);
   if (_parent == &gRootBudget) {
     return;
   }
@@ -213,16 +197,10 @@ duckdb::TempBufferPoolReservation LocalBudget::Lend(duckdb::MemoryTag tag,
   return lent;
 }
 
-duckdb::Allocator& TrackedDuckAllocator() {
-  static absl::NoDestructor<duckdb::Allocator> gAllocator{
+duckdb::Allocator DuckAllocator(TrackedAllocator<> alloc) {
+  return duckdb::Allocator{
     ChargedAllocate, ChargedFree, ChargedReallocate,
-    duckdb::make_uniq<BudgetAllocatorData>(kEmpty)};
-  return *gAllocator;
-}
-
-duckdb::Allocator BudgetAllocator(LocalBudget& budget) {
-  return duckdb::Allocator{ChargedAllocate, ChargedFree, ChargedReallocate,
-                           duckdb::make_uniq<BudgetAllocatorData>(budget)};
+    duckdb::make_uniq<BudgetAllocatorData>(alloc.Budget())};
 }
 
 duckdb::TempBufferPoolReservation ReserveMemory(duckdb::MemoryTag tag,
@@ -245,13 +223,13 @@ void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept {
   }
 }
 
-void* TrackedMalloc(LocalBudget& budget, size_t size) noexcept {
+void* TrackedMalloc(TrackedAllocator<> alloc, size_t size) noexcept {
   auto* p = std::malloc(size);
   if (!p) {
     return nullptr;
   }
   try {
-    budget.Charge(malloc_usable_size(p));
+    alloc.Budget().Charge(malloc_usable_size(p));
   } catch (const duckdb::OutOfMemoryException&) {
     std::free(p);
     return nullptr;
@@ -259,11 +237,11 @@ void* TrackedMalloc(LocalBudget& budget, size_t size) noexcept {
   return p;
 }
 
-void TrackedFree(LocalBudget& budget, void* p) noexcept {
+void TrackedFree(TrackedAllocator<> alloc, void* p) noexcept {
   if (!p) {
     return;
   }
-  budget.Free(malloc_usable_size(p));
+  alloc.Budget().Free(malloc_usable_size(p));
   std::free(p);
 }
 

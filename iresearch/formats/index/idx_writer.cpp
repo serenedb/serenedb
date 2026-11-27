@@ -52,17 +52,17 @@ void WriteGraphFrames(duckdb::BinarySerializer& graph,
 
 }  // namespace
 
-IdxWriter::IdxWriter(FileTracker& tracker, LocalBudget& budget)
+IdxWriter::IdxWriter(FileTracker& tracker, TrackedAllocator<> alloc)
   : _tracker{tracker},
     _filename{FileName(tracker.Name(), kIdxFormatExt)},
-    _budget{budget} {}
+    _alloc{alloc} {}
 
 void IdxWriter::EnsureOut() {
   if (_out) {
     return;
   }
   _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename,
-                                  _budget);
+                                  _alloc);
   _tracker.Add(kIdxFile);
 }
 
@@ -96,7 +96,7 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
   EnsureOut();
 
   const auto& written = _footer;
-  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
+  format_utils::WriteFooter(*_out, _alloc, [&](duckdb::BinarySerializer& footer) {
     footer.WriteOptionalList(
       kIdxFieldIvf, "ivf", written.ivf.size(),
       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {

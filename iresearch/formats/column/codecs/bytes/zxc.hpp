@@ -55,7 +55,7 @@ struct Zxc {
 
   class Compressor final : public DictionaryCompressor {
    public:
-    Compressor(LocalBudget& budget, uint8_t level);
+    explicit Compressor(TrackedAllocator<> alloc, uint8_t level);
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
@@ -78,7 +78,7 @@ struct Zxc {
 
   class Decompressor final : public DictionaryDecompressor {
    public:
-    Decompressor();
+    explicit Decompressor(TrackedAllocator<> alloc);
 
     bool Decompress(const char* src, size_t size, char* dst,
                     size_t raw_size) noexcept;

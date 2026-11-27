@@ -331,7 +331,8 @@ class PhraseMatcher {
   static constexpr bool kRarestLead =
     HasIntervals && !Offs && (N == 0 || N >= kRarestLeadSlots);
 
-  PhraseMatcher(PlanMemory& memory, size_t size) : _pos{memory.Arena(), size} {}
+  explicit PhraseMatcher(PlanMemory& memory, size_t size)
+    : _pos{memory.Arena(), size} {}
 
   TermPosition& Position(size_t i) noexcept {
     SDB_ASSERT(i < _pos.size());

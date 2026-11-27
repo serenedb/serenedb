@@ -34,8 +34,8 @@ class ConjunctionScore
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
-  ConjunctionScore(PlanMemory& memory, score_t constant,
-                   std::span<ScoreFunction> children)
+  explicit ConjunctionScore(PlanMemory& memory, score_t constant,
+                            std::span<ScoreFunction> children)
     : _constant{constant},
       _children{memory.Arena(), children.size(),
                 [&](ScoreFunction& slot, size_t i) noexcept {

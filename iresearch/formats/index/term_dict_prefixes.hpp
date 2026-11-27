@@ -104,9 +104,9 @@ class PrefixTrie {
     uint32_t _node = kNoNode;
   };
 
-  PrefixTrie() = default;
-  explicit PrefixTrie(const TrieShape& shape, LocalBudget& budget);
-  explicit PrefixTrie(duckdb::ReadStream& in);
+  explicit PrefixTrie(TrackedAllocator<> alloc);
+  explicit PrefixTrie(const TrieShape& shape, TrackedAllocator<> alloc);
+  PrefixTrie(duckdb::ReadStream& in, TrackedAllocator<> alloc);
 
   void Write(duckdb::WriteStream& out) const;
 
@@ -189,7 +189,7 @@ class PrefixTrie {
   }
 
  private:
-  static bool Bit(const TrackedVector<uint64_t>& bits, uint32_t at) noexcept {
+  static bool Bit(std::span<const uint64_t> bits, uint32_t at) noexcept {
     return (bits[at / 64] >> (at % 64) & 1) != 0;
   }
   const uint64_t* DenseWords(uint32_t node) const noexcept {
@@ -226,12 +226,12 @@ class PrefixTrie {
 
 class PrefixTrieBuilder {
  public:
-  explicit PrefixTrieBuilder(LocalBudget& budget)
-    : _nodes{TrackedAllocator<Node>{budget}},
-      _open{TrackedAllocator<uint32_t>{budget}},
-      _window{TrackedAllocator<Recent>{budget}},
-      _window_bytes{TrackedAllocator<byte_type>{budget}},
-      _first{TrackedAllocator<byte_type>{budget}} {}
+  explicit PrefixTrieBuilder(TrackedAllocator<> alloc)
+    : _nodes{alloc},
+      _open{alloc},
+      _window{alloc},
+      _window_bytes{alloc},
+      _first{alloc} {}
 
   void Add(bytes_view term);
   void SetSpan(uint32_t span) noexcept { _span = span; }

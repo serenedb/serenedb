@@ -102,15 +102,15 @@ BlockBounds<V> BoundsOf(const V* values, size_t count) noexcept {
 template<typename V>
 class BitpackingBlocks {
  public:
-  explicit BitpackingBlocks(LocalBudget& budget)
-    : _base{TrackedAllocator<V>{budget}},
-      _top{TrackedAllocator<V>{budget}},
-      _first{TrackedAllocator<V>{budget}},
-      _steps{TrackedAllocator<V>{budget}},
-      _bits{TrackedAllocator<uint8_t>{budget}},
-      _own{TrackedAllocator<uint8_t>{budget}},
-      _scratch{TrackedAllocator<std::byte>{budget}},
-      _words{TrackedAllocator<std::byte>{budget}} {}
+  explicit BitpackingBlocks(TrackedAllocator<> alloc)
+    : _base{alloc},
+      _top{alloc},
+      _first{alloc},
+      _steps{alloc},
+      _bits{alloc},
+      _own{alloc},
+      _scratch{alloc},
+      _words{alloc} {}
 
   template<bool kSigned>
   void Plan(BlockRows<V> rows) {
@@ -595,8 +595,8 @@ class BitpackingBlocks {
   TrackedVector<uint8_t> _bits;
   TrackedVector<uint8_t> _own;
   size_t _size = 0;
-  ScratchVector<V> _scratch;
-  ScratchVector<LaneWord<V>> _words;
+  TrackedScratchVector<V> _scratch;
+  TrackedScratchVector<LaneWord<V>> _words;
 };
 
 }  // namespace irs::codecs::numeric

@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 namespace {
@@ -266,7 +267,8 @@ void PlanReadAhead(ScanGlobalState& g, duckdb::ClientContext& context) {
     g.ahead_before[i + 1] =
       g.ahead_before[i] + g.Segment(g.segment_order[i]).rg_count;
   }
-  irs::ColFilterStateCache states;
+  irs::ColFilterStateCache states{
+    ConnectionContext::Get(*g.client_context).Memory()};
   irs::ColFilterClassification cls;
   RowGroupChecks checks;
   std::vector<duckdb::FileRange> extents;

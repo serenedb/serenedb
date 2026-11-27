@@ -459,7 +459,8 @@ class OsqQuantizerWriter final : public QuantizerWriter {
     return true;
   }
 
-  std::unique_ptr<QuantizerWriter> CloneForEncode() const final {
+  std::unique_ptr<QuantizerWriter> CloneForEncode(
+    TrackedAllocator<> /*alloc*/) const final {
     auto out =
       std::make_unique<OsqQuantizerWriter>(_lay.d, _lay.bits, _lay.query_bits);
     out->_centroid = _centroid;

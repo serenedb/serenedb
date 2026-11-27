@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 constexpr uint64_t kTerms = uint64_t{1} << 20;
@@ -76,7 +78,7 @@ const std::vector<irs::bstring>& Hexes() {
 }
 
 void Build(benchmark::State& state, const std::vector<irs::bstring>& terms) {
-  irs::term_dict::PrefixTrieBuilder builder{irs::kEmpty};
+  irs::term_dict::PrefixTrieBuilder builder{TestAlloc()};
   for (auto _ : state) {
     for (const auto& term : terms) {
       builder.Add(term);

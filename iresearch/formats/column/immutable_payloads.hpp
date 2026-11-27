@@ -31,6 +31,10 @@ struct ImmutablePayloads final : duckdb::AuxiliaryDataHolder {
 };
 
 struct HeapCharge final : duckdb::AuxiliaryDataHolder {
+  explicit HeapCharge(MemoryBudget& parent)
+    : budget{parent}, charge{TrackedAllocator<>{budget}} {}
+
+  LocalBudget budget;
   MemoryCharge charge;
 };
 

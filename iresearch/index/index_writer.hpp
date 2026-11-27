@@ -351,7 +351,7 @@ class IndexWriter : private util::Noncopyable {
     using ptr = std::unique_ptr<SegmentContext>;
 
     IndexWriter& owner;
-    TrackedVector<FlushedSegment> flushed;
+    std::vector<FlushedSegment> flushed;
     std::unique_ptr<SegmentWriter> writer;
     SegmentMeta writer_meta;
 

@@ -39,7 +39,7 @@ class ReadContext;
 
 class HnswWriter final : public AnnWriter {
  public:
-  HnswWriter(AnnInfo info, HnswBases* bases);
+  HnswWriter(AnnInfo info, HnswBases* bases, TrackedAllocator<> alloc);
   ~HnswWriter() final;
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }

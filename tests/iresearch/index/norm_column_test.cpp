@@ -132,7 +132,7 @@ TEST_F(NormColumnTest, Ctor) {
   // Fresh writer + fresh norm column => Id matches, RowCount == 0.
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{Db(), dir.Tracker("ctor_seg")};
+    irs::ColWriter w{Db(), dir.Tracker("ctor_seg"), TestAlloc()};
     auto& nw = w.OpenNormColumn(/*id=*/1, /*row_group_size=*/128);
     EXPECT_EQ(nw.Id(), 1);
     EXPECT_EQ(nw.RowCount(), 0u);
@@ -156,7 +156,7 @@ TEST_F(NormColumnTest, FlushEmpty) {
   {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{Db(), dir.Tracker("flush_empty_rb")};
+      irs::ColWriter w{Db(), dir.Tracker("flush_empty_rb"), TestAlloc()};
       auto& nw = w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
       EXPECT_EQ(nw.RowCount(), 0u);
       w.Rollback();
@@ -172,7 +172,7 @@ TEST_F(NormColumnTest, FlushEmpty) {
   {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{Db(), dir.Tracker("flush_empty_typed")};
+      irs::ColWriter w{Db(), dir.Tracker("flush_empty_typed"), TestAlloc()};
       w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
       auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
       duckdb::Vector v{duckdb::LogicalType::BIGINT, 1};
@@ -206,7 +206,7 @@ TEST_F(NormColumnTest, InsertDuplicates) {
     constexpr uint64_t kRowCount = 256;
     constexpr uint32_t kRowGroupSize = 64;  // 4 row groups
     {
-      irs::ColWriter w{Db(), dir.Tracker("dup_zero")};
+      irs::ColWriter w{Db(), dir.Tracker("dup_zero"), TestAlloc()};
       auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, /*value=*/0);
@@ -234,7 +234,7 @@ TEST_F(NormColumnTest, InsertDuplicates) {
     constexpr uint32_t kRepeatedValue = 42;
     constexpr uint32_t kRowGroupSize = 1024;
     {
-      irs::ColWriter w{Db(), dir.Tracker("dup_value")};
+      irs::ColWriter w{Db(), dir.Tracker("dup_value"), TestAlloc()};
       auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
@@ -268,7 +268,7 @@ TEST_F(NormColumnTest, InsertDuplicates) {
     constexpr uint32_t kRepeatedValue = 7;
     constexpr uint32_t kRowGroupSize = 100;
     {
-      irs::ColWriter w{Db(), dir.Tracker("dup_rg")};
+      irs::ColWriter w{Db(), dir.Tracker("dup_rg"), TestAlloc()};
       auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
@@ -306,7 +306,7 @@ TEST_F(NormColumnTest, RareLargeValues) {
 
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{Db(), dir.Tracker("rare")};
+    irs::ColWriter w{Db(), dir.Tracker("rare"), TestAlloc()};
     auto& nw = w.OpenNormColumn(9, kRowGroupSize);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
@@ -340,7 +340,7 @@ TEST_F(NormColumnTest, RareLargeValuesEveryRowGroup) {
   for (const uint32_t row_group_size : {512u, 4096u}) {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{Db(), dir.Tracker("rare_all")};
+      irs::ColWriter w{Db(), dir.Tracker("rare_all"), TestAlloc()};
       auto& nw = w.OpenNormColumn(9, row_group_size);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, expected[i]);
@@ -373,7 +373,7 @@ TEST_F(NormColumnTest, CrowdedBucketOverflows) {
 
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{Db(), dir.Tracker("crowded")};
+    irs::ColWriter w{Db(), dir.Tracker("crowded"), TestAlloc()};
     auto& nw = w.OpenNormColumn(9, kRowCount);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
@@ -407,7 +407,7 @@ TEST_F(NormColumnTest, WideRegions) {
 
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{Db(), dir.Tracker("wide")};
+    irs::ColWriter w{Db(), dir.Tracker("wide"), TestAlloc()};
     auto& nw = w.OpenNormColumn(9, 2048);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
@@ -430,7 +430,7 @@ TEST_F(NormColumnTest, StreamedColumnsWithoutRegionsPadToTheSegment) {
   constexpr uint64_t kRowCount = 100;
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{Db(), dir.Tracker("padded")};
+    irs::ColWriter w{Db(), dir.Tracker("padded"), TestAlloc()};
     w.StreamNormColumn(9);
     ASSERT_TRUE(w.Commit(kRowCount));
   }
@@ -454,7 +454,7 @@ TEST_F(NormColumnTest, StreamedRegions) {
   std::vector<uint32_t> expected;
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{Db(), dir.Tracker("streamed")};
+    irs::ColWriter w{Db(), dir.Tracker("streamed"), TestAlloc()};
     auto& nw = w.StreamNormColumn(9);
     const auto write = [&](uint64_t from, uint64_t to, uint64_t skip) {
       irs::NormStats planned;

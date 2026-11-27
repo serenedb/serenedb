@@ -36,13 +36,22 @@
 namespace irs {
 
 struct HnswData {
+  explicit HnswData(MemoryBudget& parent)
+    : budget{parent},
+      graph{TrackedAllocator<>{budget}},
+      vectors{TrackedAllocator<>{budget}},
+      norms{TrackedAllocator<>{budget}},
+      tails{TrackedAllocator<>{budget}},
+      codes{TrackedAllocator<>{budget}} {}
+
+  LocalBudget budget;
   HnswGraph graph;
-  HugePageVector<float> vectors;
+  TrackedHugePageVector<float> vectors;
   std::shared_ptr<const std::vector<float>> rotation;
   std::shared_ptr<const HnswByteBasis> byte_rotation;
-  HugePageVector<float> norms;
-  HugePageVector<float> tails;
-  HugePageVector<byte_type> codes;
+  TrackedHugePageVector<float> norms;
+  TrackedHugePageVector<float> tails;
+  TrackedHugePageVector<byte_type> codes;
   std::vector<float> centroid;
   std::shared_ptr<const QuantizerStats> stats;
 };

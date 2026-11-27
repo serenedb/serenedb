@@ -56,6 +56,9 @@ struct CentroidsNodeView {
 };
 
 struct LayerBuffers {
+  explicit LayerBuffers(TrackedAllocator<> alloc)
+    : centroids{alloc}, child_offsets{alloc} {}
+
   TrackedVector<duckdb::FilePin> centroids;
   TrackedVector<TrackedVector<size_t>> child_offsets;
 };
@@ -67,7 +70,8 @@ struct CentroidsNode {
   size_t level;
   size_t d;
 
-  CentroidsNode(size_t level, size_t d) : level{level}, d{d} {}
+  CentroidsNode(size_t level, size_t d, TrackedAllocator<> alloc)
+    : centroids{alloc}, child_offsets{alloc}, level{level}, d{d} {}
 
   struct Candidate {
     float dist;
@@ -78,7 +82,8 @@ struct CentroidsNode {
   static std::vector<CentroidsNode> Deserialize(duckdb::InputFileReader& in,
                                                 size_t level, size_t d,
                                                 std::span<const size_t> starts,
-                                                std::span<const size_t> sizes);
+                                                std::span<const size_t> sizes,
+                                                TrackedAllocator<> alloc);
   void Serialize(duckdb::WriteStream& out) const;
 
   static std::vector<CentroidsNodeView> ReadLayer(
@@ -92,7 +97,7 @@ struct CentroidsNode {
                      std::span<const CentroidsNodeView> nodes,
                      size_t layer_base, size_t layer_total,
                      std::vector<LayerBuffers>& layers,
-                     std::vector<Candidate>& leaves) {
+                     std::vector<Candidate>& leaves, TrackedAllocator<> alloc) {
     SDB_ASSERT(!nodes.empty());
     const auto d = query.size();
     const float* q = query.data();
@@ -134,9 +139,9 @@ struct CentroidsNode {
     }
     size_t n_total = 0;
     auto next = CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes,
-                                         layers.emplace_back(), n_total);
+                                         layers.emplace_back(alloc), n_total);
     Search<Metric>(query, in, beam, level - 1, next, layer_base + layer_total,
-                   n_total, layers, leaves);
+                   n_total, layers, leaves, alloc);
   }
 };
 
@@ -157,7 +162,8 @@ class CentroidsTree {
   CentroidsTree& operator=(CentroidsTree&&) = default;
 
   static CentroidsTree Deserialize(duckdb::InputFileReader& in,
-                                   uint64_t root_byte_size);
+                                   uint64_t root_byte_size,
+                                   TrackedAllocator<> alloc);
 
   void Search(std::span<const float> query, duckdb::InputFileReader& in,
               uint32_t nprobe, TrackedVector<uint32_t>& out_ids,
@@ -194,7 +200,6 @@ struct CentroidsBuildParams {
   size_t max_fanout = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
-  LocalBudget& budget = kEmpty;
 };
 
 struct CentroidsBound {
@@ -213,16 +218,18 @@ class CentroidsBuilder {
     size_t Rows(size_t d) const noexcept { return centroids.size() / d; }
   };
 
-  CentroidsBuilder() = default;
+  explicit CentroidsBuilder(TrackedAllocator<> alloc)
+    : _nodes{alloc}, _row_bases{alloc} {}
 
   static CentroidsBuilder Create(const ColumnReader& vector_column,
                                  ReadContext& ctx, size_t rows,
                                  VectorMetric metric, uint32_t d,
-                                 const CentroidsBuildParams& params = {});
+                                 const CentroidsBuildParams& params,
+                                 TrackedAllocator<> alloc);
 
-  static CentroidsBuilder CreateFromSample(
-    TrackedVector<float> sample, uint32_t d, VectorMetric metric,
-    const CentroidsBuildParams& params = {});
+  static CentroidsBuilder CreateFromSample(TrackedVector<float> sample,
+                                           uint32_t d, VectorMetric metric,
+                                           const CentroidsBuildParams& params);
 
   static CentroidsBound Bound(size_t rows, uint32_t d, VectorMetric metric,
                               const CentroidsBuildParams& params) noexcept;
@@ -239,10 +246,10 @@ class CentroidsBuilder {
   static CentroidsBuilder BuildFromSample(TrackedVector<float> sample,
                                           uint32_t d, VectorMetric metric,
                                           size_t leaf_size, size_t max_fanout,
-                                          LocalBudget& budget);
+                                          TrackedAllocator<> alloc);
 
   void BuildTree(TrackedVector<float> sample, size_t leaf_size,
-                 size_t max_fanout, LocalBudget& budget);
+                 size_t max_fanout, TrackedAllocator<> alloc);
 
   void AssignCentroidsImpl(
     size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,

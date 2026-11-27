@@ -357,7 +357,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   const tests::IndexDir& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
-  irs::PostingsWriter writer{irs::kEmpty};
+  irs::PostingsWriter writer{TestAlloc()};
   irs::PostingMeta posting_meta;
 
   {
@@ -368,7 +368,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       .scorer = scorer,
       .doc_count = docs.back().first + 1,
       .index_features = features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out = dir.Create("attributes");

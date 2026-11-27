@@ -590,7 +590,9 @@ int Main(int argc, char** argv) {
     const std::vector<std::string> cparts = absl::StrSplit(cfg.name, ':');
     const uint32_t pq_niter =
       pq_m != 0 && cparts.size() > 2 ? ParseNumber<uint32_t>(cparts[2]) : 0;
+    LocalBudget budget{gRootBudget};
     auto writer = MakeQuantizerWriter(
+      TrackedAllocator<>{budget},
       AnnInfo::Quantizer{.kind = cfg.quant,
                          .pq_m = pq_m,
                          .nb_bits = pq_m != 0 ? 0 : cfg.nb_bits,
@@ -643,7 +645,8 @@ int Main(int argc, char** argv) {
     const bstring blob{
       irs::bytes_view{framed.GetData(), framed.GetPosition()}.substr(
         sizeof(uint64_t))};
-    auto stats = MakeQuantizerStats(cfg.quant, d, blob, metric, true);
+    auto stats =
+      MakeQuantizerStats(gRootBudget, cfg.quant, d, blob, metric, true);
 
     std::vector<std::vector<size_t>> hits(nq,
                                           std::vector<size_t>(pools.size()));

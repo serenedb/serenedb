@@ -45,7 +45,7 @@ namespace irs::term_dict {
 
 class FieldWriter final : public FieldSink {
  public:
-  explicit FieldWriter(bool compaction, LocalBudget& budget);
+  explicit FieldWriter(bool compaction, TrackedAllocator<> alloc);
 
   FieldWriter(const FieldWriter&) = delete;
   FieldWriter& operator=(const FieldWriter&) = delete;
@@ -82,7 +82,7 @@ class FieldWriter final : public FieldSink {
   void ResetField() noexcept;
   void Reset() noexcept;
 
-  LocalBudget& _memory;
+  TrackedAllocator<> _alloc;
   PostingsWriter _pw;
   BlockEncoder _encoder;
   BlockRecords _records;
@@ -98,7 +98,6 @@ class FieldWriter final : public FieldSink {
   PostingMeta _single;
   IdxWriter* _idx = nullptr;
   duckdb::WriteStream* _out = nullptr;
-  LocalBudget* _budget = nullptr;
   uint64_t _docs = 0;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;

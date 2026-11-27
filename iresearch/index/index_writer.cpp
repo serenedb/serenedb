@@ -439,7 +439,8 @@ IndexWriter::Merged IndexWriter::MergePieces(
   meta.name = FileName(id);
   LocalBudget budget{gRootBudget};
   MergeWriter merger{_db, _fs, _root,
-                     GetSegmentWriterOptions(true, field_options), budget};
+                     GetSegmentWriterOptions(true, field_options),
+                     TrackedAllocator<>{budget}};
   merger.Reset(candidates.begin(), candidates.end());
   merged.reader = merger.FlushPiece(meta, id);
   if (merged.reader) {
@@ -457,7 +458,8 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   meta.name = FileName(id);
   LocalBudget budget{gRootBudget};
   MergeWriter merger{_db, _fs, _root,
-                     GetSegmentWriterOptions(true, field_options), budget};
+                     GetSegmentWriterOptions(true, field_options),
+                     TrackedAllocator<>{budget}};
   merger.Reset(candidates.begin(), candidates.end());
   auto files = co_await merger.Flush(meta, progress, env);
   if (!files) {

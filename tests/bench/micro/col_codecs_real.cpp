@@ -74,6 +74,8 @@
 #include <thread>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 uint64_t RequestedRows() {
@@ -338,7 +340,7 @@ void OpenReader(ColSeg& seg) {
 
 void EvictUnderWarmMap(ColSeg& seg) {
   {
-    irs::ReadContext ctx{*seg.reader};
+    irs::ReadContext ctx{*seg.reader, TestAlloc()};
     auto st = seg.col->InitScan(ctx);
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                               Data().type, STANDARD_VECTOR_SIZE};
@@ -417,7 +419,7 @@ struct Built {
 
 void ColBuild(irs::FileTracker& tracker, const ColArm& arm) {
   const auto& data = Data();
-  irs::ColWriter w{CsDb(), tracker, Tier()};
+  irs::ColWriter w{CsDb(), tracker, TestAlloc(), Tier()};
   auto& cw = w.OpenColumn(
     kField, data.type,
     {.row_group_size = RowGroupSize(),
@@ -556,7 +558,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
     return;
   }
   const auto& data = Data();
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   {
     auto st = seg.col->InitScan(ctx);
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(), data.type,
@@ -594,7 +596,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
       }
     }
   }
-  irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col};
+  irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col, TestAlloc()};
   duckdb::Vector out{data.type, 1};
   for (uint64_t r = 0; r < data.rows; r += 997) {
     duckdb::FlatVector::ValidityMutable(out).Reset();
@@ -607,7 +609,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
   {
     const std::vector<uint32_t> rows{ScatteredRows().begin(),
                                      ScatteredRows().end()};
-    irs::ColumnReader::PointReader fetch{*seg.reader, *seg.col};
+    irs::ColumnReader::PointReader fetch{*seg.reader, *seg.col, TestAlloc()};
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(), data.type,
                               STANDARD_VECTOR_SIZE};
     duckdb::Vector batch{cache};
@@ -705,7 +707,7 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
     return;
   }
   std::map<std::string, uint64_t> rows;
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
@@ -735,7 +737,7 @@ void PrintBlocks(const ColArm& arm, const ColSeg& seg) {
   if (!std::getenv("SDB_BENCH_BLOCKS")) {
     return;
   }
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
@@ -839,7 +841,8 @@ void ColScanParallel(benchmark::State& state, const ColArm* arm,
       const uint64_t end =
         std::min(rows, vectors * (t + 1) / threads * STANDARD_VECTOR_SIZE);
       pool.emplace_back([&, begin, end] {
-        irs::ReadContext ctx{*seg.reader};
+        irs::LocalBudget budget{irs::gRootBudget};
+        irs::ReadContext ctx{*seg.reader, irs::TrackedAllocator<>{budget}};
         ScanRange(*seg.col, ctx, begin, end);
       });
     }
@@ -917,7 +920,7 @@ void ColFilter(benchmark::State& state, const ColArm* arm, bool like) {
   for (auto _ : state) {
     state.PauseTiming();
     Evict(seg);
-    irs::ReadContext ctx{*seg.reader};
+    irs::ReadContext ctx{*seg.reader, TestAlloc()};
     auto st = seg.col->InitScan(ctx);
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                               Data().type, STANDARD_VECTOR_SIZE};
@@ -951,7 +954,7 @@ void ColScan(benchmark::State& state, const ColArm* arm, bool flat) {
   for (auto _ : state) {
     state.PauseTiming();
     Evict(seg);
-    irs::ReadContext ctx{*seg.reader};
+    irs::ReadContext ctx{*seg.reader, TestAlloc()};
     auto st = seg.col->InitScan(ctx);
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                               Data().type, STANDARD_VECTOR_SIZE};
@@ -978,7 +981,7 @@ void ColGather(benchmark::State& state, const ColArm* arm) {
   for (auto _ : state) {
     state.PauseTiming();
     Evict(seg);
-    irs::ReadContext ctx{*seg.reader};
+    irs::ReadContext ctx{*seg.reader, TestAlloc()};
     auto st = seg.col->InitScan(ctx);
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                               Data().type, STANDARD_VECTOR_SIZE};
@@ -1003,7 +1006,7 @@ void ColPoint(benchmark::State& state, const ColArm* arm) {
   for (auto _ : state) {
     state.PauseTiming();
     Evict(seg);
-    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col};
+    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col, TestAlloc()};
     duckdb::Vector out{Data().type, 1};
     state.ResumeTiming();
     for (const auto r : rows) {
@@ -1023,7 +1026,7 @@ void ColFetch(benchmark::State& state, const ColArm* arm) {
   for (auto _ : state) {
     state.PauseTiming();
     Evict(seg);
-    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col};
+    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col, TestAlloc()};
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                               Data().type, STANDARD_VECTOR_SIZE};
     duckdb::Vector out{cache};

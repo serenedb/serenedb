@@ -103,19 +103,19 @@ struct CodecState final : State {
     TextState(Compression::kShape, Compression::kCodec);
 
   explicit CodecState(ColumnDataCheckpointData& data)
-    : budget{data.budget},
+    : alloc{data.alloc},
       type{data.type},
-      dedup{budget},
+      dedup{alloc},
       builder{data, dedup},
-      segment{budget, type},
-      trials{data.Allocator()} {}
+      segment{alloc, type},
+      trials{alloc} {}
 
-  LocalBudget& budget;
+  TrackedAllocator<> alloc;
   const duckdb::LogicalType& type;
   DedupScratch dedup;
   Compression builder;
   Segment segment;
-  TrackedVector<TrackedPtr<Segment>> trials;
+  TrackedVector<TrackedUniquePtr<Segment>> trials;
 };
 
 template<typename Compression>
@@ -210,7 +210,7 @@ Segment& Trial(CodecState<Compression>& state, const Config& config,
     return *found;
   }
   auto& seg = *state.trials.emplace_back(
-    MakeTracked<Segment>(state.budget, state.budget, state.type));
+    MakeTrackedUnique<Segment>(state.alloc, state.alloc, state.type));
   if (window.rows != 0) {
     CutRows(state.builder, config, values, 0, window.rows, kNoCut, seg);
   } else {

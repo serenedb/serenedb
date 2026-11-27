@@ -78,7 +78,7 @@ namespace {
 struct RowSource {
   std::vector<irs::ColumnstoreProjection> projections;
   duckdb::DataChunk chunk;
-  irs::ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states{irs::gRootBudget};
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE +
                                irs::doc_limits::kDocsSlack};
   std::vector<ColumnId> write_ids;
@@ -142,6 +142,7 @@ ColumnPlan PlanColumns(const SearchSinkInsertBaseImpl& sink,
 void InitRowSource(duckdb::ClientContext& context,
                    const SearchBackfillTarget& target, RowSource& source,
                    const ColumnPlan* plan = nullptr) {
+  source.filter_states.Bind(ConnectionContext::Get(context).Memory());
   duckdb::vector<duckdb::LogicalType> types;
   std::vector<duckdb::idx_t> slots(target.column_ids.size(),
                                    duckdb::DConstants::INVALID_INDEX);
@@ -456,7 +457,8 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   std::optional<ColumnPlan> plan;
   for (size_t k = 0; k < slice_count; ++k) {
     auto slice = std::make_unique<Slice>();
-    slice->trx = shard.GetTransaction();
+    slice->trx =
+      shard.GetTransaction(ConnectionContext::Get(context).Memory());
     slice->sink =
       MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context)
         .sink;

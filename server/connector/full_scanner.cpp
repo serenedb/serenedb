@@ -39,7 +39,8 @@ FullScanner::FullScanner(
   std::span<const irs::ColFilterSpec> filters,
   std::span<const MultiColumnCheck> multi, duckdb::ClientContext* context,
   irs::ColFilterStateCache& states, bool share_payloads)
-  : _ctx{std::make_shared<irs::ReadContext>(reader)}, _context{context} {
+  : _ctx{std::make_shared<irs::ReadContext>(reader, states.Allocator())},
+    _context{context} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
   _multi.reserve(multi.size());

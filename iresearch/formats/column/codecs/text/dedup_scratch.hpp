@@ -34,8 +34,7 @@ class DedupScratch {
     bool fresh;
   };
 
-  explicit DedupScratch(LocalBudget& budget)
-    : _slots{TrackedAllocator<Slot>{budget}} {}
+  explicit DedupScratch(TrackedAllocator<> alloc) : _slots{alloc} {}
 
   void Begin(size_t entries) {
     if (_slots.size() != entries) {

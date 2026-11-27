@@ -27,7 +27,7 @@ namespace {
 
 class ExactDocs : public Root {
  public:
-  ExactDocs(PlanMemory& memory, const ExactVectorQuery& query)
+  explicit ExactDocs(PlanMemory& memory, const ExactVectorQuery& query)
     : _scanner{memory, query, true} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {

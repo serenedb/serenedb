@@ -61,7 +61,6 @@ class AnnWriter {
   virtual ~AnnWriter() = default;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void SetBudget(LocalBudget& budget) noexcept { _budget = &budget; }
 
   virtual AnnKind Kind() const noexcept = 0;
 
@@ -79,18 +78,20 @@ class AnnWriter {
   }
 
  protected:
+  explicit AnnWriter(TrackedAllocator<> alloc) noexcept : _alloc{alloc} {}
+
   IdxWriter* _idx = nullptr;
-  LocalBudget* _budget = &kEmpty;
+  TrackedAllocator<> _alloc;
 };
 
 inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
   std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
-  std::optional<ReadContext>& ctx) {
+  std::optional<ReadContext>& ctx, TrackedAllocator<> alloc) {
   std::vector<const BasicTermReader*> out;
   if (col_reader == nullptr || writers.empty()) {
     return out;
   }
-  ctx.emplace(*col_reader);
+  ctx.emplace(*col_reader, alloc);
   out.reserve(writers.size());
   for (const auto& w : writers) {
     if (!w) {

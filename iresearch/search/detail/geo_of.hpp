@@ -55,7 +55,7 @@ Result Build(PlanMemory& memory, GeoKind,
   using Recipe = typename GeoQuery<Parser, Acceptor>::Recipe;
   return f.template operator()<VerifiedSlots<Cells, Recipe, !kProbed>>(
     std::piecewise_construct, std::forward_as_tuple(std::move(node)),
-    query.MakeRecipe());
+    query.MakeRecipe(memory.Allocator()));
 }
 
 }  // namespace irs::detail

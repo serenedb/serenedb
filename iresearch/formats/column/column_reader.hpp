@@ -117,9 +117,11 @@ struct ListScanState;
 class ColumnReader {
  public:
   struct VectorScratch {
-    explicit VectorScratch(const duckdb::LogicalType& type,
-                           duckdb::idx_t capacity = STANDARD_VECTOR_SIZE)
-      : cache{TrackedDuckAllocator(), type, capacity}, vector{cache} {}
+    VectorScratch(const duckdb::LogicalType& type, TrackedAllocator<> alloc,
+                  duckdb::idx_t capacity = STANDARD_VECTOR_SIZE)
+      : allocator{DuckAllocator(alloc)},
+        cache{allocator, type, capacity},
+        vector{cache} {}
     VectorScratch(const VectorScratch&) = delete;
     VectorScratch(VectorScratch&&) = delete;
 
@@ -128,6 +130,7 @@ class ColumnReader {
       return vector;
     }
 
+    duckdb::Allocator allocator;
     duckdb::VectorCache cache;
     duckdb::Vector vector;
   };
@@ -291,10 +294,12 @@ class ColumnReader {
   class PointReader {
    public:
     PointReader(const ColReader& col_reader, const ColumnReader& col,
-                bool random_access = false);
+                TrackedAllocator<> alloc, bool random_access = false);
 
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
+
+    TrackedAllocator<> Allocator() const noexcept { return _ctx.Allocator(); }
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset) {
       return _stored ? FetchStored(row, out, out_offset)
@@ -388,7 +393,8 @@ class ColumnReader {
     void FetchDocs(std::span<const doc_id_t> docs) {
       SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
       if (!_batch) {
-        _batch = std::make_unique<VectorScratch>(duckdb::LogicalType::BLOB);
+        _batch = std::make_unique<VectorScratch>(duckdb::LogicalType::BLOB,
+                                                 Allocator());
       }
       PointReader::FetchRows(docs, doc_limits::min(), _batch->Reset(), 0);
     }
@@ -405,7 +411,7 @@ class ColumnReader {
       return {reinterpret_cast<const byte_type*>(s.GetData()), s.GetSize()};
     }
 
-    VectorScratch _buf{duckdb::LogicalType::BLOB, 1};
+    VectorScratch _buf{duckdb::LogicalType::BLOB, Allocator(), 1};
     std::unique_ptr<VectorScratch> _batch;
   };
 
@@ -509,10 +515,10 @@ class ColumnReader {
 
 inline duckdb::Vector& ResetScratch(
   std::unique_ptr<ColumnReader::VectorScratch>& slot, const auto& type,
-  duckdb::idx_t capacity = STANDARD_VECTOR_SIZE) {
+  TrackedAllocator<> alloc, duckdb::idx_t capacity = STANDARD_VECTOR_SIZE) {
   if (!slot || slot->cache.GetCapacity().GetIndex() < capacity) {
     slot = std::make_unique<ColumnReader::VectorScratch>(
-      type, std::max<duckdb::idx_t>(capacity, STANDARD_VECTOR_SIZE));
+      type, alloc, std::max<duckdb::idx_t>(capacity, STANDARD_VECTOR_SIZE));
   }
   return slot->Reset();
 }

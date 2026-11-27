@@ -45,6 +45,7 @@
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/parallel_for.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -169,7 +170,7 @@ class Store final : public std::enable_shared_from_this<Store>,
     irs::IndexWriter::Transaction trx;
     uint64_t id = 0;
   };
-  Piece StartPiece();
+  Piece StartPiece(irs::MemoryBudget& memory);
   void WriteOut();
   void PiecesAdded() noexcept;
   uint64_t PieceBytes() const noexcept {
@@ -188,9 +189,11 @@ class Store final : public std::enable_shared_from_this<Store>,
   void SyncSegments() const;
   bool RewriteDirtiest();
 
-  irs::IndexWriter::Transaction GetTransaction() {
+  irs::IndexWriter::Transaction GetTransaction(irs::MemoryBudget& memory) {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch();
+    auto trx = _writer->GetBatch();
+    trx.SetMemory(memory);
+    return trx;
   }
 
   void StartTasks();

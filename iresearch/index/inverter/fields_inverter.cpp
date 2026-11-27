@@ -68,8 +68,7 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();
 
-  TrackedVector<const FieldsMap::value_type*> sorted{
-    TrackedAllocator<const FieldsMap::value_type*>{state.budget}};
+  TrackedVector<const FieldsMap::value_type*> sorted{state.alloc};
   sorted.reserve(_fields_map.size());
   for (const auto& item : _fields_map) {
     const auto& entry = item.second;
@@ -107,9 +106,9 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
     }));
 
   const auto needs = Needs(state.doc_count);
-  auto budget_allocator = BudgetAllocator(state.budget);
-  InverterMemory mem{budget_allocator};
-  ScatterScratch scratch{state.budget};
+  auto allocator = DuckAllocator(state.alloc);
+  InverterMemory mem{allocator};
+  ScatterScratch scratch{state.alloc};
   ScatteredField scattered{mem, scratch};
   ColumnarTermReader terms;
 

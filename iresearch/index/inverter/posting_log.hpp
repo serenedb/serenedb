@@ -50,7 +50,8 @@ class RunLog {
     uint32_t ndocs;
   };
 
-  explicit RunLog(duckdb::ArenaAllocator& blocks) : _doc_tokens{blocks} {}
+  RunLog(duckdb::ArenaAllocator& blocks, TrackedAllocator<> alloc)
+    : _runs{alloc}, _doc_tokens{blocks, alloc} {}
 
   IRS_FORCE_INLINE void BeginDoc(doc_id_t doc) {
     if (!_runs.empty()) {
@@ -157,8 +158,13 @@ class PostingLogBase : util::Noncopyable {
   }
 
  protected:
-  explicit PostingLogBase(duckdb::ArenaAllocator& blocks)
-    : _term_ids{blocks}, _runlog{blocks}, _refs{blocks} {}
+  PostingLogBase(duckdb::ArenaAllocator& blocks, TrackedAllocator<> alloc)
+    : _term_ids{blocks, alloc},
+      _runlog{blocks, alloc},
+      _refs{blocks, alloc},
+      _ref_words{alloc},
+      _entries{alloc},
+      _entry_ids{alloc} {}
 
   void AppendEntryIds(uint32_t e, const uint32_t* ids, uint32_t n) {
     _entry_ids.insert(_entry_ids.end(), ids, ids + n);
@@ -225,8 +231,11 @@ class PostingLogPosBase : public PostingLogBase {
   }
 
  protected:
-  explicit PostingLogPosBase(duckdb::ArenaAllocator& blocks)
-    : PostingLogBase{blocks}, _pos{blocks} {}
+  PostingLogPosBase(duckdb::ArenaAllocator& blocks, TrackedAllocator<> alloc)
+    : PostingLogBase{blocks, alloc},
+      _pos{blocks, alloc},
+      _explicit_words{alloc},
+      _entry_pos{alloc} {}
 
   IRS_FORCE_INLINE void PushPos(uint32_t abs) {
     _pos.Push(abs - _pos_prev);
@@ -301,8 +310,8 @@ class PostingLog<TokenLayout::Terms> final : public PostingLogBase {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::Terms;
 
-  explicit PostingLog(duckdb::ArenaAllocator& blocks)
-    : PostingLogBase{blocks} {}
+  PostingLog(duckdb::ArenaAllocator& blocks, TrackedAllocator<> alloc)
+    : PostingLogBase{blocks, alloc} {}
 
   IRS_FORCE_INLINE void PushOne(doc_id_t doc, uint32_t term_id) {
     _runlog.BeginDoc(doc);
@@ -326,8 +335,8 @@ class PostingLog<TokenLayout::TermsPos> final : public PostingLogPosBase {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::TermsPos;
 
-  explicit PostingLog(duckdb::ArenaAllocator& blocks)
-    : PostingLogPosBase{blocks} {}
+  PostingLog(duckdb::ArenaAllocator& blocks, TrackedAllocator<> alloc)
+    : PostingLogPosBase{blocks, alloc} {}
 
   using PostingLogPosBase::PushBatch;
   using PostingLogPosBase::PushOne;
@@ -338,8 +347,12 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::TermsPosOffs;
 
-  explicit PostingLog(duckdb::ArenaAllocator& blocks)
-    : PostingLogPosBase{blocks}, _offs_delta{blocks}, _offs_len{blocks} {}
+  PostingLog(duckdb::ArenaAllocator& blocks, TrackedAllocator<> alloc)
+    : PostingLogPosBase{blocks, alloc},
+      _offs_delta{blocks, alloc},
+      _offs_len{blocks, alloc},
+      _entry_offs_start{alloc},
+      _entry_offs_end{alloc} {}
 
   size_t BookkeepingMemory() const noexcept {
     return PostingLogPosBase::BookkeepingMemory() + _offs_delta.Memory() +
@@ -416,9 +429,10 @@ static_assert(static_cast<size_t>(TokenLayout::Terms) == 0 &&
               static_cast<size_t>(TokenLayout::TermsPosOffs) == 2);
 
 inline PostingLogVariant MakePostingLog(duckdb::ArenaAllocator& blocks,
+                                        TrackedAllocator<> alloc,
                                         TokenLayout layout) {
   return Resolve(layout, [&]<TokenLayout L>() {
-    return PostingLogVariant{std::in_place_type<PostingLog<L>>, blocks};
+    return PostingLogVariant{std::in_place_type<PostingLog<L>>, blocks, alloc};
   });
 }
 

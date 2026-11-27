@@ -47,11 +47,12 @@ constexpr duckdb::idx_t kMinDenseBatch = 64;
 
 HitBatcher::HitBatcher(std::span<const ColumnstoreProjection> projections,
                        irs::field_id pk_field_id, bool track_scores,
-                       bool prefetch)
+                       bool prefetch, irs::TrackedAllocator<> alloc)
   : _projections{projections},
     _pk_field_id{pk_field_id},
     _track_scores{track_scores},
-    _prefetch{prefetch} {
+    _prefetch{prefetch},
+    _alloc{alloc} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
 }
@@ -89,7 +90,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   if (_ctx) {
     _ctx->Reset(*col_reader);
   } else {
-    _ctx = std::make_unique<irs::ReadContext>(*col_reader);
+    _ctx = std::make_unique<irs::ReadContext>(*col_reader, _alloc);
   }
 
   // This segment's active pushed filters (applied in EmitFiltered). The score
@@ -122,7 +123,8 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     c.is_pk = true;
     bind(c, *pk);
     if (!_pk_out) {
-      _pk_out = std::make_unique<irs::ColumnReader::VectorScratch>(pk->Type());
+      _pk_out =
+        std::make_unique<irs::ColumnReader::VectorScratch>(pk->Type(), _alloc);
     }
   }
   for (const auto& p : _projections) {
@@ -263,7 +265,7 @@ float* HitBatcher::ScoreData() {
   auto& s = _score_bufs[_score_idx];
   if (!s) {
     s = std::make_unique<irs::ColumnReader::VectorScratch>(
-      duckdb::LogicalType::FLOAT,
+      duckdb::LogicalType::FLOAT, _alloc,
       STANDARD_VECTOR_SIZE + irs::doc_limits::kScoresSlack);
   }
   return duckdb::FlatVector::GetDataMutable<float>(s->vector);
@@ -372,7 +374,7 @@ duckdb::Vector& HitBatcher::Scratch(Column& c) {
     c.scratch_idx ^= 1;
     auto& s = c.scratch[c.scratch_idx];
     if (!s) {
-      s = std::make_unique<irs::ColumnReader::VectorScratch>(c.out_type);
+      s = std::make_unique<irs::ColumnReader::VectorScratch>(c.out_type, _alloc);
       return s->vector;
     }
     return s->Reset();
@@ -399,7 +401,7 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
   SDB_ASSERT(!dense || (at == 0 && span <= STANDARD_VECTOR_SIZE));
   if (!dense &&
       column_internal::FetchSparse(
-        c.point, *_col_reader, *c.reader,
+        c.point, *_col_reader, *c.reader, _alloc,
         std::span<const irs::doc_id_t>{&_docs[first], hits}, span, out, at)) {
     return;
   }

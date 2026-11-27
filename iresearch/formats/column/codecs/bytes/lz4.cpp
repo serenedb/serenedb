@@ -40,16 +40,16 @@ size_t Lz4::Bound(size_t raw_size) noexcept {
   return static_cast<size_t>(LZ4_compressBound(static_cast<int>(raw_size)));
 }
 
-Lz4::Compressor::Compressor(LocalBudget& budget, uint8_t level)
-  : DictionaryCompressor{budget, kDictionaryCap},
+Lz4::Compressor::Compressor(TrackedAllocator<> alloc, uint8_t level)
+  : DictionaryCompressor{alloc, kDictionaryCap},
     _level{EffectiveLevel<Lz4>(level)} {
   if (HighCompression<Lz4>(level)) {
-    _high = MakeTrackedArray<LZ4_streamHC_t>(1, budget);
+    _high = MakeTrackedUnique<LZ4_streamHC_t>(alloc);
     SDB_ENSURE(LZ4_initStreamHC(_high.get(), sizeof(LZ4_streamHC_t)),
                "lz4: cannot create a compression stream");
     return;
   }
-  _fast = MakeTrackedArray<LZ4_stream_t>(1, budget);
+  _fast = MakeTrackedUnique<LZ4_stream_t>(alloc);
   SDB_ENSURE(LZ4_initStream(_fast.get(), sizeof(LZ4_stream_t)),
              "lz4: cannot initialize a compression stream");
 }
@@ -59,17 +59,17 @@ void Lz4::Compressor::Attach() {
   SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   if (_high) {
     if (!_high_attached) {
-      _high_attached = MakeTrackedArray<LZ4_streamHC_t>(1, Budget());
+      _high_attached = MakeTrackedUnique<LZ4_streamHC_t>(Allocator());
     }
     LZ4_setCompressionLevel(_high_attached.get(), _level);
     LZ4_favorDecompressionSpeed(_high_attached.get(), 0);
-    _high_attached[0].internal_donotuse.hasWorkspace = 0;
+    _high_attached->internal_donotuse.hasWorkspace = 0;
     LZ4_loadDictHC(_high_attached.get(), dictionary.data(),
                    static_cast<int>(dictionary.size()));
     return;
   }
   if (!_fast_attached) {
-    _fast_attached = MakeTrackedArray<LZ4_stream_t>(1, Budget());
+    _fast_attached = MakeTrackedUnique<LZ4_stream_t>(Allocator());
   }
   LZ4_loadDict(_fast_attached.get(), dictionary.data(),
                static_cast<int>(dictionary.size()));

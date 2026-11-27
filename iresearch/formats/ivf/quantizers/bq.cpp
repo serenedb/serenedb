@@ -432,7 +432,8 @@ class BinaryQuantizerWriter final : public QuantizerWriter {
     return true;
   }
 
-  std::unique_ptr<QuantizerWriter> CloneForEncode() const final {
+  std::unique_ptr<QuantizerWriter> CloneForEncode(
+    TrackedAllocator<> /*alloc*/) const final {
     auto out = std::make_unique<BinaryQuantizerWriter>(_lay.d, _lay.bits,
                                                        _lay.half, _query_bits);
     out->_model = _model;

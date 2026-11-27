@@ -179,7 +179,7 @@ TEST_F(IndexInputTest, column_blocks_inside_a_cache_block_are_read_in_place) {
   auto file = cache.CreateUnbackedFile("memory://block_input_test/columns");
   AppendBlocks(file, 2);
   auto& buffers = duckdb::BufferManager::GetBufferManager(db);
-  irs::ReadContext ctx{db, file.get()};
+  irs::ReadContext ctx{db, file.get(), TestAlloc()};
   {
     auto inside = ctx.RegisterColBlock(8, 1000);
     EXPECT_EQ(0, inside->GetMemory().GetMemoryUsage());
@@ -199,7 +199,7 @@ TEST_F(IndexInputTest, column_blocks_across_cache_blocks_share_one_copy) {
   auto& buffers = duckdb::BufferManager::GetBufferManager(db);
   const irs::byte_type* copied = nullptr;
   for (size_t scan = 0; scan != 2; ++scan) {
-    irs::ReadContext ctx{db, file.get()};
+    irs::ReadContext ctx{db, file.get(), TestAlloc()};
     auto across = ctx.RegisterColBlock(kBlock - 512, 1024);
     EXPECT_EQ(0, across->GetMemory().GetMemoryUsage());
     const auto pin = buffers.Pin(across);

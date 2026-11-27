@@ -58,6 +58,7 @@ class FieldReader final {
   size_t size() const noexcept { return _dicts.size(); }
 
   const PostingsReader& Postings() const noexcept { return _pr; }
+  TrackedAllocator<> Allocator() noexcept { return TrackedAllocator<>{_budget}; }
   template<typename Self>
   auto&& Store(this Self&& self) noexcept {
     return std::forward<Self>(self)._store;
@@ -69,14 +70,15 @@ class FieldReader final {
     uint32_t count = 0;
   };
 
-  Separators _separators;
+  LocalBudget _budget{gRootBudget};
+  Separators _separators{TrackedAllocator<>{_budget}};
   std::vector<TermReaderImpl> _keyed;
   std::deque<SingleTermReader> _singles;
   std::vector<const TermReader*> _dicts;
   containers::FlatHashMap<field_id, FieldDicts> _by_id;
   std::vector<field_id> _ids;
   PostingsReader _pr;
-  BlockStore _store;
+  BlockStore _store{TrackedAllocator<>{_budget}};
 };
 
 inline TermPostings::ptr TermReaderImpl::PostingsOf(

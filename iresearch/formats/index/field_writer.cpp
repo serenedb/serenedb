@@ -42,17 +42,18 @@ uint64_t DictBound(uint64_t terms, uint64_t docs, bool vec) noexcept {
 
 }  // namespace
 
-FieldWriter::FieldWriter(bool compaction, LocalBudget& budget)
-  : _memory{budget},
-    _pw{budget},
-    _encoder{budget},
-    _records{budget},
-    _index{budget},
-    _key_prefix{TrackedAllocator<byte_type>{budget}},
-    _min{TrackedAllocator<byte_type>{budget}},
-    _last{TrackedAllocator<byte_type>{budget}},
-    _separators{budget},
-    _sections{TrackedAllocator<DictSections>{budget}},
+FieldWriter::FieldWriter(bool compaction, TrackedAllocator<> alloc)
+  : _alloc{alloc},
+    _pw{alloc},
+    _encoder{alloc},
+    _records{alloc},
+    _ranges{alloc},
+    _index{alloc},
+    _key_prefix{alloc},
+    _min{alloc},
+    _last{alloc},
+    _separators{alloc},
+    _sections{alloc},
     _compaction{compaction} {}
 
 bool FieldWriter::OwnsBlock() const noexcept {
@@ -75,7 +76,7 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
                             OrdinalLimit(kMaxOrdinalBytes)));
   }
   Reset();
-  _budget = &state.budget;
+  SDB_ASSERT(state.alloc == _alloc);
   _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
   _out = &_idx->BlocksOut();
@@ -144,7 +145,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   _index.Reset(GatesTerms(_dict.member, _width));
   if (IsSubsetOf(IndexFeatures::Ranges, props.index_features) && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
-    _ranges.Begin(_pw, _docs, *_budget);
+    _ranges.Begin(_pw, _docs);
   }
 
   uint64_t total_freq = 0;
@@ -392,7 +393,7 @@ void FieldWriter::Reset() noexcept {
   _spans.clear();
   _heads.clear();
   _last.clear();
-  _separators = Separators{_memory};
+  _separators = Separators{_alloc};
   _sections.clear();
   _first_page = 0;
   _blocks = 0;
@@ -413,7 +414,7 @@ void FieldWriter::end() {
     const auto separators_size = out.Position() - blocks_end;
     uint32_t ordinal = 0;
     size_t gated = 0;
-    TrackedBstring prefix{TrackedAllocator<byte_type>{_memory}};
+    TrackedBstring prefix{_alloc};
     const auto write_index = [&](FieldHead& head) {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, _ordinal_bytes);
@@ -421,12 +422,11 @@ void FieldWriter::end() {
       if (blocks == 1) {
         return;
       }
-      DictSections sections;
-      if (GatesTerms(head.member, head.width)) {
-        sections = std::move(_sections[gated++]);
-      }
+      DictSections sections = GatesTerms(head.member, head.width)
+                                ? std::move(_sections[gated++])
+                                : EmptySections(_alloc);
       const auto at = out.Position();
-      DictIndex{head, prefix, blocks, _separators, std::move(sections), _memory}
+      DictIndex{head, prefix, blocks, _separators, std::move(sections), _alloc}
         .Write(out);
       head.index.size = out.Position() - at;
     };
@@ -454,8 +454,7 @@ void FieldWriter::end() {
     _idx->SetTerms(std::move(terms));
   }
   Reset();
-  _memory.Trim();
-  _budget = nullptr;
+  _alloc.Budget().Trim();
   _idx = nullptr;
   _out = nullptr;
 }

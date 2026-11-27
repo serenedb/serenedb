@@ -147,7 +147,8 @@ void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
   for (const auto& [id, meta] : footer.ivf) {
     duckdb::InputFileReader body{*_file};
     body.Seek(meta.tree_offset);
-    auto entry = CentroidsTree::Deserialize(body, meta.root_byte_size);
+    auto entry = CentroidsTree::Deserialize(body, meta.root_byte_size,
+                                            TrackedAllocator<>{_budget});
     entry.SetQuantStatsOffset(meta.stats_offset);
     _anns.emplace(id, std::make_unique<IvfIndex>(std::move(entry), *_file));
   }

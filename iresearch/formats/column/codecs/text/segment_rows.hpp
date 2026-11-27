@@ -70,10 +70,8 @@ struct SortScratch {
     uint32_t entry;
   };
 
-  explicit SortScratch(LocalBudget& budget)
-    : order{TrackedAllocator<Key>{budget}},
-      remap{TrackedAllocator<uint32_t>{budget}},
-      sorted{TrackedAllocator<duckdb::string_t>{budget}} {}
+  explicit SortScratch(TrackedAllocator<> alloc)
+    : order{alloc}, remap{alloc}, sorted{alloc} {}
 
   TrackedVector<Key> order;
   TrackedVector<uint32_t> remap;
@@ -119,7 +117,7 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
 }
 
 void CompressCodes(
-  LocalBudget& budget, std::span<uint32_t> codes, double& ratio,
+  TrackedAllocator<> alloc, std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 void SortEntries(std::span<const duckdb::string_t> entries,
@@ -162,13 +160,13 @@ class SegmentRows {
   }
 
  protected:
-  SegmentRows(LocalBudget& budget, const duckdb::LogicalType& type,
+  SegmentRows(TrackedAllocator<> alloc, const duckdb::LogicalType& type,
               uint32_t first_entry)
     : _stats{type},
       _type{type},
       _first_entry{first_entry},
-      _entries{TrackedAllocator<duckdb::string_t>{budget}},
-      _lengths{TrackedAllocator<uint32_t>{budget}} {}
+      _entries{alloc},
+      _lengths{alloc} {}
 
   void Begin(const Config& config, uint64_t first_row) {
     _level = config.level;
@@ -217,8 +215,8 @@ class PlainRows final : public SegmentRows {
  public:
   static constexpr Shape kShape = Shape::Plain;
 
-  PlainRows(LocalBudget& budget, const duckdb::LogicalType& type)
-    : SegmentRows{budget, type, 0} {}
+  explicit PlainRows(TrackedAllocator<> alloc, const duckdb::LogicalType& type)
+    : SegmentRows{alloc, type, 0} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t) {
     SegmentRows::Begin(config, first_row);
@@ -256,12 +254,12 @@ class DictionaryRows final : public SegmentRows {
  public:
   static constexpr Shape kShape = Shape::Dictionary;
 
-  DictionaryRows(LocalBudget& budget, const duckdb::LogicalType& type,
+  DictionaryRows(TrackedAllocator<> alloc, const duckdb::LogicalType& type,
                  DedupScratch& dedup, double& codes_ratio)
-    : SegmentRows{budget, type, 1},
+    : SegmentRows{alloc, type, 1},
       _dedup{dedup},
       _codes_ratio{codes_ratio},
-      _codes{TrackedAllocator<std::byte>{budget}} {}
+      _codes{alloc} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct) {
     SegmentRows::Begin(config, first_row);
@@ -303,17 +301,17 @@ class DictionaryRows final : public SegmentRows {
  private:
   DedupScratch& _dedup;
   double& _codes_ratio;
-  ScratchVector<uint32_t> _codes;
+  TrackedScratchVector<uint32_t> _codes;
   bool _sorted = false;
 };
 
 template<typename Rows>
-Rows MakeRows(LocalBudget& budget, const duckdb::LogicalType& type,
+Rows MakeRows(TrackedAllocator<> alloc, const duckdb::LogicalType& type,
               DedupScratch& dedup, double& codes_ratio) {
   if constexpr (Rows::kShape == Shape::Dictionary) {
-    return Rows{budget, type, dedup, codes_ratio};
+    return Rows{alloc, type, dedup, codes_ratio};
   } else {
-    return Rows{budget, type};
+    return Rows{alloc, type};
   }
 }
 
@@ -322,14 +320,14 @@ class SortedCompressionState {
  public:
   static constexpr Shape kShape = Rows::kShape;
 
-  SortedCompressionState(LocalBudget& budget, ByteCodec codec,
+  SortedCompressionState(TrackedAllocator<> alloc, ByteCodec codec,
                          const duckdb::LogicalType& type, DedupScratch& dedup,
                          StringTuning& tuning, uint32_t target)
-    : _rows{MakeRows<Rows>(budget, type, dedup, tuning.codes_ratio)},
-      _sort{budget},
+    : _rows{MakeRows<Rows>(alloc, type, dedup, tuning.codes_ratio)},
+      _sort{alloc},
       _history{tuning.history[static_cast<size_t>(codec)]},
       _target{target},
-      _frames{TrackedAllocator<FrameMeta>{budget}} {}
+      _frames{alloc} {}
 
   void InitCompression(const Config& config, uint64_t first_row,
                        size_t distinct, Segment& out) {

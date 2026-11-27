@@ -29,6 +29,7 @@
 #include <chrono>
 #include <core_functions/array_kernels.hpp>
 #include <cstring>
+#include <deque>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -161,11 +162,8 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
 }
 
 struct HealScratch {
-  explicit HealScratch(LocalBudget& budget) noexcept
-    : pool{TrackedAllocator<HnswCandidate>{budget}},
-      stack{TrackedAllocator<uint32_t>{budget}},
-      seen{budget},
-      walked{budget} {}
+  explicit HealScratch(TrackedAllocator<> alloc) noexcept
+    : pool{alloc}, stack{alloc}, seen{alloc}, walked{alloc} {}
 
   TrackedVector<HnswCandidate> pool;
   TrackedVector<uint32_t> stack;
@@ -243,7 +241,7 @@ void HealNode(HnswGraphWriter& graph, const HnswGraph& src_graph,
 template<typename Fn>
 void ForEachVectorBatch(const ColumnReader& col, ReadContext& ctx,
                         uint64_t rows, Fn&& fn) {
-  ColumnReader::VectorScratch scratch{col.Type()};
+  ColumnReader::VectorScratch scratch{col.Type(), ctx.Allocator()};
   auto scan = col.InitScan(ctx);
   for (uint64_t done = 0; done < rows;) {
     const auto take = static_cast<size_t>(
@@ -311,9 +309,9 @@ uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
 TrackedVector<float> LoadVectors(const ColumnReader& col, ReadContext& ctx,
                                  uint64_t rows, uint32_t d, bool normalize,
                                  std::span<uint8_t> valid,
-                                 std::vector<float>& buf, LocalBudget& budget) {
-  TrackedVector<float> vectors(static_cast<size_t>(rows) * d,
-                               TrackedAllocator<float>{budget});
+                                 std::vector<float>& buf,
+                                 TrackedAllocator<> alloc) {
+  TrackedVector<float> vectors(static_cast<size_t>(rows) * d, alloc);
   ScanVectors(col, ctx, rows, d, normalize, buf,
               [&](const float* src, size_t n, uint64_t first,
                   const duckdb::ValidityMask& mask) {
@@ -334,16 +332,23 @@ inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
 bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                   uint32_t d, bool normalize, QuantizerWriter& qw,
                   byte_type* codes, uint32_t record_size,
-                  TrackedVector<uint8_t>& valid, const AnnBuildEnv* env) {
+                  TrackedVector<uint8_t>& valid, const AnnBuildEnv* env,
+                  MemoryBudget& parent) {
   AnnCrew crew{env, static_cast<uint32_t>(std::clamp<uint64_t>(
                       rows * qw.EncodeWidth() / kHnswMinRowsPerEncoder, 1,
                       kHnswMaxWorkers))};
-  std::vector<std::unique_ptr<QuantizerWriter>> spare;
+  struct Spare {
+    explicit Spare(MemoryBudget& parent) : budget{parent} {}
+
+    LocalBudget budget;
+    std::unique_ptr<QuantizerWriter> writer;
+  };
+  std::deque<Spare> spare;
   bool clonable = true;
 
   std::vector<float> owned;
   std::vector<yaclib::FutureOn<>> runs;
-  ColumnReader::VectorScratch scratch{col.Type()};
+  ColumnReader::VectorScratch scratch{col.Type(), ctx.Allocator()};
   auto scan = col.InitScan(ctx);
   std::atomic<bool> ok{true};
 
@@ -371,12 +376,13 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
 
     const uint32_t held = crew.Take();
     while (clonable && spare.size() + 1 < held) {
-      auto clone = qw.CloneForEncode();
-      if (!clone) {
+      auto& slot = spare.emplace_back(parent);
+      slot.writer = qw.CloneForEncode(TrackedAllocator<>{slot.budget});
+      if (!slot.writer) {
+        spare.pop_back();
         clonable = false;
         break;
       }
-      spare.push_back(std::move(clone));
     }
     const size_t parts = spare.size() + 1;
     const size_t n = take;
@@ -396,7 +402,7 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
           }
         }
       }
-      auto& writer = w == 0 ? qw : *spare[w - 1];
+      auto& writer = w == 0 ? qw : *spare[w - 1].writer;
       if (!writer.EncodeInto(codes + (done + lo) * size_t{record_size},
                              vecs + lo * size_t{d}, hi - lo)) {
         ok.store(false, std::memory_order_relaxed);
@@ -656,8 +662,10 @@ struct HnswInsertJob {
   };
 
   struct WorkerSlot {
-    WorkerSlot(typename Factory::Dist d, MemoryBudget& parent)
-      : budget{parent}, dist{std::move(d)}, scratch{budget} {}
+    explicit WorkerSlot(typename Factory::Dist d, MemoryBudget& parent)
+      : budget{parent},
+        dist{std::move(d)},
+        scratch{TrackedAllocator<>{budget}} {}
 
     LocalBudget budget;
     typename Factory::Dist dist;
@@ -667,8 +675,8 @@ struct HnswInsertJob {
   WorkerSlot& Slot(size_t worker) {
     auto& slot = _slots[worker];
     if (!slot) {
-      slot =
-        std::make_unique<WorkerSlot>(_factory.Make(), _graph.Budget().Parent());
+      slot = std::make_unique<WorkerSlot>(_factory.Make(),
+                                          _graph.Allocator().Budget().Parent());
       slot->scratch.search.visited.Reset(
         _rows, HnswWalkVisits(_ef, _graph.M0()), HnswWalks::Many);
       if (_window.base) {
@@ -715,12 +723,12 @@ TrackedVector<uint32_t> SeedGraph(HnswGraphWriter& graph,
       entry = node;
     }
   }
+  TrackedVector<uint32_t> nodes{graph.Allocator()};
   if (entry == kHnswInvalidNode) {
-    return {};
+    return nodes;
   }
   graph.SetEntryPoint(entry);
 
-  TrackedVector<uint32_t> nodes{TrackedAllocator<uint32_t>{graph.Budget()}};
   nodes.reserve(rows);
   for (size_t i = 0; i < rows; ++i) {
     if (valid[i] == 0 || static_cast<uint32_t>(i) == entry) {
@@ -743,7 +751,7 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
     crew.CanGrow() ? std::min<size_t>(nodes.size(), warmup) : nodes.size();
   {
     auto dist = factory.Make();
-    HnswBuildScratch scratch{graph.Budget()};
+    HnswBuildScratch scratch{graph.Allocator()};
     scratch.search.visited.Reset(rows, HnswWalkVisits(ef, graph.M0()),
                                  HnswWalks::Many);
     for (size_t i = 0; i < serial; ++i) {
@@ -779,8 +787,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   const auto src_rows = src_graph.Size();
   const auto rows = valid.size();
 
-  TrackedVector<uint32_t> remap(src_rows, kHnswInvalidNode,
-                                TrackedAllocator<uint32_t>{graph.Budget()});
+  TrackedVector<uint32_t> remap(src_rows, kHnswInvalidNode, graph.Allocator());
   uint64_t rank = 0;
   auto mask = MakeGenericDocsMask(donor.reader->docs_mask());
   uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
@@ -882,10 +889,10 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   }
 
   auto dist = factory.Make();
-  HnswBuildScratch scratch{graph.Budget()};
+  HnswBuildScratch scratch{graph.Allocator()};
   scratch.search.visited.Reset(
     rows, HnswWalkVisits(ef_construction, graph.M0()), HnswWalks::Many);
-  HealScratch heal{graph.Budget()};
+  HealScratch heal{graph.Allocator()};
   heal.seen.Reset(rows, HnswWalkVisits(graph.M0(), graph.M0()),
                   HnswWalks::Many);
   heal.walked.Reset(src_rows, HnswWalkVisits(graph.M0(), graph.M0()),
@@ -902,7 +909,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
     graph.SetEntryPoint(delta_entry);
   }
 
-  TrackedVector<uint32_t> nodes{TrackedAllocator<uint32_t>{graph.Budget()}};
+  TrackedVector<uint32_t> nodes{graph.Allocator()};
   nodes.reserve(rows);
   for (size_t i = 0; i < rows; ++i) {
     if ((i >= donor.out_base && i < donor_end) || valid[i] == 0 ||
@@ -975,7 +982,7 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
 
   const auto window_rows =
     static_cast<size_t>(std::min<uint64_t>(kHnswOriginalsWindow, rows));
-  TrackedVector<float> window{TrackedAllocator<float>{graph.Budget()}};
+  TrackedVector<float> window{graph.Allocator()};
   window.reserve(window_rows * d);
   std::vector<float> batch_buf;
   size_t next = 0;
@@ -1054,12 +1061,12 @@ size_t PanoramaSampleRows(size_t rows, uint32_t d) noexcept {
 
 std::vector<float> TrainPanoramaBasis(std::span<const float> vectors,
                                       std::span<const uint8_t> valid,
-                                      uint32_t d, LocalBudget& budget) {
+                                      uint32_t d, TrackedAllocator<> alloc) {
   const size_t rows = valid.size();
   const size_t want = std::max(kPanoramaTrainRows, size_t{8} * d);
   const size_t live = static_cast<size_t>(absl::c_count(valid, uint8_t{1}));
   const size_t step = std::max<size_t>(1, live / want);
-  TrackedVector<float> sample{TrackedAllocator<float>{budget}};
+  TrackedVector<float> sample{alloc};
   sample.reserve(std::min(live, want) * d);
   for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
        ++row) {
@@ -1095,8 +1102,8 @@ void RotateForPanorama(std::span<float> vectors, size_t rows, uint32_t d,
 }
 
 TrackedVector<float> RowNorms(std::span<const float> vectors, size_t rows,
-                              uint32_t d, LocalBudget& budget) {
-  TrackedVector<float> norms(rows, TrackedAllocator<float>{budget});
+                              uint32_t d, TrackedAllocator<> alloc) {
+  TrackedVector<float> norms(rows, alloc);
   for (size_t row = 0; row < rows; ++row) {
     norms[row] = faiss::fvec_norm_L2sqr(vectors.data() + row * d, d);
   }
@@ -1135,7 +1142,7 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
                               std::span<const float> vectors,
                               std::span<const uint8_t> valid, uint32_t d,
                               bool enough, const AnnBuildEnv* env,
-                              LocalBudget& budget) {
+                              TrackedAllocator<> alloc) {
   HnswBases::Basis basis;
   if (bases) {
     basis = bases->Find(field);
@@ -1147,7 +1154,7 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
   }
   if (!basis && enough) {
     basis = std::make_shared<const std::vector<float>>(
-      TrainPanoramaBasis(vectors, valid, d, budget));
+      TrainPanoramaBasis(vectors, valid, d, alloc));
   }
   if (basis && bases) {
     basis = bases->Publish(field, std::move(basis));
@@ -1178,8 +1185,16 @@ void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
 
 }  // namespace
 
-HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
-  : _info{std::move(info)}, _bases{bases} {}
+HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases,
+                       TrackedAllocator<> alloc)
+  : AnnWriter{alloc},
+    _info{std::move(info)},
+    _bases{bases},
+    _graph{alloc},
+    _vectors{alloc},
+    _norms{alloc},
+    _tails{alloc},
+    _codes{alloc} {}
 
 AnnFlushBound HnswWriter::Bound(const AnnInfo& info, uint64_t rows) {
   const auto m = std::max(info.m, 1U);
@@ -1233,11 +1248,11 @@ std::shared_ptr<const QuantizerStats> HnswWriter::SerializeStats() {
   duckdb::MemoryStream blob;
   _qw->Serialize(blob);
   return MakeQuantizerStats(
-    _info.quant.kind, _d,
+    _alloc.Budget().Parent(), _info.quant.kind, _d,
     std::span<const byte_type>{
       irs::bytes_view{blob.GetData(), blob.GetPosition()}}
       .subspan(sizeof(uint64_t)),
-    EffectiveQuantMetric(_info.metric), /*row_major=*/true, *_budget);
+    EffectiveQuantMetric(_info.metric), /*row_major=*/true);
 }
 
 std::shared_ptr<const QuantizerStats> HnswWriter::EncodeRotated(
@@ -1267,7 +1282,7 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
     if (needs_centroid) {
       _centroid.assign(_d, 0.f);
     }
-    TrackedVector<float> train_buf{TrackedAllocator<float>{*_budget}};
+    TrackedVector<float> train_buf{_alloc};
     train_buf.reserve(std::min<uint64_t>(train_rows, _rows) * _d);
     const uint64_t sample =
       train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
@@ -1296,7 +1311,7 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
     if (train_rows != 0) {
       _qw->TrainParallel(train_buf.data(), train_buf.size() / _d,
                          [&](size_t tasks, TrainTask task) {
-                           FanOut(env, _budget->Parent(), tasks, task);
+                           FanOut(env, _alloc.Budget().Parent(), tasks, task);
                          });
     }
     if (needs_centroid) {
@@ -1327,19 +1342,14 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     co_return {};
   }
 
-  _graph.SetBudget(*_budget);
-  _vectors = TrackedVector<float>{TrackedAllocator<float>{*_budget}};
-  _norms = TrackedVector<float>{TrackedAllocator<float>{*_budget}};
-  _tails = TrackedVector<float>{TrackedAllocator<float>{*_budget}};
-  _codes = TrackedVector<byte_type>{TrackedAllocator<byte_type>{*_budget}};
-  TrackedVector<uint8_t> valid(_rows, 1, TrackedAllocator<uint8_t>{*_budget});
+  TrackedVector<uint8_t> valid(_rows, 1, _alloc);
   std::vector<float> batch_buf;
   const bool normalize = _info.metric == VectorMetric::Cosine;
 
   if (_info.quant.kind != VectorQuantization::None) {
-    _qw = MakeQuantizerWriter(_info.quant, _d,
+    _qw = MakeQuantizerWriter(_alloc, _info.quant, _d,
                               EffectiveQuantMetric(_info.metric), 0,
-                              /*row_major=*/true, *_budget);
+                              /*row_major=*/true);
   }
 
   const auto m = _info.m;
@@ -1350,14 +1360,14 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
 
   if (_qw && RotatesCodes(_info, _d)) {
     auto vectors =
-      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, *_budget);
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, _alloc);
     const bool enough = PanoramaEnough(valid, _d);
     const auto basis = AcquireBasis(_bases, _info.index_id, donor, vectors,
-                                    valid, _d, enough, env, *_budget);
+                                    valid, _d, enough, env, _alloc);
     if (basis && enough) {
       RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
       const auto stats = EncodeRotated(vectors, valid, env);
-      TrackedVector<float> pair_terms{TrackedAllocator<float>{*_budget}};
+      TrackedVector<float> pair_terms{_alloc};
       const auto factory = MakeCodeFactory(_codes, _record_size, *stats, {}, _d,
                                            vectors.data(), _rows, pair_terms);
       co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
@@ -1376,17 +1386,17 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _record_size = _qw->BlockSetting().record_size;
     _codes.resize(static_cast<size_t>(_rows) * _record_size);
     encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
-                            _record_size, valid, env);
+                            _record_size, valid, env, _alloc.Budget().Parent());
   } else if (!_qw) {
     _vectors =
-      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, *_budget);
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, _alloc);
     if (RotationApplies(_info.metric, _d)) {
       const bool enough = PanoramaEnough(valid, _d);
       const auto basis = AcquireBasis(_bases, _info.index_id, donor, _vectors,
-                                      valid, _d, enough, env, *_budget);
+                                      valid, _d, enough, env, _alloc);
       if (basis && enough) {
         RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
-        _norms = RowNorms(_vectors, valid.size(), _d, *_budget);
+        _norms = RowNorms(_vectors, valid.size(), _d, _alloc);
       }
     }
   }
@@ -1397,7 +1407,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
 
   if (stats && !raw_build) {
-    TrackedVector<float> pair_terms{TrackedAllocator<float>{*_budget}};
+    TrackedVector<float> pair_terms{_alloc};
     const auto factory = MakeCodeFactory(
       _codes, _record_size, *stats, _centroid, _d, nullptr, _rows, pair_terms);
     const HnswOriginals originals{
@@ -1416,10 +1426,10 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     "raw-float build of ",
     _rows, " x ", _d, " vectors");
 
-  TrackedVector<float> build_vectors;
+  TrackedVector<float> build_vectors{_alloc};
   if (raw_build) {
     build_vectors =
-      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, *_budget);
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, _alloc);
   }
   const float* base = raw_build ? build_vectors.data() : _vectors.data();
   yaclib::Future<> built;

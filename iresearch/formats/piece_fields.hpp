@@ -122,6 +122,7 @@ class PieceFields final {
   void Seal(PieceTermReader& reader, uint64_t docs, uint64_t total_freq);
   void Open(const ReaderState& state, IndexFeatures features);
   size_t Bytes() const noexcept;
+  TrackedAllocator<> Allocator() noexcept { return TrackedAllocator<>{_budget}; }
 
  private:
   struct Members {
@@ -129,6 +130,7 @@ class PieceFields final {
     uint32_t count = 0;
   };
 
+  LocalBudget _budget{gRootBudget};
   PostingsReader _pr;
   std::deque<PieceTermReader> _readers;
   std::vector<const TermReader*> _dicts;
@@ -139,7 +141,7 @@ class PieceFields final {
 class PieceFieldWriter final : public FieldSink {
  public:
   PieceFieldWriter(PieceFields& fields, bool compaction) noexcept
-    : _pw{kEmpty}, _fields{&fields}, _compaction{compaction} {}
+    : _pw{fields.Allocator()}, _fields{&fields}, _compaction{compaction} {}
 
   void prepare(const FlushState& state, uint64_t keyed_dicts,
                uint64_t terms) final;

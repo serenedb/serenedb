@@ -216,11 +216,12 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   }
 
   auto& field = EnsureField(state.GetContext(), local_state, bind);
+  auto& memory = ConnectionContext::Get(state.GetContext()).Memory();
 
   SDB_ASSERT(args.ColumnCount() >= 2);
   auto bodies = args.data[1].Values<duckdb::string_t>();
 
-  auto segment = local_state.memory_index.IndexChunk(count, [&](auto& doc) {
+  auto segment = local_state.memory_index.IndexChunk(memory, count, [&](auto& doc) {
     const auto traits = field.tokens->Traits();
     const bool ok =
       doc.WithTokens(field.Id(), irs::StringLayout::kStrings, kOffsetsFeatures,
@@ -245,13 +246,14 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
   });
 
-  irs::QueryMemory query_memory;
+  irs::QueryMemory query_memory{memory};
   auto& leaves = local_state.leaves;
   absl::Cleanup clear_leaves = [&] { leaves.clear(); };
   irs::PreparePositiveLeaves(
     *bind.filter, *segment, {.memory = query_memory, .needs_terms = true},
     [&](irs::QueryBuilder::ptr query) { leaves.push_back(std::move(query)); });
   FieldEntry entry{.id = field.Id()};
+  entry.state.memory->Bind(memory);
   OffsetsCollector visitor{std::span{&entry, 1}};
   for (const auto& query : leaves) {
     query->Visit(visitor, irs::kNoBoost);

@@ -30,7 +30,7 @@ namespace {
 
 using duckdb::idx_t;
 
-std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment&) {
+SegmentScanStatePtr InitScan(const ColumnSegment&) {
   return nullptr;
 }
 

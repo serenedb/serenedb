@@ -307,17 +307,8 @@ uint64_t RangeWriter::Bound(uint64_t docs) noexcept {
   return kMaxRangeLevels * 4 * HeavyDocs(docs) * sizeof(doc_id_t);
 }
 
-void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs,
-                        LocalBudget& budget) {
+void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) {
   _heavy = HeavyDocs(docs);
-  for (auto& range : _levels) {
-    for (auto* piece : {&range.group, &range.held}) {
-      if (piece->docs.get_allocator().budget != &budget) {
-        piece->docs =
-          TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{budget}};
-      }
-    }
-  }
   _pw = &pw;
 }
 

@@ -44,7 +44,7 @@ class PhraseVariadicPositions {
   static constexpr bool kOffsets = Leaf::kOffsets;
   static constexpr bool kHasBoost = HasBoost;
 
-  PhraseVariadicPositions(PlanMemory& memory, uint32_t count)
+  explicit PhraseVariadicPositions(PlanMemory& memory, uint32_t count)
     : _live{memory.Arena(), count}, _boosts{memory.Arena(), count} {}
 
   void On(doc_id_t) noexcept {

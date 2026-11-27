@@ -87,11 +87,12 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 }  // namespace
 
 ColWriter::ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
-                     WriteTier tier)
+                     TrackedAllocator<> alloc, WriteTier tier)
   : _tracker{tracker},
     _filename{FileName(tracker.Name())},
     _db{&db},
-    _tier{tier} {}
+    _tier{tier},
+    _alloc{alloc} {}
 
 ColWriter::~ColWriter() {
   if (_out && !_committed) {
@@ -104,7 +105,7 @@ void ColWriter::EnsureOut() {
     return;
   }
   _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename,
-                                  *_budget);
+                                  _alloc);
   _tracker.Add(kColFile);
   _write_ctx = std::make_unique<WriteContext>(_db->GetBufferManager(), *_out);
 }
@@ -210,10 +211,10 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   switch (info.kind) {
 #ifndef IRESEARCH_NO_VECTOR
     case AnnKind::Ivf:
-      writer = std::make_unique<IvfWriter>(info);
+      writer = std::make_unique<IvfWriter>(info, _alloc);
       break;
     case AnnKind::Hnsw:
-      writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
+      writer = std::make_unique<HnswWriter>(info, _hnsw_bases, _alloc);
       break;
 #endif
     default:
@@ -250,7 +251,7 @@ AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows) {
   switch (info.kind) {
 #ifndef IRESEARCH_NO_VECTOR
     case AnnKind::Ivf:
-      return IvfBuilder{info}.Bound(rows);
+      return IvfBuilder::Bound(info, rows);
     case AnnKind::Hnsw:
       return HnswWriter::Bound(info, rows);
 #endif
@@ -382,7 +383,7 @@ bool ColWriter::Commit(uint64_t target_row,
   for (auto& entry : _columns) {
     footer.columns.push_back(std::move(entry.meta));
   }
-  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& out) {
+  format_utils::WriteFooter(*_out, _alloc, [&](duckdb::BinarySerializer& out) {
     out.WriteOptionalList(
       kColFieldColumns, "columns", footer.columns.size(),
       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
@@ -420,7 +421,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   }
   SDB_ASSERT(_reader);
   const auto& reader = *_reader;
-  ReadContext ctx{reader};
+  ReadContext ctx{reader, _alloc};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;
@@ -429,7 +430,6 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
     if (!col) {
       continue;
     }
-    entry.writer->SetBudget(*_budget);
     co_await entry.writer->Compute(*col, ctx, env);
   }
   co_return true;

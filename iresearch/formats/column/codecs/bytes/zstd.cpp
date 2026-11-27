@@ -37,17 +37,18 @@
 namespace irs::codecs {
 namespace {
 
-ZSTD_customMem TrackedMem(LocalBudget& budget) noexcept {
+ZSTD_customMem TrackedMem(TrackedAllocator<> alloc) noexcept {
   return {
     .customAlloc =
       [](void* opaque, size_t size) {
-        return TrackedMalloc(*static_cast<LocalBudget*>(opaque), size);
+        return TrackedMalloc(
+          TrackedAllocator<>{*static_cast<LocalBudget*>(opaque)}, size);
       },
     .customFree =
       [](void* opaque, void* p) {
-        TrackedFree(*static_cast<LocalBudget*>(opaque), p);
+        TrackedFree(TrackedAllocator<>{*static_cast<LocalBudget*>(opaque)}, p);
       },
-    .opaque = &budget,
+    .opaque = &alloc.Budget(),
   };
 }
 
@@ -80,10 +81,10 @@ size_t Zstd::ContextBytes(uint8_t level) noexcept {
                                          ZSTD_dlm_byRef);
 }
 
-Zstd::Compressor::Compressor(LocalBudget& budget, uint8_t level)
-  : DictionaryCompressor{budget, kDictionaryCap},
+Zstd::Compressor::Compressor(TrackedAllocator<> alloc, uint8_t level)
+  : DictionaryCompressor{alloc, kDictionaryCap},
     _level{EffectiveLevel<Zstd>(level)},
-    _ctx{Created(ZSTD_createCCtx_advanced(TrackedMem(budget)),
+    _ctx{Created(ZSTD_createCCtx_advanced(TrackedMem(alloc)),
                  "a compression context")} {}
 
 size_t Zstd::Compressor::StoredBound(size_t size) noexcept {
@@ -103,7 +104,7 @@ void Zstd::Compressor::Attach() {
     ZSTD_createCDict_advanced(
       dictionary.data(), dictionary.size(), ZSTD_dlm_byRef, ZSTD_dct_rawContent,
       ZSTD_getCParams(_level, kFrameDictionaryBytes, dictionary.size()),
-      TrackedMem(Budget())),
+      TrackedMem(Allocator())),
     "a compression dictionary"));
 }
 
@@ -128,8 +129,9 @@ size_t Zstd::Compressor::Plain(const char* src, size_t size, char* dst,
   return n;
 }
 
-Zstd::Decompressor::Decompressor()
-  : _ctx{Created(ZSTD_createDCtx_advanced(TrackedMem(kEmpty)),
+Zstd::Decompressor::Decompressor(TrackedAllocator<> alloc)
+  : DictionaryDecompressor{alloc},
+    _ctx{Created(ZSTD_createDCtx_advanced(TrackedMem(alloc)),
                  "a decompression context")} {}
 
 bool Zstd::Decompressor::Decompress(const char* src, size_t size, char* dst,
@@ -164,7 +166,7 @@ const ZSTD_DDict* Zstd::Decompressor::Attached() {
     _attached.reset(
       Created(ZSTD_createDDict_advanced(dictionary.data(), dictionary.size(),
                                         ZSTD_dlm_byRef, ZSTD_dct_rawContent,
-                                        TrackedMem(kEmpty)),
+                                        TrackedMem(Allocator())),
               "a decompression dictionary"));
     _attached_bytes = dictionary;
   }

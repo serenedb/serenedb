@@ -137,16 +137,10 @@ void HnswGraphWriter::Reset(size_t nodes, uint32_t m) {
   SDB_ASSERT(m != 0);
   _graph._m = m;
   _graph._m0 = 2 * _graph._m;
-  const auto empty = [&]<typename V>(V& v) {
-    v = V{typename V::allocator_type{*_budget}};
-  };
-  empty(_graph._levels);
-  empty(_graph._offsets);
-  empty(_graph._base);
-  empty(_graph._upper);
-  empty(_proc_offsets);
-  empty(_processed);
   _graph._levels.assign(nodes, 0);
+  _graph._offsets.clear();
+  _graph._base.clear();
+  _graph._upper.clear();
   _graph._entry = kHnswInvalidNode;
   _graph._max_level = 0;
 }
@@ -215,8 +209,9 @@ HnswGraphFrames HnswGraph::SerializePacked(duckdb::WriteStream& out,
   return frames;
 }
 
-HnswGraph HnswGraph::Deserialize(duckdb::InputFileReader& in) {
-  HnswGraph g;
+HnswGraph HnswGraph::Deserialize(duckdb::InputFileReader& in,
+                                 TrackedAllocator<> alloc) {
+  HnswGraph g{alloc};
   g._m = in.Read<uint32_t>();
   g._m0 = 2 * g._m;
   g._entry = in.Read<uint32_t>();
@@ -230,8 +225,9 @@ HnswGraph HnswGraph::Deserialize(duckdb::InputFileReader& in) {
 
 HnswGraph HnswGraph::DeserializePacked(duckdb::InputFileReader& in,
                                        const HnswGraphFrames& frames,
-                                       ParallelFor parallel) {
-  HnswGraph g;
+                                       ParallelFor parallel,
+                                       TrackedAllocator<> alloc) {
+  HnswGraph g{alloc};
   g._m = in.Read<uint32_t>();
   g._m0 = 2 * g._m;
   g._entry = in.Read<uint32_t>();

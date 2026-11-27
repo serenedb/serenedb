@@ -36,6 +36,7 @@
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
 #include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
 namespace irs {
@@ -121,6 +122,7 @@ class IdxReader final {
  private:
   void Adopt(IdxFooter footer, HnswBases* hnsw_bases);
 
+  LocalBudget _budget{gRootBudget};
   duckdb::shared_ptr<duckdb::InputFile> _file;
   containers::FlatHashMap<field_id, std::unique_ptr<AnnIndex>> _anns;
   term_dict::TermsMeta _terms;

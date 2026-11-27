@@ -81,12 +81,13 @@ inline AnchorFreqs::ptr MakeAnchorFreqs(PlanMemory& memory,
 
 class PhraseRows {
  public:
-  PhraseRows(const TokenPhraseQuery& query, bool count)
+  PhraseRows(const TokenPhraseQuery& query, bool count,
+             TrackedAllocator<> alloc)
     : _col_reader{query.Segment().GetColReader()},
-      _ctx{*_col_reader},
+      _ctx{*_col_reader, alloc},
       _column{&query.Column()},
       _state{_column->InitScan(_ctx)},
-      _out{_column->Type()},
+      _out{_column->Type(), alloc},
       _check{query.Compiled(), query.Tokenizer(), count} {}
 
   PhraseRows(PhraseRows&&) = delete;
@@ -103,7 +104,8 @@ class PhraseRows {
     auto& out = _out.Reset();
     const auto span = hits[n - 1] - hits[0] + 1;
     if (!column_internal::FetchSparse(_point, *_col_reader, *_column,
-                                      hits.first(n), span, out, 0)) {
+                                      _ctx.Allocator(), hits.first(n), span,
+                                      out, 0)) {
       column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
                                   0);
     }
@@ -135,7 +137,7 @@ class TokenPhraseSlots {
                    PlanMemory& memory, const TokenPhraseQuery& query,
                    bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _rows{query, count},
+      _rows{query, count, memory.Allocator()},
       _anchors{MakeAnchorFreqs(memory, query)},
       _hits{memory.Scratch()} {
     _hits.reserve(kMaxBatch);

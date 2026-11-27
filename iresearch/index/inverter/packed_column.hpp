@@ -48,8 +48,9 @@ class PackedU32Column : util::Noncopyable {
 
   static_assert(kBlockValues % kSimdValues == 0);
 
-  explicit PackedU32Column(duckdb::ArenaAllocator& arena) noexcept
-    : _arena{&arena} {}
+  PackedU32Column(duckdb::ArenaAllocator& arena,
+                  TrackedAllocator<> alloc) noexcept
+    : _arena{&arena}, _packed{alloc} {}
 
   IRS_FORCE_INLINE void Push(uint32_t value) {
     if (_tail == _tail_end) [[unlikely]] {

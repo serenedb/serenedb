@@ -72,6 +72,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -264,7 +265,7 @@ class PassConnection {
 
   void Commit(const ReindexTarget& target, std::vector<uint64_t> files,
               std::vector<IcebergObserve::DeleteMask> masks,
-              irs::TrackedVector<std::pair<uint64_t, int64_t>> rows,
+              std::span<const std::pair<uint64_t, int64_t>> rows,
               std::shared_ptr<const search::FileManifest> manifest) {
     auto& context = *_system.conn->context;
     context.RunFunctionInTransaction([&] {
@@ -272,9 +273,9 @@ class PassConnection {
         catalog::SessionOf(context, target.index->catalog).SearchTxn();
       const auto& store = target.index->Storage();
       writes.RegisterIndex(store, *target.index);
-      auto removed =
-        ResolveRemoves(writes.PinnedReader(context, *store), std::move(files),
-                       std::move(masks), std::move(rows));
+      auto removed = ResolveRemoves(ConnectionContext::Get(context).Memory(),
+                                    writes.PinnedReader(context, *store),
+                                    std::move(files), std::move(masks), rows);
       if (!removed.Empty()) {
         SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
         writes.AddRemoval(context, store, std::move(removed));
@@ -412,7 +413,7 @@ irs::TrackedVector<EqRow> ParseEqRows(
   const duckdb::vector<
     duckdb::reference<const duckdb::IcebergEqualityDeleteFile>>& delete_files,
   const IcebergObserve& observe, const ViewFastPath& fast_path,
-  const duckdb::CreateViewInfo& view_info) {
+  const duckdb::CreateViewInfo& view_info, irs::TrackedAllocator<> alloc) {
   // Field id -> view output position.
   const auto resolve_view_pos =
     [&](int32_t field_id) -> std::optional<uint64_t> {
@@ -440,7 +441,7 @@ irs::TrackedVector<EqRow> ParseEqRows(
     }
     return pos;
   };
-  irs::TrackedVector<EqRow> rows;
+  irs::TrackedVector<EqRow> rows{alloc};
   irs::containers::FlatHashSet<std::string> seen_null_rows;
   std::string row_key;
   for (const auto& delete_file : delete_files) {
@@ -450,13 +451,13 @@ irs::TrackedVector<EqRow> ParseEqRows(
     for (const auto field_id : file.equality_ids) {
       const auto pos = resolve_view_pos(field_id);
       if (!pos) {
-        return {};
+        return irs::TrackedVector<EqRow>{alloc};
       }
       positions.push_back(*pos);
     }
     const auto& values = file.equality_values;
     for (duckdb::idx_t row = 0; row < values.size(); ++row) {
-      EqRow parsed;
+      EqRow parsed{alloc};
       parsed.reserve(positions.size());
       bool has_null = false;
       for (size_t column = 0; column < positions.size(); ++column) {
@@ -501,7 +502,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> CombineExprs(
 // nodes), planned as a hash semi-join. IS-NULL rows cannot ride IN (NULL
 // never matches) and stay plain OR branches.
 duckdb::unique_ptr<duckdb::ParsedExpression> BuildEqWhere(
-  const irs::TrackedVector<EqRow>& rows,
+  duckdb::ClientContext& context, std::span<const EqRow> rows,
   const duckdb::CreateViewInfo& view_info) {
   const auto column_ref = [&](uint64_t pos) {
     return duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[pos]);
@@ -537,7 +538,8 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildEqWhere(
   const auto pos_less = [](const EqConjunct& lhs, const EqConjunct& rhs) {
     return lhs.pos < rhs.pos;
   };
-  const auto same_columns = [](const EqRow& lhs, const EqRow& rhs) {
+  const auto same_columns = [](std::span<const EqConjunct> lhs,
+                               std::span<const EqConjunct> rhs) {
     return absl::c_equal(
       lhs, rhs,
       [](const EqConjunct& l, const EqConjunct& r) { return l.pos == r.pos; });
@@ -559,7 +561,8 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildEqWhere(
       types.push_back(view_info.types[conjunct.pos]);
       names.push_back(view_info.names[conjunct.pos]);
     }
-    auto& allocator = irs::TrackedDuckAllocator();
+    auto& allocator =
+      duckdb::BufferManager::GetBufferManager(context).GetBufferAllocator();
     auto collection =
       duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator, types);
     duckdb::DataChunk chunk;
@@ -647,12 +650,14 @@ bool RunEqualityRemoves(
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> branches;
   for (const auto& group : GroupCoveredFiles(observe)) {
     const auto rows =
-      ParseEqRows(group.deletes, observe, src.fast_path, view_info);
+      ParseEqRows(group.deletes, observe, src.fast_path, view_info,
+                  irs::TrackedAllocator<>{dead_rows.get_allocator()});
     if (rows.empty()) {
       return false;
     }
     branches.push_back(duckdb::make_uniq<duckdb::ConjunctionExpression>(
-      duckdb::ExpressionType::CONJUNCTION_AND, BuildEqWhere(rows, view_info),
+      duckdb::ExpressionType::CONJUNCTION_AND,
+      BuildEqWhere(context, rows, view_info),
       BuildFileScope(group.files)));
   }
   if (branches.empty()) {
@@ -723,7 +728,8 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               const ReindexTarget& target, const Source& src, FileDiff& files,
               Observe& observe, const search::FileManifest& manifest) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
-  irs::TrackedVector<std::pair<uint64_t, int64_t>> eq_rows;
+  auto removed_rows = std::make_shared<RemovedRows>(conn_ctx.Memory());
+  auto& eq_rows = removed_rows->rows;
   if constexpr (kIceberg) {
     // Kind 3 first: a group with no road demotes its covered files into
     // kind 1's input.
@@ -732,6 +738,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
       DemoteEqCoveredToRescan(src, files, observe);
     }
   }
+  absl::c_sort(eq_rows);
   uint64_t file_base = 0;
   auto manifest_next = BuildNextManifest(manifest, files, file_base);
   std::vector<IcebergObserve::DeleteMask> masks;
@@ -744,7 +751,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     // Removes-only tick: no pass, publish directly -- REINDEX returning
     // means the deletions are visible.
     pass_conn.Commit(target, std::move(files.del_files), std::move(masks),
-                     std::move(eq_rows), std::move(manifest_next));
+                     eq_rows, std::move(manifest_next));
     return;
   }
 
@@ -756,7 +763,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   info->source_index = target.index->name;
   info->removed_files = std::move(files.del_files);
   info->removed_masks = std::move(masks);
-  info->removed_rows = std::move(eq_rows);
+  info->removed_rows = std::move(removed_rows);
   info->delta_file_base = file_base;
   info->delta_files.reserve(files.scan.size());
   for (const auto& file : files.scan) {

@@ -40,7 +40,6 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <optional>
 #include <span>
@@ -100,7 +99,7 @@ struct Sample {
 struct BucketSample {
   int64_t ts;
   double total = 0;
-  irs::TrackedVector<double> counts;
+  std::vector<double> counts;
 };
 
 // An aggregate state is one pointer: DuckDB copies states as raw bytes, so
@@ -110,8 +109,8 @@ struct Boxed {
   T* data;
 };
 
-using SeriesState = Boxed<irs::TrackedVector<Sample>>;
-using BucketsState = Boxed<irs::TrackedVector<BucketSample>>;
+using SeriesState = Boxed<std::vector<Sample>>;
+using BucketsState = Boxed<std::vector<BucketSample>>;
 
 template<typename T>
 T& Unbox(Boxed<T>& state) {
@@ -135,7 +134,7 @@ T* Take(T& source, const duckdb::AggregateInputData& input) {
 }
 
 template<typename T>
-void Append(irs::TrackedVector<T>& source, irs::TrackedVector<T>& target,
+void Append(std::vector<T>& source, std::vector<T>& target,
             const duckdb::AggregateInputData& input) {
   if (!MayMove(input)) {
     target.insert(target.end(), source.begin(), source.end());
@@ -146,12 +145,11 @@ void Append(irs::TrackedVector<T>& source, irs::TrackedVector<T>& target,
   }
   target.insert(target.end(), std::make_move_iterator(source.begin()),
                 std::make_move_iterator(source.end()));
-  source = irs::TrackedVector<T>{};
+  source = std::vector<T>{};
 }
 
 template<typename T>
-void Append(const Boxed<irs::TrackedVector<T>>& source,
-            Boxed<irs::TrackedVector<T>>& target,
+void Append(const Boxed<std::vector<T>>& source, Boxed<std::vector<T>>& target,
             const duckdb::AggregateInputData& input) {
   if (!source.data) {
     return;
@@ -164,7 +162,7 @@ void Append(const Boxed<irs::TrackedVector<T>>& source,
 }
 
 template<typename T, typename Rank>
-void Normalize(irs::TrackedVector<T>& samples, Rank rank) {
+void Normalize(std::vector<T>& samples, Rank rank) {
   absl::c_sort(samples, [&](const T& lhs, const T& rhs) {
     return lhs.ts != rhs.ts ? lhs.ts < rhs.ts : rank(lhs) > rank(rhs);
   });
@@ -319,7 +317,7 @@ struct CounterOperation : BoxedOperation {
 
 struct Prediction {
   double seconds = 0;
-  irs::TrackedVector<Sample> samples;
+  std::vector<Sample> samples;
 };
 
 using PredictionState = Boxed<Prediction>;
@@ -423,7 +421,7 @@ struct BucketsOperation : BoxedOperation {
       finalize.ReturnNull();
       return;
     }
-    irs::TrackedVector<double> increase(samples.front().counts.size());
+    std::vector<double> increase(samples.front().counts.size());
     for (size_t i = 1; i < samples.size(); ++i) {
       const auto& previous = samples[i - 1].counts;
       const auto& current = samples[i].counts;
@@ -883,7 +881,7 @@ constexpr int32_t kMaxExponentialScale = 20;
 // counts[k] is bucket offset + k.
 struct ExponentialBuckets {
   int64_t offset = 0;
-  irs::TrackedVector<double> counts;
+  std::vector<double> counts;
 };
 
 int64_t Last(const ExponentialBuckets& buckets) {
@@ -1397,7 +1395,7 @@ struct ExponentialSample {
   ExponentialHistogram histogram;
 };
 
-using ExponentialSeriesState = Boxed<irs::TrackedVector<ExponentialSample>>;
+using ExponentialSeriesState = Boxed<std::vector<ExponentialSample>>;
 
 bool Decreased(const ExponentialBuckets& previous,
                const ExponentialBuckets& current) {

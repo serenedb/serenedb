@@ -86,8 +86,7 @@ class FrameSpans {
     uint64_t raw = 0;
   };
 
-  explicit FrameSpans(LocalBudget& budget)
-    : _spans{TrackedAllocator<Span>{budget}} {}
+  explicit FrameSpans(TrackedAllocator<> alloc) : _spans{alloc} {}
 
   void Reset(FrameShape shape) noexcept {
     _shape = shape;
@@ -183,10 +182,10 @@ inline uint64_t Scale(uint64_t sampled, uint64_t sampled_raw,
 }
 
 template<typename Compressor>
-void ResetCompressor(LocalBudget& budget, std::optional<Compressor>& codec,
+void ResetCompressor(TrackedAllocator<> alloc, std::optional<Compressor>& codec,
                      uint8_t& held, uint8_t level) {
   if (!codec || held != level) {
-    codec.emplace(budget, level);
+    codec.emplace(alloc, level);
     held = level;
   } else {
     codec->Clear();
@@ -215,16 +214,16 @@ class CompressionState {
   static_assert(!Sorted(kCodec));
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : _budget{data.budget},
-      _rows{MakeRows<Rows>(_budget, data.type, dedup,
+    : _alloc{data.alloc},
+      _rows{MakeRows<Rows>(_alloc, data.type, dedup,
                            data.tuning.strings.codes_ratio)},
-      _sort{_budget},
+      _sort{_alloc},
       _history{data.tuning.strings.history[static_cast<size_t>(kCodec)]},
-      _frame{TrackedAllocator<char>{_budget}},
-      _scratch{TrackedAllocator<char>{_budget}},
-      _spans{_budget},
-      _sizes{TrackedAllocator<size_t>{_budget}},
-      _frames{TrackedAllocator<FrameMeta>{_budget}} {}
+      _frame{_alloc},
+      _scratch{_alloc},
+      _spans{_alloc},
+      _sizes{_alloc},
+      _frames{_alloc} {}
 
   void InitCompression(const Config& config, uint64_t first_row,
                        size_t distinct, Segment& out) {
@@ -391,7 +390,7 @@ class CompressionState {
     }
     _counted = 0;
     _packed = 0;
-    ResetCompressor(_budget, _codec, _level, level);
+    ResetCompressor(_alloc, _codec, _level, level);
   }
 
   FrameDictionary Flags() const noexcept {
@@ -451,7 +450,7 @@ class CompressionState {
   }
 
   bool Pays() {
-    ResetCompressor(_budget, _probe, _probe_level, _level);
+    ResetCompressor(_alloc, _probe, _probe_level, _level);
     const auto first = Slice(0);
     const auto first_plain =
       blob::CompressedSize<Codec>(first, _scratch, *_probe);
@@ -481,7 +480,7 @@ class CompressionState {
     return n;
   }
 
-  LocalBudget& _budget;
+  TrackedAllocator<> _alloc;
   Rows _rows;
   SortScratch _sort;
   RatioHistory* _history;
@@ -523,16 +522,13 @@ class SizeEstimator {
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  explicit SizeEstimator(LocalBudget& budget)
-    : _budget{budget},
-      _frame{TrackedAllocator<char>{budget}},
-      _scratch{TrackedAllocator<char>{budget}},
-      _sizes{TrackedAllocator<size_t>{budget}} {}
+  explicit SizeEstimator(TrackedAllocator<> alloc)
+    : _alloc{alloc}, _frame{alloc}, _scratch{alloc}, _sizes{alloc} {}
 
   uint64_t FramesSize(const Profile& p, std::string_view bytes,
                       const FrameSpans& spans, uint8_t level,
                       FrameDictionary layout) {
-    ResetCompressor(_budget, _codec, _level, level);
+    ResetCompressor(_alloc, _codec, _level, level);
     uint64_t data = 0;
     if (!spans.empty()) {
       const bool whole =
@@ -594,7 +590,7 @@ class SizeEstimator {
     return _frame;
   }
 
-  LocalBudget& _budget;
+  TrackedAllocator<> _alloc;
   std::optional<typename Codec::Compressor> _codec;
   uint8_t _level = 0;
   TrackedString _frame;
@@ -625,11 +621,11 @@ class TrialSizes final : public State {
     : _values{data.Get<Values>()},
       _window{data.Get<Window>()},
       _params{data.params},
-      _dedup{data.budget},
-      _rows{ShapeRows{data.budget}, ShapeRows{data.budget}},
-      _sorted{data.budget},
-      _estimator{SizeEstimator<Codec>{data.budget},
-                 SizeEstimator<Codec>{data.budget}} {
+      _dedup{data.alloc},
+      _rows{ShapeRows{data.alloc}, ShapeRows{data.alloc}},
+      _sorted{data.alloc},
+      _estimator{SizeEstimator<Codec>{data.alloc},
+                 SizeEstimator<Codec>{data.alloc}} {
     static_assert(kTextShapeCount == 2);
   }
 
@@ -690,19 +686,15 @@ class TrialSizes final : public State {
   };
 
   struct ShapeRows {
-    explicit ShapeRows(LocalBudget& budget)
-      : codes{TrackedAllocator<uint32_t>{budget}},
-        locals{TrackedAllocator<std::byte>{budget}},
-        bytes{TrackedAllocator<char>{budget}},
-        spans{TrackedAllocator<Spans>{budget}},
-        frames{TrackedAllocator<FramesBytes>{budget}} {}
+    explicit ShapeRows(TrackedAllocator<> alloc)
+      : codes{alloc}, locals{alloc}, bytes{alloc}, spans{alloc}, frames{alloc} {}
 
     bool done = false;
     bool assembled = false;
     bool coded = false;
     Profile profile;
     TrackedVector<uint32_t> codes;
-    ScratchVector<uint32_t> locals;
+    TrackedScratchVector<uint32_t> locals;
     uint64_t codes_bytes = 0;
     TrackedString bytes;
     TrackedVector<Spans> spans;
@@ -763,14 +755,13 @@ class TrialSizes final : public State {
     }
     rows.done = true;
     const auto& arrival = TrialRows(Shape::Dictionary);
-    auto& budget = *rows.codes.get_allocator().budget;
-    TrackedVector<duckdb::string_t> entries{
-      TrackedAllocator<duckdb::string_t>{budget}};
+    const TrackedAllocator<> alloc = rows.codes.get_allocator();
+    TrackedVector<duckdb::string_t> entries{alloc};
     entries.reserve(arrival.codes.size());
     for (const auto code : arrival.codes) {
       entries.emplace_back(*_values.distinct[code - 1]);
     }
-    SortScratch scratch{budget};
+    SortScratch scratch{alloc};
     SortEntries(entries, scratch);
     rows.codes.resize(arrival.codes.size());
     for (size_t at = 0; at < rows.codes.size(); ++at) {
@@ -794,7 +785,7 @@ class TrialSizes final : public State {
     if (!rows.coded) {
       rows.coded = true;
       double ratio = 0;
-      CompressCodes(*rows.codes.get_allocator().budget, rows.locals, ratio,
+      CompressCodes(rows.codes.get_allocator(), rows.locals, ratio,
                     [&](CodecType, std::string_view bytes) {
                       rows.codes_bytes = bytes.size();
                     });
@@ -824,7 +815,7 @@ class TrialSizes final : public State {
     }
     auto& split =
       rows.spans
-        .emplace_back(frame, FrameSpans{*rows.spans.get_allocator().budget})
+        .emplace_back(frame, FrameSpans{rows.spans.get_allocator()})
         .spans;
     split.Reset(frame);
     for (size_t i = 0; i < rows.profile.codes.size(); ++i) {
@@ -948,12 +939,14 @@ inline constexpr CompressionFunction kFrameFunction{
 template<typename Codec>
 class FrameInflater {
  public:
+  explicit FrameInflater(TrackedAllocator<> alloc) noexcept : _alloc{alloc} {}
+
   std::string_view Inflate(const Header& h, duckdb::const_data_ptr_t base,
                            const FrameMeta& m, uint32_t f, char* dst,
                            size_t want) {
     const auto* data = reinterpret_cast<const char*>(base + h.off_data);
     if (!_decoder) {
-      _decoder.emplace();
+      _decoder.emplace(_alloc);
     }
     if (!_ready) {
       Prepare(h, base, data);
@@ -992,6 +985,7 @@ class FrameInflater {
     }
   }
 
+  TrackedAllocator<> _alloc;
   std::optional<typename Codec::Decompressor> _decoder;
   bool _ready = false;
   uint64_t _loaded = 0;
@@ -999,6 +993,9 @@ class FrameInflater {
 
 template<typename Codec>
 struct Fetch {
+  explicit Fetch(TrackedAllocator<> alloc)
+    : raw{alloc}, offsets{alloc}, inflater{alloc} {}
+
   void Reset(const Header&, duckdb::data_ptr_t) noexcept {
     frame = kNoFrame;
     decoded_total = 0;
@@ -1115,7 +1112,10 @@ struct Scan {
   using Fetch = blob::Fetch<Codec>;
 
   template<typename Frames>
-  Scan(const ColumnSegment&, const Frames&) {}
+  Scan(const ColumnSegment& segment, const Frames&)
+    : inflater{segment.ctx.Allocator()},
+      raw{segment.ctx.Allocator()},
+      ends{segment.ctx.Allocator()} {}
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {

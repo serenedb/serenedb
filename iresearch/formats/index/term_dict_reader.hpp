@@ -123,7 +123,7 @@ class TermReaderImpl final : public TermReader {
   bool _has_score_bounds;
   FreqAttr _freq;
   std::span<const TermReaderImpl> _range_levels;
-  TrackedArray<duckdb_fsst_decoder_t> _fsst;
+  TrackedUniquePtr<duckdb_fsst_decoder_t> _fsst;
 };
 
 }  // namespace irs::term_dict

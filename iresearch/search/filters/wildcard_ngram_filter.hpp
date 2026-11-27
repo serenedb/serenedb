@@ -55,8 +55,8 @@ class WildcardNGramVerifier {
  public:
   WildcardNGramVerifier(std::shared_ptr<const re2::RE2> matcher,
                         const ColumnReader& stored_field,
-                        const ColReader& col_reader) noexcept
-    : _matcher{std::move(matcher)}, _cursor{col_reader, stored_field} {
+                        const ColReader& col_reader, TrackedAllocator<> alloc)
+    : _matcher{std::move(matcher)}, _cursor{col_reader, stored_field, alloc} {
     SDB_ASSERT(_matcher);
   }
 
@@ -98,21 +98,27 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
     std::shared_ptr<const re2::RE2> matcher;
     const ColumnReader* column = nullptr;
     const ColReader* col_reader = nullptr;
+    TrackedAllocator<> alloc;
 
     WildcardNGramVerifier Make() const {
-      return WildcardNGramVerifier{matcher, *column, *col_reader};
+      return WildcardNGramVerifier{matcher, *column, *col_reader, alloc};
     }
   };
 
   const QueryBuilder& NGrams() const noexcept { return *_approx; }
 
-  Recipe MakeRecipe() const {
+  Recipe MakeRecipe(TrackedAllocator<> alloc) const {
     SDB_ASSERT(irs::field_limits::valid(_store_field_id));
     const auto* col_reader = _segment.GetColReader();
     SDB_ASSERT(col_reader != nullptr);
     const auto* column = col_reader->Column(_store_field_id);
     SDB_ASSERT(column != nullptr);
-    return Recipe{_matcher, column, col_reader};
+    return Recipe{
+      .matcher = _matcher,
+      .column = column,
+      .col_reader = col_reader,
+      .alloc = alloc,
+    };
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}

@@ -59,13 +59,12 @@ faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d);
 void RotateVector(const float* rotation, const float* in, float* out,
                   uint32_t d);
 
-std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
-                                  size_t n, uint32_t k, uint32_t d,
-                                  uint32_t seed, uint32_t niter = 8,
+std::vector<float> TrainCentroids(TrackedAllocator<> alloc, VectorMetric metric,
+                                  const float* data, size_t n, uint32_t k,
+                                  uint32_t d, uint32_t seed, uint32_t niter = 8,
                                   uint32_t nredo = 1,
                                   ClusteringAlgo algo = ClusteringAlgo::Auto,
-                                  const float* rotation = nullptr,
-                                  LocalBudget& budget = kEmpty);
+                                  const float* rotation = nullptr);
 
 size_t TrainCentroidsBound(VectorMetric metric, size_t n, uint32_t k,
                            uint32_t d) noexcept;
@@ -83,7 +82,7 @@ void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
 template<typename Sink>
 void StreamRowBatches(const ColumnReader& vector_column, uint64_t rows,
                       ReadContext& ctx, Sink&& sink) {
-  ColumnReader::VectorScratch scratch{vector_column.Type()};
+  ColumnReader::VectorScratch scratch{vector_column.Type(), ctx.Allocator()};
   auto scan = vector_column.InitScan(ctx);
   for (uint64_t first = 0; first < rows; first += STANDARD_VECTOR_SIZE) {
     const auto n = static_cast<duckdb::idx_t>(

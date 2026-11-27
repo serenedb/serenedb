@@ -57,7 +57,7 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
   if (_ctx) {
     _ctx->Reset(*col_reader);
   } else {
-    _ctx = std::make_unique<irs::ReadContext>(*col_reader);
+    _ctx = std::make_unique<irs::ReadContext>(*col_reader, states.Allocator());
   }
   _chain.Bind(*col_reader, *_ctx, active, context, states);
   _chain.FinishBind();

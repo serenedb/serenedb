@@ -140,18 +140,18 @@ RunView ParseRun(const byte_type* p, IndexFeatures features) {
   return view;
 }
 
-RecordRun::RecordRun(LocalBudget& budget)
-  : _multi_bits{TrackedAllocator<uint8_t>{budget}},
-    _singles{TrackedAllocator<uint64_t>{budget}},
-    _docs{TrackedAllocator<uint64_t>{budget}},
-    _excess{TrackedAllocator<uint64_t>{budget}},
-    _starts{TrackedAllocator<uint64_t>{budget}},
-    _freq_anchors{TrackedAllocator<uint64_t>{budget}},
-    _vec_starts{TrackedAllocator<uint64_t>{budget}},
-    _lanes{TrackedAllocator<uint64_t>{budget}},
-    _big{budget},
-    _crossings{budget},
-    _extents{budget} {}
+RecordRun::RecordRun(TrackedAllocator<> alloc)
+  : _multi_bits{alloc},
+    _singles{alloc},
+    _docs{alloc},
+    _excess{alloc},
+    _starts{alloc},
+    _freq_anchors{alloc},
+    _vec_starts{alloc},
+    _lanes{alloc},
+    _big{alloc},
+    _crossings{alloc},
+    _extents{alloc} {}
 
 void RecordRun::Clear() noexcept {
   _stats = {};

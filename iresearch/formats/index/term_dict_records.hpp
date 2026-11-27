@@ -297,7 +297,7 @@ class RecordRun {
     uint32_t pos_offset = 0;
   };
 
-  explicit RecordRun(LocalBudget& budget);
+  explicit RecordRun(TrackedAllocator<> alloc);
 
   void Start(IndexFeatures features) noexcept {
     _features = features;
@@ -314,11 +314,11 @@ class RecordRun {
 
  private:
   struct SparseColumn {
-    explicit SparseColumn(LocalBudget& budget)
-      : keys{TrackedAllocator<uint64_t>{budget}},
+    explicit SparseColumn(TrackedAllocator<> alloc)
+      : keys{alloc},
         values{
-          TrackedVector<uint64_t>{TrackedAllocator<uint64_t>{budget}},
-          TrackedVector<uint64_t>{TrackedAllocator<uint64_t>{budget}},
+          TrackedVector<uint64_t>{alloc},
+          TrackedVector<uint64_t>{alloc},
         } {}
 
     void Clear() noexcept {
@@ -358,9 +358,8 @@ class RecordRun {
 
 class BlockRecords {
  public:
-  explicit BlockRecords(LocalBudget& budget)
-    : _runs{TrackedAllocator<RecordRun>{budget}} {
-    _runs.emplace_back(budget);
+  explicit BlockRecords(TrackedAllocator<> alloc) : _runs{alloc} {
+    _runs.emplace_back(alloc);
   }
 
   RecordRun& Open() noexcept { return _runs[_closed]; }
@@ -377,7 +376,7 @@ class BlockRecords {
     }
     _bytes += run.Bytes();
     if (++_closed == _runs.size()) {
-      _runs.emplace_back(*_runs.get_allocator().budget);
+      _runs.emplace_back(TrackedAllocator<>{_runs.get_allocator()});
     }
     _runs[_closed].Start(_features);
   }

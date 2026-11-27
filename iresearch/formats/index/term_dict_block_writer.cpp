@@ -287,9 +287,7 @@ void Clear(BlockBuilder& block) noexcept {
 
 TrackedVector<unsigned char*> SampleStarts(TrackedBstring& arena,
                                            std::span<const size_t> lengths) {
-  TrackedVector<unsigned char*> starts(
-    lengths.size(),
-    TrackedAllocator<unsigned char*>{*arena.get_allocator().budget});
+  TrackedVector<unsigned char*> starts(lengths.size(), arena.get_allocator());
   auto* start = arena.data();
   for (size_t i = 0; i != lengths.size(); ++i) {
     starts[i] = start;
@@ -300,14 +298,12 @@ TrackedVector<unsigned char*> SampleStarts(TrackedBstring& arena,
 
 bool Compresses(duckdb_fsst_encoder_t* encoder, TrackedBstring& arena,
                 TrackedVector<size_t>& lengths, uint64_t table_size) {
-  auto& budget = *arena.get_allocator().budget;
+  const TrackedAllocator<> alloc = arena.get_allocator();
   auto starts = SampleStarts(arena, lengths);
   const uint64_t raw = arena.size();
-  TrackedBstring out(7 + 2 * raw, 0, TrackedAllocator<byte_type>{budget});
-  TrackedVector<size_t> out_lengths(lengths.size(),
-                                    TrackedAllocator<size_t>{budget});
-  TrackedVector<unsigned char*> out_starts(
-    lengths.size(), TrackedAllocator<unsigned char*>{budget});
+  TrackedBstring out(7 + 2 * raw, 0, alloc);
+  TrackedVector<size_t> out_lengths(lengths.size(), alloc);
+  TrackedVector<unsigned char*> out_starts(lengths.size(), alloc);
   const size_t done = duckdb_fsst_compress(
     encoder, lengths.size(), lengths.data(), starts.data(), out.size(),
     out.data(), out_lengths.data(), out_starts.data());
@@ -544,9 +540,9 @@ duckdb_fsst_encoder_t* BlockEncoder::Encoder() {
 }
 
 void BlockEncoder::TrainFsst() {
-  auto& budget = *_block.keys.get_allocator().budget;
-  TrackedBstring arena{TrackedAllocator<byte_type>{budget}};
-  TrackedVector<size_t> lengths{TrackedAllocator<size_t>{budget}};
+  const TrackedAllocator<> alloc = _block.keys.get_allocator();
+  TrackedBstring arena{alloc};
+  TrackedVector<size_t> lengths{alloc};
   _fsst.reader->SampleTerms(
     kFsstSampleBytes, [&](std::span<const bytes_view> run) {
       for (size_t i = 1; i < run.size(); ++i) {
@@ -563,7 +559,7 @@ void BlockEncoder::TrainFsst() {
   }
   auto starts = SampleStarts(arena, lengths);
   const auto footprint = codecs::text::fsst::Fsst8Footprint(lengths.size());
-  MemoryCharge charge{budget, footprint.build};
+  MemoryCharge charge{alloc, footprint.build};
   FsstEncoder encoder{
     duckdb_fsst_create(lengths.size(), lengths.data(), starts.data(), 0)};
   charge.Resize(footprint.kept);

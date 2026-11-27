@@ -164,10 +164,11 @@ void SkipValues(State& state, duckdb::idx_t skip_count) {
 }
 
 template<typename State>
-std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
-  return std::make_unique<State>(
-    segment.Pin(), segment,
-    std::make_unique_for_overwrite<typename State::VectorState>());
+SegmentScanStatePtr InitScan(const ColumnSegment& segment) {
+  const auto alloc = segment.ctx.Allocator();
+  return MakeScanState<State>(
+    alloc, segment.Pin(), segment,
+    MakeTrackedUniqueForOverwrite<typename State::VectorState>(alloc));
 }
 
 template<typename State>
@@ -260,7 +261,7 @@ IRS_NO_INLINE void DecodeVector(FetchState<State>& fetch_state,
   auto& state = fetch_state.scan_state;
   if (!state.vector_state) {
     state.vector_state =
-      std::make_unique_for_overwrite<typename State::VectorState>();
+      MakeTrackedUniqueForOverwrite<typename State::VectorState>(state.alloc);
   }
   state.total_value_count = vector_index * kVectorSize;
   LoadVector(state, state.vector_state->decoded_values);

@@ -26,10 +26,11 @@
 
 #include <algorithm>
 #include <cstring>
-#include <new>
+#include <memory>
 #include <roaring/roaring.hh>
 #include <utility>
 
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -40,14 +41,25 @@ namespace {
 
 using roaring::api::roaring_bitmap_t;
 
-constexpr std::align_val_t kFrozenAlignment{32};
+constexpr size_t kFrozenAlignment = 32;
 
-struct FrozenFree {
-  uint64_t size = 0;
+struct alignas(kFrozenAlignment) FrozenBlock {
+  byte_type bytes[kFrozenAlignment];
+};
 
-  void operator()(byte_type* p) const noexcept {
-    Tracked::operator delete(p, size, kFrozenAlignment);
+class FrozenBytes {
+ public:
+  explicit FrozenBytes(uint64_t size)
+    : _blocks((size + kFrozenAlignment - 1) / kFrozenAlignment,
+              TrackedAllocator<>{_budget}) {}
+
+  byte_type* Data() noexcept {
+    return reinterpret_cast<byte_type*>(_blocks.data());
   }
+
+ private:
+  LocalBudget _budget{gRootBudget};
+  TrackedScratchVector<FrozenBlock> _blocks;
 };
 
 constexpr size_t kSlotBytes =
@@ -298,11 +310,11 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
 }
 
 DocumentMask DocumentMask::ReadFrozen(duckdb::ReadStream& in, uint64_t size) {
-  std::shared_ptr<byte_type> frozen{
-    static_cast<byte_type*>(Tracked::operator new(size, kFrozenAlignment)),
-    FrozenFree{size}, TrackedAllocator<byte_type>{}};
-  in.ReadData(frozen.get(), size);
-  return DocumentMask{std::move(frozen), size};
+  auto frozen = std::make_shared<FrozenBytes>(size);
+  auto* data = frozen->Data();
+  in.ReadData(data, size);
+  return DocumentMask{std::shared_ptr<const byte_type>{std::move(frozen), data},
+                      size};
 }
 
 DocumentMask::DocumentMask(std::shared_ptr<const byte_type> frozen,

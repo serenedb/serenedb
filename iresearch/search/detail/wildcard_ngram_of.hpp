@@ -63,7 +63,7 @@ Result Build(PlanMemory& memory, WildcardNGramKind,
   const auto kind = ngrams.Kind();
   SDB_ASSERT(kind != QueryKind::Empty);
 
-  const auto recipe = query.MakeRecipe();
+  const auto recipe = query.MakeRecipe(memory.Allocator());
   const auto make = [&]<typename Approx>(auto&&... args) -> Result {
     using Slots = VerifiedSlots<Approx, WildcardNGramQuery::Recipe, !kProbed>;
     return f.template operator()<Slots>(

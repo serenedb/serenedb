@@ -58,6 +58,7 @@
 #include <string_view>
 #include <vector>
 
+#include "test_alloc.hpp"
 #include "test_resources.hpp"
 
 namespace {
@@ -858,7 +859,7 @@ void BM_FillResolve(benchmark::State& state, Factory make, CorpusFn corpus_fn) {
   auto stream = MakeBound(make);
   const auto values = AsValues(corpus_fn());
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  TermDictionary dict{arena};
+  TermDictionary dict{arena, TestAlloc()};
   size_t consumed = 0;
   struct ResolveSink final : TokenConsumer, StoreSink {
     ResolveSink(TermDictionary& d, size_t& c) : dict(d), c(c) {

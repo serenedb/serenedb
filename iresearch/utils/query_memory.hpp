@@ -51,8 +51,8 @@ class MemoryArena {
  public:
   static constexpr size_t kAlignment = 8;
 
-  MemoryArena() : _arena{TrackedDuckAllocator()} {}
-  explicit MemoryArena(duckdb::Allocator& allocator) : _arena{allocator} {}
+  explicit MemoryArena(TrackedAllocator<> alloc)
+    : _allocator{DuckAllocator(alloc)}, _arena{_allocator} {}
 
   MemoryArena(const MemoryArena&) = delete;
   MemoryArena& operator=(const MemoryArena&) = delete;
@@ -88,6 +88,7 @@ class MemoryArena {
   }
 
  private:
+  duckdb::Allocator _allocator;
   duckdb::ArenaAllocator _arena;
 };
 
@@ -134,9 +135,8 @@ class QueryMemory {
  public:
   explicit QueryMemory(MemoryBudget& parent = gRootBudget)
     : _budget{parent},
-      _allocator{BudgetAllocator(_budget)},
-      _queries{_allocator},
-      _scratch{_allocator} {}
+      _queries{TrackedAllocator<>{_budget}},
+      _scratch{TrackedAllocator<>{_budget}} {}
 
   QueryMemory(const QueryMemory&) = delete;
   QueryMemory& operator=(const QueryMemory&) = delete;
@@ -150,6 +150,10 @@ class QueryMemory {
 
   MemoryArena& Scratch() noexcept { return _scratch; }
 
+  TrackedAllocator<> Allocator() noexcept { return TrackedAllocator<>{_budget}; }
+
+  void Bind(MemoryBudget& parent) { _budget.Rebind(parent); }
+
   void Rewind() noexcept {
     _queries.Rewind();
     _scratch.Rewind();
@@ -157,7 +161,6 @@ class QueryMemory {
 
  private:
   LocalBudget _budget;
-  duckdb::Allocator _allocator;
   MemoryArena _queries;
   MemoryArena _scratch;
 };
@@ -166,9 +169,8 @@ class PlanMemory {
  public:
   explicit PlanMemory(MemoryBudget& parent = gRootBudget)
     : _budget{parent},
-      _allocator{BudgetAllocator(_budget)},
-      _nodes{_allocator},
-      _scratch{_allocator} {}
+      _nodes{TrackedAllocator<>{_budget}},
+      _scratch{TrackedAllocator<>{_budget}} {}
 
   PlanMemory(const PlanMemory&) = delete;
   PlanMemory& operator=(const PlanMemory&) = delete;
@@ -182,6 +184,8 @@ class PlanMemory {
 
   MemoryArena& Scratch() noexcept { return _scratch; }
 
+  TrackedAllocator<> Allocator() noexcept { return TrackedAllocator<>{_budget}; }
+
   void Bind(MemoryBudget& parent) { _budget.Rebind(parent); }
 
   void Rewind() noexcept {
@@ -191,7 +195,6 @@ class PlanMemory {
 
  private:
   LocalBudget _budget;
-  duckdb::Allocator _allocator;
   MemoryArena _nodes;
   MemoryArena _scratch;
 };

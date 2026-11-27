@@ -56,6 +56,7 @@
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
 #include "connector/vector_explain.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 namespace {
@@ -808,7 +809,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
       g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
-      g.ScanScore(), g.remote);
+      g.ScanScore(), g.remote, fetch_alloc);
   }
 }
 
@@ -848,12 +849,14 @@ std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
                                                        uint32_t seg) {
   if (const auto* vs = g.vector_scorer) {
     return std::make_unique<DistanceExplainer>(
-      (*g.reader)[seg], *vs, g.Bind().DisplayColumnName(vs->field_id));
+      ConnectionContext::Get(*g.client_context).Memory(), (*g.reader)[seg],
+      *vs, g.Bind().DisplayColumnName(vs->field_id));
   }
   const auto& seg_query = g.queries[seg];
   SDB_ASSERT(seg_query && g.scorer_obj);
-  return irs::explain::MakePlan(*seg_query, *g.scorer_obj, g.explain_stats,
-                                *g.filter);
+  return irs::explain::MakePlan(
+    ConnectionContext::Get(*g.client_context).Memory(), *seg_query,
+    *g.scorer_obj, g.explain_stats, *g.filter);
 }
 
 void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
@@ -894,10 +897,12 @@ void BuildOffsetsOutputs(ScanGlobalState& g) {
 }
 
 void FetchLocalState::BindOffsets(const ScanGlobalState& g) {
+  auto& memory = ConnectionContext::Get(*g.client_context).Memory();
   offsets_entries.reserve(g.offsets_outputs.size());
   for (const auto& output : g.offsets_outputs) {
     offsets_entries.push_back(
       {.output_idx = output.slot, .id = output.field, .limit = output.limit});
+    offsets_entries.back().state.memory->Bind(memory);
   }
 }
 

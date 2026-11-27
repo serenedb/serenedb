@@ -300,6 +300,10 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // keeps.
   void ResetState() noexcept;
 
+  TrackedAllocator<> TrackedAlloc() noexcept {
+    return TrackedAllocator<>{_budget};
+  }
+
   LocalBudget _budget{gRootBudget};
   std::shared_ptr<FileTracker> _tracker;
   duckdb::FileSystem& _fs;

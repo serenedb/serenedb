@@ -23,6 +23,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <utility>
 
+#include "pg/connection_context.h"
 #include "search/search_table_changes.h"
 
 namespace sdb::connector {
@@ -32,7 +33,8 @@ SearchSinkWriter OpenWriter(duckdb::ClientContext& context,
                             const SearchSinkTable& table) {
   SearchSinkWriter writer{.trx =
                             std::make_unique<irs::IndexWriter::Transaction>(
-                              table.store->GetTransaction())};
+                              table.store->GetTransaction(
+                                ConnectionContext::Get(context).Memory()))};
   auto made = MakeSearchTableInsertSink(*writer.trx, *table.store,
                                         *table.catalog, context);
   writer.sink = std::move(made.sink);

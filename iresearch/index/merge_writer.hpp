@@ -45,6 +45,8 @@
 namespace irs {
 
 struct DocRemap {
+  explicit DocRemap(TrackedAllocator<> alloc) : id_map{alloc} {}
+
   doc_id_t base_id = doc_limits::invalid();
   TrackedVector<doc_id_t> id_map;
 
@@ -67,8 +69,9 @@ class MergeWriter : public util::Noncopyable {
   using FlushProgress = std::function<bool()>;
 
   struct ReaderCtx {
-    explicit ReaderCtx(const SubReader* reader) noexcept;
-    explicit ReaderCtx(const SubReader& reader) noexcept : ReaderCtx{&reader} {}
+    ReaderCtx(const SubReader* reader, TrackedAllocator<> alloc) noexcept;
+    ReaderCtx(const SubReader& reader, TrackedAllocator<> alloc) noexcept
+      : ReaderCtx{&reader, alloc} {}
 
     const SubReader* reader;
     DocRemap remap;
@@ -76,11 +79,11 @@ class MergeWriter : public util::Noncopyable {
 
   MergeWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
               std::string_view root, const SegmentWriterOptions& options,
-              LocalBudget& budget)
+              TrackedAllocator<> alloc)
     : _fs{fs},
       _root{root},
-      _budget{budget},
-      _readers{TrackedAllocator<ReaderCtx>{budget}},
+      _alloc{alloc},
+      _readers{alloc},
       _scorer{options.scorer},
       _db{db},
       _field_options{options.field_options},
@@ -93,7 +96,7 @@ class MergeWriter : public util::Noncopyable {
   void Reset(Iterator begin, Iterator end) {
     _readers.reserve(_readers.size() + std::distance(begin, end));
     while (begin != end) {
-      _readers.emplace_back(*begin++);
+      _readers.emplace_back(*begin++, _alloc);
     }
   }
 
@@ -115,7 +118,7 @@ class MergeWriter : public util::Noncopyable {
  private:
   duckdb::FileSystem& _fs;
   std::string _root;
-  LocalBudget& _budget;
+  TrackedAllocator<> _alloc;
   TrackedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;

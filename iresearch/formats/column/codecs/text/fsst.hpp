@@ -56,7 +56,7 @@ struct Fsst8 {
   using Table = duckdb_fsst_decoder_t;
   using Exported = std::array<unsigned char, sizeof(Table)>;
 
-  static Exported MakeExported(LocalBudget&) noexcept { return {}; }
+  static Exported MakeExported(TrackedAllocator<>) noexcept { return {}; }
 
   static EncoderFootprint Footprint(size_t strings) noexcept {
     return Fsst8Footprint(strings);
@@ -117,13 +117,13 @@ struct Encoded {
 template<typename Impl>
 class Encoder {
  public:
-  explicit Encoder(LocalBudget& budget = kEmpty)
-    : _charge{budget, 0},
-      _table{Impl::MakeExported(budget)},
-      _in_lengths{TrackedAllocator<size_t>{budget}},
-      _in_ptrs{TrackedAllocator<const unsigned char*>{budget}},
-      _out_lengths{TrackedAllocator<size_t>{budget}},
-      _out_ptrs{TrackedAllocator<unsigned char*>{budget}} {}
+  explicit Encoder(TrackedAllocator<> alloc)
+    : _charge{alloc},
+      _table{Impl::MakeExported(alloc)},
+      _in_lengths{alloc},
+      _in_ptrs{alloc},
+      _out_lengths{alloc},
+      _out_ptrs{alloc} {}
 
   Encoded Encode(std::span<const duckdb::string_t> strings,
                  std::span<const uint32_t> skip, char* out, size_t capacity,
@@ -189,7 +189,7 @@ struct SharedEncoder final : State {
   static constexpr StateId kId = FsstEncoderState(kLeaf);
 
   explicit SharedEncoder(ColumnDataCheckpointData& data)
-    : encoder{data.budget} {}
+    : encoder{data.alloc} {}
 
   Encoder<Impl> encoder;
 };

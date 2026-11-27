@@ -138,7 +138,7 @@ uint64_t ExecuteTopKFiltered(const irs::CompositeReader& reader,
   }
   prepare_collector.Finish();
 
-  irs::ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states{irs::gRootBudget};
   auto& score_state = filter_states.State(ctx, *score_filter);
 
   std::atomic<irs::score_t> score_threshold{
@@ -1332,7 +1332,7 @@ TEST_P(ScorePruneScoringTestCase, TableFilteredTopMatchesFilteredRanking) {
       }
     }
     std::vector<std::unique_ptr<duckdb::ExpressionFilter>> below;
-    irs::ColFilterStateCache states;
+    irs::ColFilterStateCache states{irs::gRootBudget};
     std::vector<ScoreBound> bounds;
     for (const auto value : values) {
       const auto& score_filter = *below.emplace_back(ScoreBelow(value));

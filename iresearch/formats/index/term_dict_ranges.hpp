@@ -23,6 +23,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
@@ -38,7 +39,8 @@ class RangeWriter final {
     PostingMeta meta;
   };
 
-  RangeWriter() = default;
+  explicit RangeWriter(TrackedAllocator<> alloc)
+    : _levels{MakeLevels(alloc, std::make_index_sequence<kMaxRangeLevels>{})} {}
   RangeWriter(const RangeWriter&) = delete;
   RangeWriter& operator=(const RangeWriter&) = delete;
 
@@ -46,7 +48,7 @@ class RangeWriter final {
 
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
-  void Begin(PostingsWriter& pw, uint64_t docs, LocalBudget& budget);
+  void Begin(PostingsWriter& pw, uint64_t docs);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
   size_t Height() const noexcept { return _height; }
@@ -57,6 +59,8 @@ class RangeWriter final {
 
  private:
   struct RangePosting {
+    explicit RangePosting(TrackedAllocator<> alloc) : docs{alloc} {}
+
     bstring key;
     TrackedVector<doc_id_t> docs;
     PostingMeta meta;
@@ -65,6 +69,8 @@ class RangeWriter final {
   };
 
   struct Level {
+    explicit Level(TrackedAllocator<> alloc) : group{alloc}, held{alloc} {}
+
     bstring starts;
     std::vector<PostingMeta> metas;
     RangePosting group;
@@ -80,6 +86,12 @@ class RangeWriter final {
     std::span<const doc_id_t> docs;
     uint64_t docs_count;
   };
+
+  template<size_t... I>
+  static std::array<Level, kMaxRangeLevels> MakeLevels(
+    TrackedAllocator<> alloc, std::index_sequence<I...>) {
+    return {((void)I, Level{alloc})...};
+  }
 
   void Push(size_t level, const Child& child);
   void Close(size_t level);

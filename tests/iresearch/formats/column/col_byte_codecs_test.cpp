@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -58,7 +59,7 @@ std::string Squeeze(typename Codec::Compressor& compressor,
 
 template<typename Codec>
 void ExpectNoDictionaryFromTooLittleData(uint8_t level = Codec::kDefaultLevel) {
-  typename Codec::Compressor compressor{irs::kEmpty, level};
+  typename Codec::Compressor compressor{TestAlloc(), level};
   const std::string frames = "abc";
   const size_t sizes[] = {frames.size()};
   EXPECT_FALSE(compressor.Train(frames, sizes));
@@ -83,9 +84,9 @@ TEST(ColByteCodecsTest, Lz4RefusesSizesBeyondAnInt) {
   EXPECT_EQ(Lz4::Decompressor::DecompressPrefix(src, 16, dst, 8, kBeyondInt),
             0U);
   const auto dictionary = Text(1000, 1);
-  Lz4::Compressor plain{irs::kEmpty, 1};
+  Lz4::Compressor plain{TestAlloc(), 1};
   const auto frame = Squeeze<Lz4>(plain, dictionary);
-  Lz4::Decompressor decompressor;
+  Lz4::Decompressor decompressor{TestAlloc()};
   ASSERT_TRUE(
     decompressor.LoadFrame(frame.data(), frame.size(), dictionary.size()));
   EXPECT_TRUE(decompressor.Inflate(src, kBeyondInt, dst, 16, 16).empty());
@@ -94,23 +95,23 @@ TEST(ColByteCodecsTest, Lz4RefusesSizesBeyondAnInt) {
 
 TEST(ColByteCodecsTest, Lz4RefusesCorruptedFrames) {
   const auto raw = Text(4000, 2);
-  Lz4::Compressor plain{irs::kEmpty, 1};
+  Lz4::Compressor plain{TestAlloc(), 1};
   auto frame = Squeeze<Lz4>(plain, raw);
   std::string out(raw.size(), '\0');
   const auto cut = frame.substr(0, frame.size() / 4);
   EXPECT_EQ(Lz4::Decompressor::DecompressPrefix(
               cut.data(), cut.size(), out.data(), raw.size() / 2, raw.size()),
             0U);
-  Lz4::Decompressor bare;
+  Lz4::Decompressor bare{TestAlloc()};
   EXPECT_TRUE(
     bare.Inflate(cut.data(), cut.size(), out.data(), raw.size(), raw.size())
       .empty());
   const auto dictionary = Text(1000, 3);
-  Lz4::Compressor attached{irs::kEmpty, 1};
+  Lz4::Compressor attached{TestAlloc(), 1};
   attached.Use(dictionary);
   const auto with_dictionary = Squeeze<Lz4>(attached, raw);
   const auto dictionary_frame = Squeeze<Lz4>(plain, dictionary);
-  Lz4::Decompressor decompressor;
+  Lz4::Decompressor decompressor{TestAlloc()};
   ASSERT_TRUE(decompressor.LoadFrame(
     dictionary_frame.data(), dictionary_frame.size(), dictionary.size()));
   ASSERT_EQ(decompressor.Inflate(with_dictionary.data(), with_dictionary.size(),
@@ -127,20 +128,20 @@ TEST(ColByteCodecsTest, Lz4RefusesCorruptedFrames) {
 
 TEST(ColByteCodecsTest, ZstdRefusesCorruptedFrames) {
   const auto raw = Text(4000, 4);
-  Zstd::Compressor plain{irs::kEmpty, 1};
+  Zstd::Compressor plain{TestAlloc(), 1};
   const auto frame = Squeeze<Zstd>(plain, raw);
   std::string out(raw.size() + 100, '\0');
   const auto cut = frame.substr(0, frame.size() / 2);
-  Zstd::Decompressor bare;
+  Zstd::Decompressor bare{TestAlloc()};
   EXPECT_TRUE(
     bare.Inflate(cut.data(), cut.size(), out.data(), raw.size(), raw.size())
       .empty());
   const auto dictionary = Text(1000, 5);
-  Zstd::Compressor attached{irs::kEmpty, 1};
+  Zstd::Compressor attached{TestAlloc(), 1};
   attached.Use(dictionary);
   const auto with_dictionary = Squeeze<Zstd>(attached, raw);
   const auto dictionary_frame = Squeeze<Zstd>(plain, dictionary);
-  Zstd::Decompressor decompressor;
+  Zstd::Decompressor decompressor{TestAlloc()};
   ASSERT_TRUE(decompressor.LoadFrame(
     dictionary_frame.data(), dictionary_frame.size(), dictionary.size()));
   ASSERT_EQ(decompressor.Inflate(with_dictionary.data(), with_dictionary.size(),
@@ -160,13 +161,13 @@ TEST(ColByteCodecsTest, ZstdAttachesAShorterDictionaryAtTheSameAddress) {
   const auto raw = Text(4000, 6);
   const auto longer = Text(2000, 7);
   const auto shorter = Text(1000, 8);
-  Zstd::Compressor plain{irs::kEmpty, 1};
-  Zstd::Compressor with_longer{irs::kEmpty, 1};
+  Zstd::Compressor plain{TestAlloc(), 1};
+  Zstd::Compressor with_longer{TestAlloc(), 1};
   with_longer.Use(longer);
-  Zstd::Compressor with_shorter{irs::kEmpty, 1};
+  Zstd::Compressor with_shorter{TestAlloc(), 1};
   with_shorter.Use(shorter);
   std::string out(raw.size(), '\0');
-  Zstd::Decompressor decompressor;
+  Zstd::Decompressor decompressor{TestAlloc()};
   const auto longer_frame = Squeeze<Zstd>(plain, longer);
   ASSERT_TRUE(decompressor.LoadFrame(longer_frame.data(), longer_frame.size(),
                                      longer.size()));
@@ -187,20 +188,20 @@ TEST(ColByteCodecsTest, ZstdAttachesAShorterDictionaryAtTheSameAddress) {
 
 TEST(ColByteCodecsTest, ZxcRefusesCorruptedFrames) {
   const auto raw = Text(4000, 9);
-  Zxc::Compressor plain{irs::kEmpty, Zxc::kDefaultLevel};
+  Zxc::Compressor plain{TestAlloc(), Zxc::kDefaultLevel};
   const auto frame = Squeeze<Zxc>(plain, raw);
   std::string out(raw.size() + 100, '\0');
-  Zxc::Decompressor bare;
+  Zxc::Decompressor bare{TestAlloc()};
   EXPECT_FALSE(
     bare.Decompress(frame.data(), frame.size() / 2, out.data(), raw.size()));
   EXPECT_FALSE(
     bare.Decompress(frame.data(), frame.size(), out.data(), raw.size() + 100));
   const auto dictionary = Text(1000, 10);
-  Zxc::Compressor attached{irs::kEmpty, Zxc::kDefaultLevel};
+  Zxc::Compressor attached{TestAlloc(), Zxc::kDefaultLevel};
   attached.Use(dictionary);
   const auto with_dictionary = Squeeze<Zxc>(attached, raw);
   const auto dictionary_frame = Squeeze<Zxc>(plain, dictionary);
-  Zxc::Decompressor decompressor;
+  Zxc::Decompressor decompressor{TestAlloc()};
   ASSERT_TRUE(decompressor.LoadFrame(
     dictionary_frame.data(), dictionary_frame.size(), dictionary.size()));
   ASSERT_EQ(decompressor.Inflate(with_dictionary.data(), with_dictionary.size(),
@@ -215,12 +216,12 @@ TEST(ColByteCodecsTest, ZxcRefusesCorruptedFrames) {
 TEST(ColByteCodecsTest, ZxcUsesTheTailOfAnOversizedDictionary) {
   const auto raw = Text(4000, 11);
   const auto dictionary = Text(3 * Zxc::kDictionaryCap, 12);
-  Zxc::Compressor attached{irs::kEmpty, Zxc::kDefaultLevel};
+  Zxc::Compressor attached{TestAlloc(), Zxc::kDefaultLevel};
   attached.Use(dictionary);
   const auto with_dictionary = Squeeze<Zxc>(attached, raw);
-  Zxc::Compressor plain{irs::kEmpty, Zxc::kDefaultLevel};
+  Zxc::Compressor plain{TestAlloc(), Zxc::kDefaultLevel};
   const auto dictionary_frame = Squeeze<Zxc>(plain, dictionary);
-  Zxc::Decompressor decompressor;
+  Zxc::Decompressor decompressor{TestAlloc()};
   ASSERT_TRUE(decompressor.LoadFrame(
     dictionary_frame.data(), dictionary_frame.size(), dictionary.size()));
   std::string out(raw.size(), '\0');

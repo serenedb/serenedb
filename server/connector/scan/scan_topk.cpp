@@ -33,6 +33,7 @@
 #include "connector/index_source_factory.h"
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 namespace {
@@ -252,7 +253,11 @@ class FetchTask final : public duckdb::BaseExecutorTask {
  public:
   FetchTask(duckdb::TaskExecutor& executor, duckdb::ClientContext& ctx,
             ScanGlobalState& g, std::span<const FieldEntry> offsets)
-    : BaseExecutorTask{executor}, _ctx{ctx}, _g{g} {
+    : BaseExecutorTask{executor},
+      _ctx{ctx},
+      _g{g},
+      _budget{ConnectionContext::Get(ctx).Memory()},
+      _fetch{irs::TrackedAllocator<>{_budget}} {
     _fetch.offsets_entries.reserve(offsets.size());
     for (const auto& entry : offsets) {
       _fetch.offsets_entries.push_back(
@@ -270,6 +275,7 @@ class FetchTask final : public duckdb::BaseExecutorTask {
  private:
   duckdb::ClientContext& _ctx;
   ScanGlobalState& _g;
+  irs::LocalBudget _budget;
   FetchLocalState _fetch;
   duckdb::DataChunk _tmp;
 };
@@ -329,7 +335,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
   l.answer_chunk = duckdb::make_uniq<duckdb::DataChunk>();
   l.answer_chunk->Initialize(ctx, g.projected_types,
                              std::max<size_t>(1, total));
-  irs::TrackedVector<irs::ScoreDoc> row_hits;
+  irs::TrackedVector<irs::ScoreDoc> row_hits{l.plan_memory.Allocator()};
   if (!g.needs_lookup) {
     for (uint32_t u = 0; u < t.fetch_units.size(); ++u) {
       l.answer_chunk->Append(*t.fetched[u],

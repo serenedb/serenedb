@@ -818,7 +818,8 @@ bool HnswQuery::ScansByColumn() const {
 void HnswQuery::ScanColumn(PlanMemory& memory, HnswSearchScratch& s) const {
   SDB_ASSERT(_inner);
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-  detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d};
+  detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d,
+                                 memory.Allocator()};
   reader.SetQuery(_query, _metric);
   memory::ArenaVector<doc_id_t> docs{memory.Scratch()};
   docs.reserve(kHnswScanBatch);

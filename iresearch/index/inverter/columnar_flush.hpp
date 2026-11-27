@@ -42,17 +42,17 @@ struct ScatterScratch {
     uint32_t id;
   };
 
-  explicit ScatterScratch(LocalBudget& budget = kEmpty)
-    : blocks{TrackedAllocator<duckdb::AllocatedData>{budget}},
-      cursors{TrackedAllocator<uint32_t>{budget}},
-      bounds{TrackedAllocator<uint32_t>{budget}},
-      ranked{TrackedAllocator<RankedTerm>{budget}},
-      ranked_alt{TrackedAllocator<RankedTerm>{budget}},
-      radix_counts{TrackedAllocator<uint32_t>{budget}},
-      docs{TrackedAllocator<uint32_t*>{budget}},
-      pos{TrackedAllocator<uint32_t*>{budget}},
-      offs_start{TrackedAllocator<uint32_t*>{budget}},
-      offs_end{TrackedAllocator<uint32_t*>{budget}} {}
+  explicit ScatterScratch(TrackedAllocator<> alloc)
+    : blocks{alloc},
+      cursors{alloc},
+      bounds{alloc},
+      ranked{alloc},
+      ranked_alt{alloc},
+      radix_counts{alloc},
+      docs{alloc},
+      pos{alloc},
+      offs_start{alloc},
+      offs_end{alloc} {}
 
   static size_t Bytes(size_t terms, size_t blocks) noexcept;
 

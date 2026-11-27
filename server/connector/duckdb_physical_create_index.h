@@ -33,6 +33,7 @@
 
 #include "catalog/catalog.h"
 #include "connector/file_manifest.h"
+#include "connector/reindex_removes.h"
 
 namespace sdb::connector {
 
@@ -58,7 +59,7 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 
   std::vector<uint64_t> removed_files;
   std::vector<IcebergObserve::DeleteMask> removed_masks;
-  irs::TrackedVector<std::pair<uint64_t, int64_t>> removed_rows;
+  std::shared_ptr<const RemovedRows> removed_rows;
 
   std::shared_ptr<const search::FileManifest> manifest;
 

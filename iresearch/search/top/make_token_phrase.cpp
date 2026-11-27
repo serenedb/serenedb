@@ -49,7 +49,7 @@ class PrunedTokenPhrase : public Root {
                     lead::Node::ptr&& approx,
                     const irs::detail::ScoreArgs& args)
     : _approx{std::move(approx)},
-      _rows{query, true},
+      _rows{query, true, args.memory->Allocator()},
       _fetcher{*args.fetcher},
       _admit{table} {
     const auto& field = query.Reader();

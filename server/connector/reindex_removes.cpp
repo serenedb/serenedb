@@ -181,7 +181,9 @@ template<typename T>
 class KeyHalf {
  public:
   KeyHalf(const irs::ColumnReader& column, irs::ReadContext& ctx)
-    : _column{column}, _state{column.InitScan(ctx)}, _scratch{column.Type()} {}
+    : _column{column},
+      _state{column.InitScan(ctx)},
+      _scratch{column.Type(), ctx.Allocator()} {}
 
   template<typename Visit>
   void Read(uint64_t first, uint64_t count, const Visit& visit) {
@@ -213,8 +215,8 @@ class KeyHalf {
 class SegmentRemoves {
  public:
   SegmentRemoves(const Deletes& deletes, uint32_t index,
-                 irs::DocRemovalBuilder& removal)
-    : _deletes{deletes}, _index{index}, _removal{removal} {}
+                 irs::DocRemovalBuilder& removal, irs::TrackedAllocator<> alloc)
+    : _deletes{deletes}, _index{index}, _removal{removal}, _alloc{alloc} {}
 
   void Resolve(const irs::SubReader& segment) {
     const auto* columns = segment.GetColReader();
@@ -228,7 +230,7 @@ class SegmentRemoves {
         !_deletes.AnyFile(min, max)) {
       return;
     }
-    irs::ReadContext ctx{*columns};
+    irs::ReadContext ctx{*columns, _alloc};
     KeyHalf<uint64_t> file_half{files, ctx};
     KeyHalf<int64_t> row_half{key->StructField(1), ctx};
     _rows = &key->StructField(1);
@@ -327,6 +329,7 @@ class SegmentRemoves {
   const Deletes& _deletes;
   uint32_t _index;
   irs::DocRemovalBuilder& _removal;
+  irs::TrackedAllocator<> _alloc;
   irs::DocumentMaskBuilder* _docs = nullptr;
   const irs::ColumnReader* _rows = nullptr;
   std::vector<FileRun> _file_runs;
@@ -337,9 +340,10 @@ class SegmentRemoves {
 }  // namespace
 
 irs::DocRemovalBuilder ResolveRemoves(
-  const irs::CompositeReader& snapshot, std::vector<uint64_t> deleted_files,
+  irs::MemoryBudget& parent, const irs::CompositeReader& snapshot,
+  std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
-  irs::TrackedVector<std::pair<uint64_t, int64_t>> eq_rows) {
+  std::span<const std::pair<uint64_t, int64_t>> eq_rows) {
   // Delete kind 1 -- deleted files: every row of the file.
   absl::c_sort(deleted_files);
   // Delete kind 2 -- changed bitmasks (iceberg): the dead rows of kept files.
@@ -347,15 +351,17 @@ irs::DocRemovalBuilder ResolveRemoves(
     return lhs.file_id < rhs.file_id;
   });
   // Delete kind 3 -- equality deletes (iceberg): the rows they matched.
-  absl::c_sort(eq_rows);
+  SDB_ASSERT(absl::c_is_sorted(eq_rows));
   const Deletes deletes{
     .files = deleted_files, .masks = masks, .eq_rows = eq_rows};
   irs::DocRemovalBuilder removal;
   if (deletes.Empty()) {
     return removal;
   }
+  irs::LocalBudget budget{parent};
   for (uint32_t index = 0; index != snapshot.size(); ++index) {
-    SegmentRemoves{deletes, index, removal}.Resolve(snapshot[index]);
+    SegmentRemoves{deletes, index, removal, irs::TrackedAllocator<>{budget}}
+      .Resolve(snapshot[index]);
   }
   return removal;
 }

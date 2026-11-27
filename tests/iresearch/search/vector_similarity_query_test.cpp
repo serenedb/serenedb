@@ -174,7 +174,8 @@ void AssertQuantizedPath(const ::tests::IndexDir& dir,
   const std::vector<float> query(kDim, 0.f);
   ASSERT_NE(nullptr,
             irs::ReadQuantizerCodebook(
-              static_cast<const irs::IvfIndex*>(ann)->Tree(), idx_in,
+              irs::gRootBudget, static_cast<const irs::IvfIndex*>(ann)->Tree(),
+              idx_in,
               irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
               query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
@@ -538,7 +539,7 @@ TEST(RawVectorReaderTest, RowsAcrossBlocksThatDoNotContinueTheirBytesScore) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   ::tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("seg")};
+    irs::ColWriter w{db, dir.Tracker("seg"), TestAlloc()};
     auto& cw =
       w.OpenColumn(kId, vtype,
                    {.row_group_size = kRowGroup,
@@ -569,7 +570,7 @@ TEST(RawVectorReaderTest, RowsAcrossBlocksThatDoNotContinueTheirBytesScore) {
   ASSERT_NE(blocks[0].file_offset + blocks[0].byte_size, blocks[1].file_offset);
   ASSERT_EQ(irs::codecs::CodecType::Constant, blocks[2].codec->type);
   const std::vector<float> query{1.f, 2.f, 3.f};
-  irs::detail::RawVectorReader reader{*col, r, kDims};
+  irs::detail::RawVectorReader reader{*col, r, kDims, TestAlloc()};
   reader.SetQuery(query, irs::VectorMetric::L2Sqr);
   const auto distance = irs::ResolveScoringDistance(irs::VectorMetric::L2Sqr);
   for (const uint64_t first : {kRowGroup - 11, 2 * kRowGroup - 11}) {

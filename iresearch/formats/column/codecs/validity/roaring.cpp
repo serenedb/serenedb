@@ -216,12 +216,8 @@ idx_t DataSizeInBytes(const ContainerMetadata& metadata, idx_t container_size) {
 }
 
 struct ContainerMetadataCollection {
-  ContainerMetadataCollection() = default;
-
-  explicit ContainerMetadataCollection(LocalBudget& budget)
-    : container_type{TrackedAllocator<uint8_t>{budget}},
-      number_of_runs{TrackedAllocator<uint8_t>{budget}},
-      cardinality{TrackedAllocator<uint8_t>{budget}} {}
+  explicit ContainerMetadataCollection(TrackedAllocator<> alloc)
+    : container_type{alloc}, number_of_runs{alloc}, cardinality{alloc} {}
 
   TrackedVector<uint8_t> container_type;
   TrackedVector<uint8_t> number_of_runs;
@@ -469,9 +465,8 @@ void PackBooleans(ValidityMask& packed,
 }
 
 struct RoaringAnalyzeState {
-  explicit RoaringAnalyzeState(LocalBudget& budget)
-    : metadata_collection{budget},
-      container_metadata{TrackedAllocator<ContainerMetadata>{budget}} {}
+  explicit RoaringAnalyzeState(TrackedAllocator<> alloc)
+    : metadata_collection{alloc}, container_metadata{alloc} {}
 
   uint16_t one_count = 0;
   uint16_t zero_count = 0;
@@ -973,7 +968,7 @@ RoaringCompressState::RoaringCompressState(
   const RoaringAnalyzeState& analyze_state)
   : checkpoint_data{checkpoint_data},
     analyze_state{analyze_state},
-    metadata_collection{checkpoint_data.budget},
+    metadata_collection{checkpoint_data.alloc},
     segment{codec, checkpoint_data} {
   CreateEmptySegment(*this);
   InitializeContainer(*this);
@@ -1422,7 +1417,10 @@ using ContainerScan =
 
 struct RoaringScanState final : SegmentScanState {
   explicit RoaringScanState(const ColumnSegment& segment)
-    : handle{segment.Pin()}, count{segment.count} {
+    : handle{segment.Pin()},
+      count{segment.count},
+      container_metadata{segment.ctx.Allocator()},
+      data_start_position{segment.ctx.Allocator()} {
     const auto segment_size = segment.size;
     if (segment_size < sizeof(idx_t)) [[unlikely]] {
       ThrowCorrupted("roaring", "segment is smaller than its header");
@@ -1446,7 +1444,7 @@ struct RoaringScanState final : SegmentScanState {
                      "container count exceeds available metadata space");
     }
 
-    ContainerMetadataCollection metadata_collection;
+    ContainerMetadataCollection metadata_collection{segment.ctx.Allocator()};
     Deserialize(metadata_collection, metadata_ptr, container_count,
                 metadata_size);
     ContainerMetadataCollectionScanner scanner{metadata_collection};
@@ -1717,7 +1715,7 @@ template<duckdb::PhysicalType kPhysical>
 struct Containers final : State {
   static constexpr StateId kId = StateId::RoaringContainers;
 
-  explicit Containers(ColumnDataCheckpointData& data) : state{data.budget} {
+  explicit Containers(ColumnDataCheckpointData& data) : state{data.alloc} {
     CountContainers<kPhysical>(state, data.rows.chunks);
   }
 
@@ -1740,8 +1738,8 @@ constexpr CompressionFunction kFunction{
     },
 };
 
-std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
-  return std::make_unique<RoaringScanState>(segment);
+SegmentScanStatePtr InitScan(const ColumnSegment& segment) {
+  return MakeScanState<RoaringScanState>(segment.ctx.Allocator(), segment);
 }
 
 void ScanValidity(const ColumnSegment&, ColumnScanState& state,
@@ -1771,8 +1769,9 @@ RoaringScanState& FetchScanState(const ColumnSegment& segment,
                                  ColumnFetchState& state, const idx_t* rows,
                                  idx_t count) {
   SDB_ASSERT(count == 0 || rows[count - 1] < segment.count);
-  return state.GetOrCreateSegmentState<RoaringScanState>(
-    [&] { return std::make_unique<RoaringScanState>(segment); });
+  return state.GetOrCreateSegmentState<RoaringScanState>([&] {
+    return MakeScanState<RoaringScanState>(segment.ctx.Allocator(), segment);
+  });
 }
 
 void FetchRowsValidity(const ColumnSegment& segment, ColumnFetchState& state,

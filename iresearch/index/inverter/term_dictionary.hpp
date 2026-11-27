@@ -30,7 +30,7 @@
 
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
@@ -55,8 +55,10 @@ class TermDictionary : util::Noncopyable {
 
   static constexpr size_t kBatch = 1024;
 
-  explicit TermDictionary(duckdb::ArenaAllocator& arena)
-    : _map{0, RefHashEq{&_entries}, RefHashEq{&_entries}}, _arena{&arena} {}
+  TermDictionary(duckdb::ArenaAllocator& arena, TrackedAllocator<> alloc)
+    : _map{0, RefHashEq{&_entries}, RefHashEq{&_entries}, alloc},
+      _entries{alloc},
+      _arena{&arena} {}
 
   uint32_t Insert(const duckdb::string_t& term) {
     return InsertHashed({term, TermHash(term)});
@@ -166,8 +168,7 @@ class TermDictionary : util::Noncopyable {
                             static_cast<uint32_t>(size)};
   }
 
-  irs::containers::FlatHashSet<Ref, RefHashEq, RefHashEq, TrackedAllocator<Ref>>
-    _map;
+  irs::containers::TrackedFlatHashSet<Ref, RefHashEq, RefHashEq> _map;
   TrackedVector<duckdb::string_t> _entries;
   duckdb::ArenaAllocator* _arena;
 };

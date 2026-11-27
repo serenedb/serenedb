@@ -38,6 +38,8 @@
 #include <string>
 #include <string_view>
 
+#include "test_alloc.hpp"
+
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 
 namespace irs {

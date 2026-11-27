@@ -80,13 +80,11 @@ class DictionaryCompressor {
   std::string_view Stored() const noexcept { return _stored; }
 
  protected:
-  DictionaryCompressor(LocalBudget& budget, size_t cap) noexcept
-    : _cap{cap},
-      _dictionary{TrackedAllocator<char>{budget}},
-      _stored{TrackedAllocator<char>{budget}} {}
+  explicit DictionaryCompressor(TrackedAllocator<> alloc, size_t cap) noexcept
+    : _cap{cap}, _dictionary{alloc}, _stored{alloc} {}
 
-  LocalBudget& Budget() const noexcept {
-    return *_dictionary.get_allocator().budget;
+  TrackedAllocator<> Allocator() const noexcept {
+    return _dictionary.get_allocator();
   }
 
  private:
@@ -123,6 +121,13 @@ class DictionaryDecompressor {
   }
 
  protected:
+  explicit DictionaryDecompressor(TrackedAllocator<> alloc) noexcept
+    : _window{alloc} {}
+
+  TrackedAllocator<> Allocator() const noexcept {
+    return _window.get_allocator();
+  }
+
   bool HasDictionary() const noexcept { return _dictionary != 0; }
 
   char* FrameAfterDictionary(size_t size) {

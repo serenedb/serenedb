@@ -127,6 +127,9 @@ inline uint32_t FrameOfEntry(duckdb::const_data_ptr_t table, uint32_t hi,
 
 class ChainGroups {
  public:
+  explicit ChainGroups(TrackedAllocator<> alloc)
+    : _base{alloc}, _known{alloc}, _offsets{alloc} {}
+
   template<typename Entries>
   void Reset(uint32_t frame_count, Entries entries) {
     _base.resize(frame_count + 1);
@@ -174,7 +177,7 @@ class ChainGroups {
  private:
   TrackedVector<uint32_t> _base;
   TrackedVector<uint32_t> _known;
-  ScratchVector<uint64_t> _offsets;
+  TrackedScratchVector<uint64_t> _offsets;
 };
 
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
@@ -197,7 +200,7 @@ struct EntryRange {
   auto operator<=>(const EntryRange&) const noexcept = default;
 };
 
-using EntryRanges = TrackedVector<EntryRange>;
+using EntryRanges = std::vector<EntryRange>;
 
 EntryRanges Normalize(EntryRanges ranges);
 

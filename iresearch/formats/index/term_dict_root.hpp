@@ -41,13 +41,11 @@
 namespace irs::term_dict {
 
 struct Separators {
-  Separators() = default;
-  explicit Separators(LocalBudget& budget)
-    : arena{TrackedAllocator<byte_type>{budget}},
-      offsets(1, 0, TrackedAllocator<uint32_t>{budget}) {}
+  explicit Separators(TrackedAllocator<> alloc)
+    : arena{alloc}, offsets(1, 0, alloc) {}
 
   TrackedBstring arena;
-  TrackedVector<uint32_t> offsets{0};
+  TrackedVector<uint32_t> offsets;
 };
 
 inline constexpr uint32_t kNoSeparators[]{0};
@@ -105,9 +103,9 @@ class EytzingerRoot : public SeparatorRoot {
     uint32_t rank;
   };
 
-  EytzingerRoot() = default;
-  EytzingerRoot(SeparatorsView separators, LocalBudget& budget);
-  EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in);
+  explicit EytzingerRoot(SeparatorsView separators, TrackedAllocator<> alloc);
+  EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in,
+                TrackedAllocator<> alloc);
   EytzingerRoot(EytzingerRoot&&) noexcept = default;
   EytzingerRoot& operator=(EytzingerRoot&&) noexcept = default;
 
@@ -134,14 +132,15 @@ class EytzingerRoot : public SeparatorRoot {
 
 class TreeRoot : public SeparatorRoot {
  public:
-  TreeRoot() = default;
-  TreeRoot(SeparatorsView separators, LocalBudget& budget);
-  TreeRoot(SeparatorsView separators, duckdb::ReadStream& in);
+  explicit TreeRoot(TrackedAllocator<> alloc) : _nodes{alloc}, _levels{alloc} {}
+  explicit TreeRoot(SeparatorsView separators, TrackedAllocator<> alloc);
+  TreeRoot(SeparatorsView separators, duckdb::ReadStream& in,
+           TrackedAllocator<> alloc);
 
   void Write(duckdb::WriteStream& out) const;
 
-  static size_t Height(size_t count, LocalBudget& budget) {
-    return LevelSizes(count, budget).size();
+  static size_t Height(size_t count, TrackedAllocator<> alloc) {
+    return LevelSizes(count, alloc).size();
   }
 
   size_t Find(Probe key) const noexcept;
@@ -164,7 +163,8 @@ class TreeRoot : public SeparatorRoot {
     size_t outside;
   };
 
-  static TrackedVector<size_t> LevelSizes(size_t count, LocalBudget& budget);
+  static TrackedVector<size_t> LevelSizes(size_t count,
+                                          TrackedAllocator<> alloc);
   Located Locate(bytes_view key) const noexcept;
   size_t Descend(uint64_t head) const noexcept;
   size_t Resolve(size_t from, size_t upper, uint64_t head,
@@ -182,9 +182,9 @@ class TreeRoot : public SeparatorRoot {
 
 class ArtRoot : public SeparatorRoot {
  public:
-  ArtRoot() = default;
-  ArtRoot(SeparatorsView separators, LocalBudget& budget);
-  ArtRoot(SeparatorsView separators, duckdb::ReadStream& in);
+  explicit ArtRoot(SeparatorsView separators, TrackedAllocator<> alloc);
+  ArtRoot(SeparatorsView separators, duckdb::ReadStream& in,
+          TrackedAllocator<> alloc);
 
   void Write(duckdb::WriteStream& out) const;
 
@@ -217,9 +217,13 @@ class Root {
   }
 
  public:
-  Root() = default;
-  Root(SeparatorsView separators, bool fixed, LocalBudget& budget);
-  Root(SeparatorsView separators, duckdb::ReadStream& in);
+  explicit Root(TrackedAllocator<> alloc)
+    : _root{std::in_place_type<TreeRoot>, alloc} {}
+  Root(SeparatorsView separators, bool fixed, TrackedAllocator<> alloc)
+    : _root{Make(separators, fixed, alloc)} {}
+  Root(SeparatorsView separators, duckdb::ReadStream& in,
+       TrackedAllocator<> alloc)
+    : _root{Read(separators, in, alloc)} {}
 
   void Write(duckdb::WriteStream& out) const;
 
@@ -243,7 +247,14 @@ class Root {
   }
 
  private:
-  std::variant<TreeRoot, EytzingerRoot, ArtRoot> _root;
+  using Variant = std::variant<TreeRoot, EytzingerRoot, ArtRoot>;
+
+  static Variant Make(SeparatorsView separators, bool fixed,
+                      TrackedAllocator<> alloc);
+  static Variant Read(SeparatorsView separators, duckdb::ReadStream& in,
+                      TrackedAllocator<> alloc);
+
+  Variant _root;
 };
 
 }  // namespace irs::term_dict

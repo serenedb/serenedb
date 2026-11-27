@@ -39,6 +39,7 @@
 
 #include "connector/scan/scan_function.h"
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 
@@ -679,7 +680,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                               ConstantCount(*where);
   const auto unique = UniqueBound(g, where.get());
   const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
-  irs::ColFilterStateCache states;
+  irs::ColFilterStateCache states{
+    ConnectionContext::Get(*g.client_context).Memory()};
   irs::ColFilterClassification cls;
   uint64_t parallel = 0;
   uint64_t rgs = 0;

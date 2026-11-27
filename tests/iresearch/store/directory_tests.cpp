@@ -4714,7 +4714,7 @@ TEST_P(DirectoryTestCase, file_tracker) {
 
   {
     irs::FileTracker tracker{dir.Fs(), dir.Root(), "empty"};
-    irs::IdxWriter idx{tracker, irs::kEmpty};
+    irs::IdxWriter idx{tracker, TestAlloc()};
     idx.Commit(nullptr);
     ASSERT_EQ(0, tracker.Kinds());
     ASSERT_EQ(0, tracker.Bytes());
@@ -4723,7 +4723,7 @@ TEST_P(DirectoryTestCase, file_tracker) {
 
   irs::FileTracker tracker{dir.Fs(), dir.Root(), "seg"};
   {
-    irs::IdxWriter idx{tracker, irs::kEmpty};
+    irs::IdxWriter idx{tracker, TestAlloc()};
     idx.BlocksOut().Write<irs::byte_type>(42);
     ASSERT_EQ(irs::kIdxFile, tracker.Kinds());
     ASSERT_EQ(0, tracker.Bytes());
@@ -5030,7 +5030,7 @@ TEST_F(DirectoryHookTest, file_tracker_failures) {
   auto hooked = local->Over(fs);
 
   irs::FileTracker tracker{hooked.Fs(), hooked.Root(), "seg"};
-  irs::IdxWriter idx{tracker, irs::kEmpty};
+  irs::IdxWriter idx{tracker, TestAlloc()};
   ASSERT_THROW(idx.BlocksOut(), duckdb::IOException);
   ASSERT_EQ(0, tracker.Kinds());
   ASSERT_EQ(0, tracker.Bytes());

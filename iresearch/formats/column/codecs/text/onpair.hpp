@@ -31,7 +31,7 @@
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/tracked.hpp"
@@ -131,7 +131,7 @@ class Table {
 
 class Codec {
  public:
-  explicit Codec(LocalBudget& budget);
+  explicit Codec(TrackedAllocator<> alloc);
 
   void Train(std::span<const duckdb::string_t> entries, uint64_t raw);
 
@@ -162,20 +162,13 @@ class Codec {
   Match Longest(const char* rest, size_t left) const;
   void Finalize();
 
-  template<typename K, typename V>
-  using Map =
-    containers::FlatHashMap<K, V,
-                            typename containers::FlatHashMap<K, V>::hasher,
-                            typename containers::FlatHashMap<K, V>::key_equal,
-                            TrackedAllocator<std::pair<const K, V>>>;
-
   static constexpr size_t kPairLengths = size_t{1} << 16;
 
-  Map<std::string, uint32_t> _ids;
+  containers::TrackedFlatHashMap<std::string, uint32_t> _ids;
   TrackedVector<uint16_t> _lengths;
   TrackedVector<std::string> _tokens;
   TrackedVector<uint32_t> _order;
-  Map<uint32_t, uint8_t> _pairs;
+  containers::TrackedFlatHashMap<uint32_t, uint8_t> _pairs;
   TrackedVector<Key> _keys;
   TrackedVector<uint32_t> _firsts;
   TrackedVector<Chain> _chains;

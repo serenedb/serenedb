@@ -500,8 +500,10 @@ class Builder {
 
 class Plan final : public Explainer {
  public:
-  Plan(const QueryBuilder& query, const Scorer& scorer, const StatsIndex& stats,
-       const Filter& filter) {
+  explicit Plan(MemoryBudget& memory, const QueryBuilder& query,
+                const Scorer& scorer, const StatsIndex& stats,
+                const Filter& filter)
+    : _memory{memory} {
     if (!QueryBuilder::IsEmpty(query)) {
       _root.emplace(
         Builder{_memory, scorer, stats, filter, query.Segment(), _fetcher}.Make(
@@ -531,11 +533,12 @@ class Plan final : public Explainer {
 
 }  // namespace
 
-std::unique_ptr<Explainer> MakePlan(const QueryBuilder& query,
+std::unique_ptr<Explainer> MakePlan(MemoryBudget& memory,
+                                    const QueryBuilder& query,
                                     const Scorer& scorer,
                                     const StatsIndex& stats,
                                     const Filter& filter) {
-  return std::make_unique<Plan>(query, scorer, stats, filter);
+  return std::make_unique<Plan>(memory, query, scorer, stats, filter);
 }
 
 }  // namespace irs::explain

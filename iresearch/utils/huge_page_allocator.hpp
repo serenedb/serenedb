@@ -20,55 +20,14 @@
 
 #pragma once
 
-#include <cstddef>
-#include <memory>
-#include <new>
 #include <vector>
 
 #include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
-#ifdef __linux__
-
-void* AllocateHugePages(size_t bytes);
-void FreeHugePages(void* p, size_t bytes) noexcept;
-
 template<typename T>
-struct HugePageAllocator {
-  static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
-
-  using value_type = T;
-
-  HugePageAllocator() = default;
-
-  template<typename U>
-  HugePageAllocator(const HugePageAllocator<U>&) noexcept {}
-
-  T* allocate(size_t n) {
-    return static_cast<T*>(AllocateHugePages(n * sizeof(T)));
-  }
-
-  void deallocate(T* p, size_t n) noexcept { FreeHugePages(p, n * sizeof(T)); }
-
-  template<typename U>
-  void construct(U* p) {
-    ::new (static_cast<void*>(p)) U;
-  }
-
-  friend bool operator==(const HugePageAllocator&,
-                         const HugePageAllocator&) = default;
-};
-
-#else
-
-template<typename T>
-using HugePageAllocator = std::allocator<T>;
-
-#endif
-
-template<typename T>
-using HugePageVector =
-  std::vector<T, TrackedAllocator<T, HugePageAllocator<T>>>;
+using TrackedHugePageVector =
+  std::vector<T, TrackedAllocator<T, TrackedPolicy::HugePages>>;
 
 }  // namespace irs

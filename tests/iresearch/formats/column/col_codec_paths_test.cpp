@@ -156,7 +156,7 @@ class ColCodecPathsTest : public TestBase {
 
   void Write(const tests::IndexDir& dir, const Case& c,
              const std::vector<Value>& rows) {
-    irs::ColWriter w{Db(), dir.Tracker(kSeg), c.tier};
+    irs::ColWriter w{Db(), dir.Tracker(kSeg), TestAlloc(), c.tier};
     auto& cw = w.OpenColumn(
       kField, c.type, {.row_group_size = c.rg_size, .compression = c.codec});
     for (uint64_t pos = 0; pos < c.rows;) {
@@ -301,7 +301,7 @@ class ColCodecPathsTest : public TestBase {
       order.push_back(g);
     }
     {
-      irs::ColumnReader::PointReader reader{r, col};
+      irs::ColumnReader::PointReader reader{r, col, TestAlloc()};
       duckdb::Vector out{c.type, 1};
       for (const auto g : order) {
         duckdb::FlatVector::ValidityMutable(out).Reset();
@@ -312,7 +312,7 @@ class ColCodecPathsTest : public TestBase {
         }
       }
     }
-    irs::ColumnReader::PointReader cursor{r, col};
+    irs::ColumnReader::PointReader cursor{r, col, TestAlloc()};
     constexpr duckdb::idx_t kOffset = 5;
     for (const uint64_t step : {uint64_t{1}, uint64_t{7}, uint64_t{97}}) {
       std::vector<uint32_t> batch;
@@ -544,7 +544,7 @@ class ColCodecPathsTest : public TestBase {
   }
 
   void DescribeBlocks(irs::ColReader& r, const irs::ColumnReader& col) {
-    irs::ReadContext ctx{r};
+    irs::ReadContext ctx{r, TestAlloc()};
     irs::BlockWindow window{};
     uint64_t row = 0;
     for (const auto& block : col.DataBlocks()) {

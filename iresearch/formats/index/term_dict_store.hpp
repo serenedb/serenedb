@@ -32,7 +32,7 @@
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/tracked.hpp"
 
@@ -40,7 +40,8 @@ namespace irs::term_dict {
 
 class BlockStore {
  public:
-  BlockStore() = default;
+  explicit BlockStore(TrackedAllocator<> alloc)
+    : _pages{alloc}, _copies{alloc}, _pending{alloc} {}
 
   BlockStore(const BlockStore&) = delete;
   BlockStore& operator=(const BlockStore&) = delete;
@@ -75,10 +76,8 @@ class BlockStore {
   duckdb::BufferManager* _buffers = nullptr;
   const byte_type* _base = nullptr;
   TrackedVector<uint32_t> _pages;
-  containers::FlatHashMap<
-    uint64_t, duckdb::AllocatedData, absl::Hash<uint64_t>,
-    std::equal_to<uint64_t>,
-    TrackedAllocator<std::pair<const uint64_t, duckdb::AllocatedData>>>
+  containers::TrackedFlatHashMap<uint64_t, duckdb::AllocatedData,
+                                 absl::Hash<uint64_t>, std::equal_to<uint64_t>>
     _copies;
   TrackedVector<PendingCopy> _pending;
   uint64_t _first_page = 0;

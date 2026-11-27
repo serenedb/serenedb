@@ -71,8 +71,8 @@ struct Fsst12 {
   using Table = duckdb_fsst12_decoder_t;
   using Exported = TrackedVector<unsigned char>;
 
-  static Exported MakeExported(LocalBudget& budget) noexcept {
-    return Exported{TrackedAllocator<unsigned char>{budget}};
+  static Exported MakeExported(TrackedAllocator<> alloc) noexcept {
+    return Exported{alloc};
   }
 
   static EncoderFootprint Footprint(size_t strings) noexcept {
@@ -320,7 +320,12 @@ struct Scan {
 
   template<typename Frames>
   Scan(const ColumnSegment& segment, const Frames& s)
-    : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
+    : lcps{s.base + s.header.off_lcps, s.header.lcp_width},
+      groups{segment.ctx.Allocator()},
+      group_decoded{segment.ctx.Allocator()},
+      group_rows{segment.ctx.Allocator()},
+      probe{segment.ctx.Allocator()},
+      chain{segment.ctx.Allocator()} {
     const auto table = SymbolTable(segment, s.header, s.base, probe);
     if (!table.empty() && !decoder.Import(segment.cache_slot.cache, table))
       [[unlikely]] {
@@ -715,6 +720,8 @@ struct Scan {
 
 template<typename Impl>
 struct Fetch {
+  explicit Fetch(TrackedAllocator<> alloc) : groups{alloc}, chain{alloc} {}
+
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
     groups.Clear();
@@ -775,11 +782,11 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr ByteCodec kCodec = Impl::kCodec;
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : Base{data.budget,         kCodec,
+    : Base{data.alloc,          kCodec,
            data.type,           dedup,
            data.tuning.strings, data.params.segment_target},
       _codec{data.Get<fsst::SharedEncoder<Impl>>().encoder},
-      _lcp_stream{TrackedAllocator<uint32_t>{data.budget}} {}
+      _lcp_stream{data.alloc} {}
 
   void FinalizeCompress();
 

@@ -53,15 +53,15 @@ struct Scanned final : SegmentScanState {
   bool accepted = false;
 };
 
-std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
-  auto scanned = std::make_unique<Scanned>();
+SegmentScanStatePtr InitScan(const ColumnSegment& segment) {
+  auto scanned = MakeScanState<Scanned>(segment.ctx.Allocator());
   if (segment.size != 0) {
-    scanned->bytes = segment.Pin();
+    scanned->Cast<Scanned>().bytes = segment.Pin();
   }
   return scanned;
 }
 
-std::unique_ptr<SegmentScanState> InitValidityScan(const ColumnSegment&) {
+SegmentScanStatePtr InitValidityScan(const ColumnSegment&) {
   return nullptr;
 }
 

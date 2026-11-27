@@ -41,6 +41,8 @@
 #include <string>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 constexpr irs::field_id kField = 0;
@@ -163,7 +165,8 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   std::mt19937_64 rng{11};
   {
     irs::FileTracker tracker{c->fs, kRoot, kSegName};
-    irs::ColWriter writer{CsDb(), tracker, irs::WriteTier::Merge};
+    irs::ColWriter writer{CsDb(), tracker, TestAlloc(),
+                          irs::WriteTier::Merge};
     irs::ColumnWriterOptions options;
     options.codec_params.segment_target = SegmentTarget();
     auto& cw = writer.OpenColumn(kField, duckdb::LogicalType::VARCHAR, options);
@@ -189,7 +192,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
     std::fprintf(stderr, "Build(%s): column missing\n", shape.name);
     std::abort();
   }
-  c->ctx = std::make_unique<irs::ReadContext>(*c->reader);
+  c->ctx = std::make_unique<irs::ReadContext>(*c->reader, TestAlloc());
   const auto blocks = c->col->DataBlocks();
   std::fprintf(
     stderr, "shape %-9s %-4s rows=%llu blocks=%zu codec=%s\n", shape.name,
@@ -239,7 +242,8 @@ void Bench(benchmark::State& state, size_t shape, bool dense) {
   const auto percent = static_cast<uint32_t>(state.range(0));
   const auto run = static_cast<uint32_t>(state.range(1));
   const auto windows = Windows(c.windows, percent, run);
-  irs::ColumnReader::VectorScratch scratch{duckdb::LogicalType::VARCHAR};
+  irs::ColumnReader::VectorScratch scratch{duckdb::LogicalType::VARCHAR,
+                                           TestAlloc()};
   uint64_t bytes = 0;
   for (auto _ : state) {
     auto scan = c.col->InitScan(*c.ctx);

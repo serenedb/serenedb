@@ -62,6 +62,12 @@ struct TsDictLocalState final : public ScanLocalState {
   uint32_t LiveDocs(irs::TermIterator& it, bool count_all,
                     uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
 
+  void BindMemory(irs::MemoryBudget& memory) final {
+    ScanLocalState::BindMemory(memory);
+    _query_memory.Bind(memory);
+    _term_memory.Bind(memory);
+  }
+
   void ReleasePlans() final {
     _live.reset();
     _term_counts = nullptr;
@@ -705,12 +711,13 @@ void BuildTsDictCounts(ScanGlobalState& g) {
       continue;
     }
     auto& per_field = g.ts_dict_counts[seg];
-    per_field.resize(reqs.size());
+    per_field.reserve(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {
       const auto* terms = reader[seg].field(
         reqs[i].field_id,
         {.layout = reqs[i].layout, .member = irs::DictMember::Strings});
-      per_field[i].Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
+      per_field.emplace_back(irs::TrackedAllocator<>{g.shared_budget})
+        .Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
     }
   }
 }

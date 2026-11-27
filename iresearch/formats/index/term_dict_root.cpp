@@ -187,9 +187,10 @@ EytzingerRoot::Node* EytzingerRoot::Place() {
   return nodes;
 }
 
-EytzingerRoot::EytzingerRoot(SeparatorsView separators, LocalBudget& budget)
+EytzingerRoot::EytzingerRoot(SeparatorsView separators,
+                             TrackedAllocator<> alloc)
   : SeparatorRoot{separators},
-    _storage{TrackedAllocator<Node>{budget}},
+    _storage{alloc},
     _prefix{SharedPrefix(_separators)},
     _count{SeparatorCount(_separators)} {
   const size_t count = _count;
@@ -222,8 +223,10 @@ EytzingerRoot::EytzingerRoot(SeparatorsView separators, LocalBudget& budget)
   SDB_ASSERT(next == count);
 }
 
-EytzingerRoot::EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in)
+EytzingerRoot::EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in,
+                             TrackedAllocator<> alloc)
   : SeparatorRoot{separators},
+    _storage{alloc},
     _prefix{PrefixOf(separators, in.Read<uint32_t>())},
     _count{SeparatorCount(separators)} {
   in.ReadData(reinterpret_cast<duckdb::data_ptr_t>(Place()),
@@ -276,8 +279,9 @@ size_t EytzingerRoot::FindFrom(size_t from, Probe key) const noexcept {
   });
 }
 
-TrackedVector<size_t> TreeRoot::LevelSizes(size_t count, LocalBudget& budget) {
-  TrackedVector<size_t> sizes{TrackedAllocator<size_t>{budget}};
+TrackedVector<size_t> TreeRoot::LevelSizes(size_t count,
+                                           TrackedAllocator<> alloc) {
+  TrackedVector<size_t> sizes{alloc};
   sizes.push_back(std::max<size_t>(1, (count + kFanout - 1) / kFanout));
   while (sizes.back() != 1) {
     sizes.push_back((sizes.back() + kFanout - 1) / kFanout);
@@ -285,13 +289,13 @@ TrackedVector<size_t> TreeRoot::LevelSizes(size_t count, LocalBudget& budget) {
   return sizes;
 }
 
-TreeRoot::TreeRoot(SeparatorsView separators, LocalBudget& budget)
+TreeRoot::TreeRoot(SeparatorsView separators, TrackedAllocator<> alloc)
   : SeparatorRoot{separators},
     _prefix{SharedPrefix(_separators)},
-    _nodes{TrackedAllocator<Node>{budget}},
-    _levels{TrackedAllocator<size_t>{budget}},
+    _nodes{alloc},
+    _levels{alloc},
     _count{SeparatorCount(_separators)} {
-  const auto sizes = LevelSizes(_count, budget);
+  const auto sizes = LevelSizes(_count, alloc);
   const size_t height = sizes.size();
   _levels.resize(height);
   size_t total = 0;
@@ -317,9 +321,12 @@ TreeRoot::TreeRoot(SeparatorsView separators, LocalBudget& budget)
   }
 }
 
-TreeRoot::TreeRoot(SeparatorsView separators, duckdb::ReadStream& in)
+TreeRoot::TreeRoot(SeparatorsView separators, duckdb::ReadStream& in,
+                   TrackedAllocator<> alloc)
   : SeparatorRoot{separators},
     _prefix{PrefixOf(separators, in.Read<uint32_t>())},
+    _nodes{alloc},
+    _levels{alloc},
     _count{SeparatorCount(separators)} {
   static_assert(sizeof(size_t) == sizeof(uint64_t));
   ReadArray(in, _nodes);
@@ -424,8 +431,8 @@ bool TreeRoot::NotAfter(size_t block, Probe probe) const noexcept {
   return SeparatorAt(_separators, block - 1) <= key;
 }
 
-ArtRoot::ArtRoot(SeparatorsView separators, LocalBudget& budget)
-  : SeparatorRoot{separators}, _words{TrackedAllocator<uint64_t>{budget}} {
+ArtRoot::ArtRoot(SeparatorsView separators, TrackedAllocator<> alloc)
+  : SeparatorRoot{separators}, _words{alloc} {
   const size_t count = SeparatorCount(_separators);
   if (count < 2) {
     return;
@@ -510,8 +517,9 @@ ArtRoot::ArtRoot(SeparatorsView separators, LocalBudget& budget)
   _words.shrink_to_fit();
 }
 
-ArtRoot::ArtRoot(SeparatorsView separators, duckdb::ReadStream& in)
-  : SeparatorRoot{separators} {
+ArtRoot::ArtRoot(SeparatorsView separators, duckdb::ReadStream& in,
+                 TrackedAllocator<> alloc)
+  : SeparatorRoot{separators}, _words{alloc} {
   ReadArray(in, _words);
 }
 
@@ -602,13 +610,13 @@ size_t ArtRoot::Find(Probe probe) const noexcept {
   }
 }
 
-Root::Root(SeparatorsView separators, bool fixed, LocalBudget& budget) {
+Root::Variant Root::Make(SeparatorsView separators, bool fixed,
+                         TrackedAllocator<> alloc) {
   const size_t count = SeparatorCount(separators);
   if (fixed) {
-    if (ArtRoot art{separators, budget};
-        2 * art.Visits() <= TreeRoot::Height(count, budget) * count) {
-      _root.emplace<ArtRoot>(std::move(art));
-      return;
+    if (ArtRoot art{separators, alloc};
+        2 * art.Visits() <= TreeRoot::Height(count, alloc) * count) {
+      return Variant{std::in_place_type<ArtRoot>, std::move(art)};
     }
   }
   size_t ties = 0;
@@ -622,23 +630,20 @@ Root::Root(SeparatorsView separators, bool fixed, LocalBudget& budget) {
     }
   }
   if (2 * ties > count) {
-    _root.emplace<EytzingerRoot>(separators, budget);
-  } else {
-    _root.emplace<TreeRoot>(separators, budget);
+    return Variant{std::in_place_type<EytzingerRoot>, separators, alloc};
   }
+  return Variant{std::in_place_type<TreeRoot>, separators, alloc};
 }
 
-Root::Root(SeparatorsView separators, duckdb::ReadStream& in) {
+Root::Variant Root::Read(SeparatorsView separators, duckdb::ReadStream& in,
+                         TrackedAllocator<> alloc) {
   switch (in.Read<uint8_t>()) {
     case 0:
-      _root.emplace<TreeRoot>(separators, in);
-      break;
+      return Variant{std::in_place_type<TreeRoot>, separators, in, alloc};
     case 1:
-      _root.emplace<EytzingerRoot>(separators, in);
-      break;
+      return Variant{std::in_place_type<EytzingerRoot>, separators, in, alloc};
     default:
-      _root.emplace<ArtRoot>(separators, in);
-      break;
+      return Variant{std::in_place_type<ArtRoot>, separators, in, alloc};
   }
 }
 

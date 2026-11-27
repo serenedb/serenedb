@@ -42,8 +42,9 @@ using column_internal::FetchSegmentRows;
 
 ColumnReader::PointReader::PointReader(const ColReader& col_reader,
                                        const ColumnReader& col,
+                                       TrackedAllocator<> alloc,
                                        bool random_access)
-  : _ctx{col_reader, random_access},
+  : _ctx{col_reader, alloc, random_access},
     _reader{&col},
     _stored{!col.InMemory() && !col.Patched()},
     _data{&col},

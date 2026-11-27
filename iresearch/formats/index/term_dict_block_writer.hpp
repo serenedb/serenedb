@@ -27,6 +27,7 @@
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,11 +50,8 @@ inline constexpr uint32_t kNoBase = std::numeric_limits<uint32_t>::max();
 using Misfits = std::array<uint32_t, kLenSplits>;
 
 struct VarColumns {
-  explicit VarColumns(LocalBudget& budget)
-    : lcps{TrackedAllocator<uint32_t>{budget}},
-      lens{TrackedAllocator<uint32_t>{budget}},
-      suffixes{TrackedAllocator<byte_type>{budget}},
-      restarts{TrackedAllocator<uint32_t>{budget}} {}
+  explicit VarColumns(TrackedAllocator<> alloc)
+    : lcps{alloc}, lens{alloc}, suffixes{alloc}, restarts{alloc} {}
 
   TrackedVector<uint32_t> lcps;
   TrackedVector<uint32_t> lens;
@@ -74,10 +72,8 @@ struct VarEntry {
 };
 
 struct BlockBuilder {
-  explicit BlockBuilder(LocalBudget& budget)
-    : keys{TrackedAllocator<byte_type>{budget}},
-      ends{TrackedAllocator<uint32_t>{budget}},
-      columns{budget} {}
+  explicit BlockBuilder(TrackedAllocator<> alloc)
+    : keys{alloc}, ends{alloc}, columns{alloc} {}
 
   TrackedBstring keys;
   TrackedVector<uint32_t> ends;
@@ -93,8 +89,8 @@ struct BlockBuilder {
 
 class BlockEncoder {
  public:
-  explicit BlockEncoder(LocalBudget& budget)
-    : _block{budget}, _scratch{budget} {}
+  explicit BlockEncoder(TrackedAllocator<> alloc)
+    : _block{alloc}, _scratch{alloc} {}
 
   static uint64_t Bound() noexcept;
 
@@ -116,7 +112,7 @@ class BlockEncoder {
 
  private:
   struct Fsst {
-    MemoryCharge charge;
+    std::optional<MemoryCharge> charge;
     FsstEncoder encoder;
     std::string table;
     const BasicTermReader* reader = nullptr;
@@ -125,14 +121,14 @@ class BlockEncoder {
   };
 
   struct Scratch {
-    explicit Scratch(LocalBudget& budget)
-      : coded{TrackedAllocator<byte_type>{budget}},
-        encoded{budget},
-        entries{TrackedAllocator<VarEntry>{budget}},
-        lengths{TrackedAllocator<size_t>{budget}},
-        starts{TrackedAllocator<unsigned char*>{budget}},
-        coded_lengths{TrackedAllocator<size_t>{budget}},
-        coded_starts{TrackedAllocator<unsigned char*>{budget}} {}
+    explicit Scratch(TrackedAllocator<> alloc)
+      : coded{alloc},
+        encoded{alloc},
+        entries{alloc},
+        lengths{alloc},
+        starts{alloc},
+        coded_lengths{alloc},
+        coded_starts{alloc} {}
 
     TrackedBstring coded;
     VarColumns encoded;

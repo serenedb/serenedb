@@ -32,37 +32,51 @@ struct Plain {
   uint64_t words[8];
 };
 
-struct Charged : irs::Tracked {
-  uint64_t words[8];
-};
-
-template<typename T>
 void NewDelete(benchmark::State& state) {
   for (auto _ : state) {
-    auto object = std::make_unique<T>();
+    auto object = std::make_unique<Plain>();
+    benchmark::DoNotOptimize(object.get());
+  }
+}
+
+void NewDeleteTracked(benchmark::State& state) {
+  irs::LocalBudget budget{irs::gRootBudget};
+  const irs::TrackedAllocator<> alloc{budget};
+  for (auto _ : state) {
+    auto object = irs::MakeTrackedUnique<Plain>(alloc);
     benchmark::DoNotOptimize(object.get());
   }
 }
 
 template<typename Vector>
+void Fill(Vector& values, uint32_t n) {
+  for (uint32_t i = 0; i < n; ++i) {
+    values.push_back(i);
+  }
+  benchmark::DoNotOptimize(values.data());
+}
+
 void Growth(benchmark::State& state) {
   const auto n = static_cast<uint32_t>(state.range(0));
   for (auto _ : state) {
-    Vector values;
-    for (uint32_t i = 0; i < n; ++i) {
-      values.push_back(i);
-    }
-    benchmark::DoNotOptimize(values.data());
+    std::vector<uint32_t> values;
+    Fill(values, n);
   }
 }
 
-BENCHMARK(NewDelete<Plain>)->ThreadRange(1, 32);
-BENCHMARK(NewDelete<Charged>)->ThreadRange(1, 32);
-BENCHMARK(Growth<std::vector<uint32_t>>)->Arg(16)->Arg(1024)->Arg(1 << 20);
-BENCHMARK(Growth<irs::TrackedVector<uint32_t>>)
-  ->Arg(16)
-  ->Arg(1024)
-  ->Arg(1 << 20);
+void GrowthTracked(benchmark::State& state) {
+  const auto n = static_cast<uint32_t>(state.range(0));
+  irs::LocalBudget budget{irs::gRootBudget};
+  for (auto _ : state) {
+    irs::TrackedVector<uint32_t> values{irs::TrackedAllocator<>{budget}};
+    Fill(values, n);
+  }
+}
+
+BENCHMARK(NewDelete)->ThreadRange(1, 32);
+BENCHMARK(NewDeleteTracked)->ThreadRange(1, 32);
+BENCHMARK(Growth)->Arg(16)->Arg(1024)->Arg(1 << 20);
+BENCHMARK(GrowthTracked)->Arg(16)->Arg(1024)->Arg(1 << 20);
 
 }  // namespace
 

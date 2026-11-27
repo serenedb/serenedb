@@ -22,6 +22,7 @@
 
 #include <duckdb/common/memory_file_system.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <memory>
 #include <string>
 
@@ -32,11 +33,13 @@ class MemoryIndex {
   MemoryIndex();
 
   template<typename WriteDocs>
-  std::shared_ptr<const irs::SubReader> IndexChunk(size_t row_count,
+  std::shared_ptr<const irs::SubReader> IndexChunk(irs::MemoryBudget& memory,
+                                                   size_t row_count,
                                                    WriteDocs&& write_docs) {
     irs::IndexWriterOptions opts;
     auto writer = irs::IndexWriter::Make(_db, _fs, _root, std::move(opts));
     auto trx = writer->GetBatch();
+    trx.SetMemory(memory);
     const auto id = writer->NextSegmentId();
     trx.SetHot(id);
     {

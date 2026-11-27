@@ -69,12 +69,15 @@ struct EntryFrames {
       base{handle.GetDataMutable()},
       header{SegmentHeader(base, segment, S, Leaf::kCodec)},
       type{segment.type},
-      length_reader{base + header.off_lengths, header.length_width} {
+      length_reader{base + header.off_lengths, header.length_width},
+      frames{segment.ctx.Allocator()},
+      frame_off{segment.ctx.Allocator()},
+      decoded{segment.ctx.Allocator()} {
     if (!load) {
       return;
     }
     LoadFrames();
-    auto held = duckdb::make_uniq<HeapCharge>();
+    auto held = duckdb::make_uniq<HeapCharge>(gRootBudget);
     held->charge.Resize(DictionaryBytes(header));
     heap_charge = held.get();
     if constexpr (kDedup) {
@@ -321,6 +324,8 @@ struct EntryFrames {
 
 template<typename Leaf>
 struct FetchFrames {
+  explicit FetchFrames(TrackedAllocator<> alloc) : order{alloc}, leaf{alloc} {}
+
   bool Switch(const ColumnSegment& segment, data_ptr_t base, Shape shape) {
     if (switched) {
       return false;
@@ -362,15 +367,15 @@ struct FetchFrames {
   FrameMeta frame{};
   Header header;
   PackedReader lengths{nullptr, 0};
-  ScratchVector<EntryAt> order;
+  TrackedScratchVector<EntryAt> order;
   duckdb::shared_ptr<DecodedDictionary> decoded;
   HeapReference heap_reference;
   typename Leaf::Fetch leaf;
 };
 
 template<typename Scan>
-std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
-  return std::make_unique<Scan>(segment, segment.Pin());
+SegmentScanStatePtr InitScan(const ColumnSegment& segment) {
+  return MakeScanState<Scan>(segment.ctx.Allocator(), segment, segment.Pin());
 }
 
 template<typename Scan>
@@ -424,8 +429,10 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   using Fetch = typename Scan::Fetch;
   auto& handle = state.GetOrInsertHandle(segment);
   auto* base = handle.GetDataMutable();
-  auto& fetch = state.GetOrCreateSegmentState<Fetch>(
-    [] { return std::make_unique<Fetch>(); });
+  auto& fetch = state.GetOrCreateSegmentState<Fetch>([&] {
+    return MakeScanState<Fetch>(segment.ctx.Allocator(),
+                                segment.ctx.Allocator());
+  });
   auto& frames = fetch.frames;
   if (frames.Switch(segment, base, Scan::kShape)) {
     fetch.Reset(segment);

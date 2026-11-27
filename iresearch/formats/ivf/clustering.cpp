@@ -263,11 +263,11 @@ void KeepTrainableRows(TrackedVector<float>& rows, size_t d) {
   }
 }
 
-std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
-                                  size_t n, uint32_t k, uint32_t d,
-                                  uint32_t seed, uint32_t niter, uint32_t nredo,
-                                  ClusteringAlgo algo, const float* rotation,
-                                  LocalBudget& budget) {
+std::vector<float> TrainCentroids(TrackedAllocator<> alloc, VectorMetric metric,
+                                  const float* data, size_t n, uint32_t k,
+                                  uint32_t d, uint32_t seed, uint32_t niter,
+                                  uint32_t nredo, ClusteringAlgo algo,
+                                  const float* rotation) {
   if (n == 0 || k == 0) {
     return {};
   }
@@ -275,7 +275,7 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
   const bool angular = VectorMetricIsAngular(metric);
   MemoryCharge charge{
-    budget, use_skm ? SuperKMeansBound(n, k, d) : LloydBound(n, k, d)};
+    alloc, use_skm ? SuperKMeansBound(n, k, d) : LloydBound(n, k, d)};
   if (!use_skm) {
     return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/angular);
   }

@@ -153,7 +153,7 @@ struct WidePart {
             values.size()},
       data{
         .type = type,
-        .budget = outer.budget,
+        .alloc = outer.alloc,
         .flush = keep,
         .params = outer.params,
         .tuning = tuning,
@@ -231,9 +231,9 @@ struct WideValues final : State {
   absl::uint128 base = 0;
   absl::uint128 least = 0;
   absl::uint128 most = 0;
-  ScratchVector<absl::uint128> sample;
-  ScratchVector<uint64_t> lows;
-  ScratchVector<uint64_t> highs;
+  TrackedScratchVector<absl::uint128> sample;
+  TrackedScratchVector<uint64_t> lows;
+  TrackedScratchVector<uint64_t> highs;
   std::optional<WidePart> low;
   std::optional<WidePart> high;
   TrackedString out;
@@ -277,8 +277,7 @@ struct WideValues final : State {
         return sample_repeats * 2 >= sample_pairs;
       case Shape::Dictionary:
         if (!counted) {
-          containers::TrackedFlatHashSet<absl::uint128> distinct{
-            TrackedAllocator<absl::uint128>{data.budget}};
+          containers::TrackedFlatHashSet<absl::uint128> distinct{data.alloc};
           distinct.reserve(sample.size());
           for (const auto key : sample) {
             distinct.insert(key);
@@ -300,8 +299,8 @@ struct WideValues final : State {
 
   bool ReadRuns(ColumnDataCheckpointData& data) {
     const size_t limit = data.rows.count / kWideRunRows * 2;
-    ScratchVector<absl::uint128> keys(limit, data.Allocator());
-    ScratchVector<uint32_t> rows(limit, data.Allocator());
+    TrackedScratchVector<absl::uint128> keys(limit, data.Allocator());
+    TrackedScratchVector<uint32_t> rows(limit, data.Allocator());
     absl::uint128 last = 0;
     size_t count = 0;
     size_t row = 0;
@@ -340,7 +339,7 @@ struct WideValues final : State {
              : least;
     lows.resize(data.rows.count);
     low.emplace(data, lows);
-    ScratchVector<uint64_t> values(count, data.Allocator());
+    TrackedScratchVector<uint64_t> values(count, data.Allocator());
     rows.resize(count);
     for (size_t r = 0; r < count; ++r) {
       const uint64_t value = absl::Uint128Low64(keys[r] - base);

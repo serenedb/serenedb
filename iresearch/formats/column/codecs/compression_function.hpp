@@ -81,7 +81,7 @@ struct ColumnSegment {
   uint64_t shared_size = 0;
 };
 
-struct SegmentScanState : Tracked {
+struct SegmentScanState {
   virtual ~SegmentScanState() = default;
 
   template<typename T>
@@ -90,11 +90,21 @@ struct SegmentScanState : Tracked {
   }
 };
 
+using SegmentScanStatePtr = TrackedUniquePtr<SegmentScanState>;
+
+template<typename T, typename... Args>
+SegmentScanStatePtr MakeScanState(TrackedAllocator<> alloc, Args&&... args) {
+  auto state = MakeTrackedUnique<T>(alloc, std::forward<Args>(args)...);
+  SDB_ASSERT(static_cast<void*>(static_cast<SegmentScanState*>(state.get())) ==
+             static_cast<void*>(state.get()));
+  return state;
+}
+
 struct ColumnScanState {
   uint64_t GetPositionInSegment() const noexcept { return offset_in_column; }
 
-  std::unique_ptr<SegmentScanState> scan_state;
-  std::vector<std::unique_ptr<SegmentScanState>> previous_states;
+  SegmentScanStatePtr scan_state;
+  std::vector<SegmentScanStatePtr> previous_states;
   uint64_t offset_in_column = 0;
   uint64_t internal_index = 0;
   uint64_t last_offset = 0;
@@ -113,7 +123,7 @@ struct ColumnFetchState {
   }
 
   duckdb::BufferHandle handle;
-  std::unique_ptr<SegmentScanState> segment_state;
+  SegmentScanStatePtr segment_state;
 };
 
 using FlushSegmentFn = absl::FunctionRef<void(
@@ -197,7 +207,8 @@ struct ColumnDataCheckpointData {
   S& Get(Args&&... args) {
     auto& state = states[std::to_underlying(S::kId)];
     if (!state) {
-      auto created = MakeTracked<S>(budget, *this, std::forward<Args>(args)...);
+      auto created =
+        MakeTrackedUnique<S>(alloc, *this, std::forward<Args>(args)...);
       SDB_ASSERT(static_cast<void*>(static_cast<State*>(created.get())) ==
                  static_cast<void*>(created.get()));
       state = std::move(created);
@@ -205,9 +216,7 @@ struct ColumnDataCheckpointData {
     return static_cast<S&>(*state);
   }
 
-  TrackedAllocator<std::byte> Allocator() const noexcept {
-    return TrackedAllocator<std::byte>{budget};
-  }
+  TrackedAllocator<> Allocator() const noexcept { return alloc; }
 
   template<typename S>
   S* Find() noexcept {
@@ -216,7 +225,7 @@ struct ColumnDataCheckpointData {
 
   const duckdb::LogicalType& type;
   WriteContext* ctx = nullptr;
-  LocalBudget& budget = kEmpty;
+  TrackedAllocator<> alloc;
   FlushSegmentFn flush;
   ColCodecParams params;
   ColumnTuning& tuning;
@@ -224,7 +233,7 @@ struct ColumnDataCheckpointData {
   bool contested = false;
   uint8_t option = 0;
   WriteRows rows;
-  std::array<TrackedPtr<State>, magic_enum::enum_count<StateId>()> states;
+  std::array<TrackedUniquePtr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
 inline double ScoreOfBytes(uint64_t bytes,
@@ -262,12 +271,11 @@ class CompressedSegment {
  private:
   const Codec& _codec;
   duckdb::LogicalType _type;
-  ScratchVector<duckdb::data_t> _buffer;
+  TrackedScratchVector<duckdb::data_t> _buffer;
 };
 
 struct DecompressionFunction {
-  std::unique_ptr<SegmentScanState> (*init_scan)(const ColumnSegment& segment) =
-    nullptr;
+  SegmentScanStatePtr (*init_scan)(const ColumnSegment& segment) = nullptr;
   void (*scan)(const ColumnSegment& segment, ColumnScanState& state,
                duckdb::idx_t scan_count, duckdb::Vector& result,
                duckdb::idx_t result_offset,

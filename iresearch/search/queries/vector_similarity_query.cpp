@@ -36,7 +36,8 @@ void RerankExactDistances(PlanMemory& memory, const SubReader& segment,
   if (!col_reader) {
     return;
   }
-  detail::RawVectorReader reader{vector_column, *col_reader, d};
+  detail::RawVectorReader reader{vector_column, *col_reader, d,
+                                 memory.Allocator()};
   reader.SetQuery(query, metric);
   memory::ArenaVector<doc_id_t> docs(hits.size(), memory.Scratch());
   memory::ArenaVector<score_t> scores(hits.size(), memory.Scratch());

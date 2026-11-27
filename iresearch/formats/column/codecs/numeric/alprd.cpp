@@ -125,9 +125,8 @@ struct AlpRdLeftPartInfo {
 };
 
 struct AlpRdDictionary {
-  explicit AlpRdDictionary(LocalBudget& budget)
-    : left_parts_dict_map{
-        TrackedAllocator<std::pair<const uint16_t, uint16_t>>{budget}} {}
+  explicit AlpRdDictionary(TrackedAllocator<> alloc)
+    : left_parts_dict_map{alloc} {}
 
   uint8_t right_bit_width = 0;
   uint8_t left_bit_width = 0;
@@ -150,9 +149,9 @@ double EstimateCompressionSize(uint8_t right_bit_width, uint8_t left_bit_width,
 }
 
 TrackedVector<AlpRdLeftPartInfo> CountLeftParts(
-  LocalBudget& budget, std::span<const uint16_t> sorted_tops, idx_t left_bits) {
-  TrackedVector<AlpRdLeftPartInfo> left_parts{
-    TrackedAllocator<AlpRdLeftPartInfo>{budget}};
+  TrackedAllocator<> alloc, std::span<const uint16_t> sorted_tops,
+  idx_t left_bits) {
+  TrackedVector<AlpRdLeftPartInfo> left_parts{alloc};
   for (const auto top : sorted_tops) {
     const uint64_t left_part = top >> (kCuttingLimit - left_bits);
     if (left_parts.empty() || left_parts.back().hash != left_part) {
@@ -203,19 +202,18 @@ double EstimateLeftParts(std::span<const AlpRdLeftPartInfo> left_parts,
 }
 
 template<typename T>
-double FindBestDictionary(LocalBudget& budget,
+double FindBestDictionary(TrackedAllocator<> alloc,
                           std::span<const alp::ExactType<T>> values,
                           AlpRdDictionary& dictionary) {
   constexpr idx_t kExactTypeBitSize = sizeof(alp::ExactType<T>) * 8;
-  TrackedVector<uint16_t> sorted_tops(values.size(),
-                                      TrackedAllocator<uint16_t>{budget});
+  TrackedVector<uint16_t> sorted_tops(values.size(), alloc);
   absl::c_transform(values, sorted_tops.begin(), [](auto value) {
     return static_cast<uint16_t>(value >> (kExactTypeBitSize - kCuttingLimit));
   });
   absl::c_sort(sorted_tops);
 
-  auto left_parts = CountLeftParts(budget, sorted_tops, kCuttingLimit);
-  TrackedVector<uint32_t> counts{TrackedAllocator<uint32_t>{budget}};
+  auto left_parts = CountLeftParts(alloc, sorted_tops, kCuttingLimit);
+  TrackedVector<uint32_t> counts{alloc};
   idx_t left_bits = kCuttingLimit;
   double best_dict_size = EstimateLeftParts(
     left_parts, counts, kExactTypeBitSize - kCuttingLimit, values.size());
@@ -229,7 +227,7 @@ double FindBestDictionary(LocalBudget& budget,
     }
   }
 
-  left_parts = CountLeftParts(budget, sorted_tops, left_bits);
+  left_parts = CountLeftParts(alloc, sorted_tops, left_bits);
   absl::c_sort(
     left_parts, [](const AlpRdLeftPartInfo& a, const AlpRdLeftPartInfo& b) {
       return a.count > b.count || (a.count == b.count && a.hash < b.hash);
@@ -292,9 +290,8 @@ void AlpRdDecompress(duckdb::const_data_ptr_t left_encoded,
 
 template<typename T>
 struct AlpRdAnalyzeState {
-  explicit AlpRdAnalyzeState(LocalBudget& budget)
-    : rowgroup_sample{TrackedAllocator<alp::ExactType<T>>{budget}},
-      dictionary{budget} {}
+  explicit AlpRdAnalyzeState(TrackedAllocator<> alloc)
+    : rowgroup_sample{alloc}, dictionary{alloc} {}
 
   idx_t vectors_count = 0;
   idx_t total_values_count = 0;
@@ -358,11 +355,11 @@ template<typename T>
 struct RowGroupSample final : State {
   static constexpr StateId kId = StateId::AlprdSample;
 
-  explicit RowGroupSample(ColumnDataCheckpointData& data) : state{data.budget} {
+  explicit RowGroupSample(ColumnDataCheckpointData& data) : state{data.alloc} {
     for (const auto& chunk : data.rows.chunks) {
       AlpRdSample(state, chunk.data);
     }
-    bits_per_value = FindBestDictionary<T>(data.budget, state.rowgroup_sample,
+    bits_per_value = FindBestDictionary<T>(data.alloc, state.rowgroup_sample,
                                            state.dictionary);
   }
 
@@ -663,7 +660,7 @@ uint64_t AlpRdCompressChunks(const Codec& codec,
 }
 
 template<typename T>
-struct AlpRdVectorState : Tracked {
+struct AlpRdVectorState {
   using Exact = alp::ExactType<T>;
 
   idx_t index = 0;
@@ -766,19 +763,21 @@ struct AlpRdScanState final : SegmentScanState {
   using VectorState = AlpRdVectorState<T>;
 
   AlpRdScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment,
-                 std::unique_ptr<VectorState> vector_state_p = nullptr)
-    : handle{std::move(handle_p)},
+                 TrackedUniquePtr<VectorState> vector_state_p = nullptr)
+    : alloc{segment.ctx.Allocator()},
+      handle{std::move(handle_p)},
       count{segment.count},
       layout{
         ReadAlpRdSegmentLayout<T>(handle.Ptr(), segment.size, count, header)},
       vector_state{std::move(vector_state_p)} {}
 
+  TrackedAllocator<> alloc;
   duckdb::BufferHandle handle;
   idx_t count = 0;
   AlpRdHeader header;
   alp::SegmentLayout layout;
   idx_t total_value_count = 0;
-  std::unique_ptr<VectorState> vector_state;
+  TrackedUniquePtr<VectorState> vector_state;
 };
 
 template<typename T>
@@ -879,8 +878,8 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   SDB_ASSERT(count != 0 && rows[count - 1] < segment.count);
   auto& fetch_state =
     state.GetOrCreateSegmentState<alp::FetchState<AlpRdScanState<T>>>([&] {
-      return std::make_unique<alp::FetchState<AlpRdScanState<T>>>(segment.Pin(),
-                                                                  segment);
+      return MakeScanState<alp::FetchState<AlpRdScanState<T>>>(
+        segment.ctx.Allocator(), segment.Pin(), segment);
     });
   auto* result_data =
     duckdb::FlatVector::GetDataMutableUnsafe<alp::ExactType<T>>(result) +

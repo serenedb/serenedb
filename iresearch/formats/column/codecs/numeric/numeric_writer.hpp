@@ -115,29 +115,28 @@ inline double ScoreOf(uint64_t bytes, size_t rows) noexcept {
 }
 
 struct LeafSamples {
-  explicit LeafSamples(LocalBudget& budget)
-    : frames{TrackedAllocator<uint32_t>{budget}},
-      bytes{TrackedAllocator<TrackedString>{budget}} {}
+  explicit LeafSamples(TrackedAllocator<> alloc)
+    : frames{alloc}, bytes{alloc} {}
 
   TrackedVector<uint32_t> frames;
   TrackedVector<TrackedString> bytes;
 };
 
 struct Analysis {
-  explicit Analysis(LocalBudget& budget)
-    : samples{budget},
+  explicit Analysis(TrackedAllocator<> alloc)
+    : samples{alloc},
       copies{
-        ScratchVector<uint8_t>{TrackedAllocator<std::byte>{budget}},
-        ScratchVector<uint8_t>{TrackedAllocator<std::byte>{budget}},
-        ScratchVector<uint8_t>{TrackedAllocator<std::byte>{budget}},
-        ScratchVector<uint8_t>{TrackedAllocator<std::byte>{budget}},
+        TrackedScratchVector<uint8_t>{alloc},
+        TrackedScratchVector<uint8_t>{alloc},
+        TrackedScratchVector<uint8_t>{alloc},
+        TrackedScratchVector<uint8_t>{alloc},
       } {
     static_assert(kSampleFrames == 4);
   }
 
   LeafSamples samples;
   ByteCodec leaf = ByteCodec::None;
-  ScratchVector<uint8_t> copies[kSampleFrames];
+  TrackedScratchVector<uint8_t> copies[kSampleFrames];
   uint32_t copied = 0;
 };
 
@@ -145,14 +144,14 @@ struct NumericScratch final : State {
   static constexpr StateId kId = StateId::NumericScratch;
 
   explicit NumericScratch(ColumnDataCheckpointData& data)
-    : samples{data.budget},
-      frame{data.Allocator()},
-      shuffled{data.Allocator()},
-      out{data.Allocator()} {}
+    : samples{data.alloc},
+      frame{data.alloc},
+      shuffled{data.alloc},
+      out{data.alloc} {}
 
   LeafSamples samples;
-  ScratchVector<uint8_t> frame;
-  ScratchVector<uint8_t> shuffled;
+  TrackedScratchVector<uint8_t> frame;
+  TrackedScratchVector<uint8_t> shuffled;
   TrackedString out;
 };
 
@@ -169,7 +168,9 @@ uint64_t EstimateLeaf(const Geometry& geometry, uint32_t items,
   const uint64_t total = uint64_t{items} * item_bytes;
   const auto count = std::min<uint32_t>(geometry.frames, kSampleFrames);
   samples.frames.resize(count);
-  samples.bytes.resize(std::min<size_t>(samples.bytes.size(), count));
+  if (samples.bytes.size() > count) {
+    samples.bytes.erase(samples.bytes.begin() + count, samples.bytes.end());
+  }
   while (samples.bytes.size() < count) {
     samples.bytes.emplace_back(samples.bytes.get_allocator());
   }
@@ -211,13 +212,13 @@ class SegmentWriter {
  public:
   using U = Bits<sizeof(T)>;
 
-  SegmentWriter(LocalBudget& budget, Shape shape, const Geometry& geometry,
+  SegmentWriter(TrackedAllocator<> alloc, Shape shape, const Geometry& geometry,
                 uint64_t direct_bytes, std::span<const uint8_t> dictionary,
                 TrackedString& out)
     : _shape{shape},
       _geometry{geometry},
       _out{out},
-      _metas(geometry.frames, TrackedAllocator<NumericFrameMeta>{budget}) {
+      _metas(geometry.frames, alloc) {
     _out.clear();
     if (direct_bytes != 0) {
       _out.reserve(geometry.off_data + direct_bytes);
@@ -396,7 +397,7 @@ class Frames final : public State {
   Frames(ColumnDataCheckpointData& data, double bound)
     : _data{data},
       _transform{data, bound},
-      _analysis{Analysis{data.budget}, Analysis{data.budget}} {}
+      _analysis{Analysis{data.alloc}, Analysis{data.alloc}} {}
 
   double Analyze(double bound, FrameStore store) {
     const auto items = _transform.GetItems();
@@ -462,7 +463,7 @@ class Frames final : public State {
                                      _data.Get<Values<T>>().Scale() > 1);
     const uint64_t raw_bytes = uint64_t{items.count} * item;
     SegmentWriter<T> writer{
-      _data.budget,     Transform::kShape,
+      _data.alloc,      Transform::kShape,
       geometry,         leaf == ByteCodec::None ? raw_bytes : 0,
       items.dictionary, scratch.out};
     const auto* samples = leaf != ByteCodec::None && analysis.leaf == leaf
@@ -619,7 +620,7 @@ class Blocks final : public State {
     SDB_ASSERT(items.stored != 0);
     auto& out = _data.Get<NumericScratch>().out;
     const auto geometry = GeometryOf(items);
-    SegmentWriter<T> writer{_data.budget,       Transform::kShape, geometry,
+    SegmentWriter<T> writer{_data.alloc,        Transform::kShape, geometry,
                             _transform.Bytes(), items.dictionary,  out};
     for (uint32_t f = 0; f < geometry.frames; ++f) {
       const auto begin = f * geometry.per;

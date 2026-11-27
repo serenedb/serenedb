@@ -280,10 +280,10 @@ void Write(std::string_view root, const Terms& terms, Ladder ladder,
   const irs::FlushState state{
     .tracker = tracker,
     .doc_count = rows,
-    .budget = budget,
+    .alloc = irs::TrackedAllocator<>{budget},
   };
-  irs::IdxWriter idx{tracker, budget};
-  irs::term_dict::FieldWriter writer{false, budget};
+  irs::IdxWriter idx{tracker, state.alloc};
+  irs::term_dict::FieldWriter writer{false, state.alloc};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1, 0);
   writer.write(irs::NumericLayout::kNumbers,

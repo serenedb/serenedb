@@ -22,6 +22,9 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/memory_tag.hpp>
 #include <duckdb/storage/buffer/buffer_pool_reservation.hpp>
@@ -82,10 +85,7 @@ class LocalBudget {
   }
 
   void Free(size_t bytes) noexcept {
-    if (bytes >= _used) [[unlikely]] {
-      Release(bytes);
-      return;
-    }
+    SDB_ASSERT(bytes <= _used);
     _used -= bytes;
   }
 
@@ -104,7 +104,6 @@ class LocalBudget {
 
  private:
   void Grow(size_t bytes);
-  void Release(size_t bytes) noexcept;
   void Take(size_t bytes);
 
   MemoryBudget* _parent;
@@ -112,107 +111,117 @@ class LocalBudget {
   size_t _used = 0;
 };
 
-inline constinit LocalBudget kEmpty{gRootBudget};
+inline void* AllocateRaw(size_t bytes, size_t alignment) {
+  if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+    return ::operator new(bytes, std::align_val_t{alignment});
+  }
+  return ::operator new(bytes);
+}
 
-duckdb::Allocator& TrackedDuckAllocator();
-duckdb::Allocator BudgetAllocator(LocalBudget& budget);
+inline void DeallocateRaw(void* p, size_t bytes, size_t alignment) noexcept {
+  if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+    ::operator delete(p, bytes, std::align_val_t{alignment});
+    return;
+  }
+  ::operator delete(p, bytes);
+}
 
-void* TrackedMalloc(LocalBudget& budget, size_t size) noexcept;
-void TrackedFree(LocalBudget& budget, void* p) noexcept;
+void* AllocateHugePages(size_t bytes);
+void FreeHugePages(void* p, size_t bytes) noexcept;
+
+enum class TrackedPolicy : uint8_t {
+  Value,
+  DefaultInit,
+  HugePages,
+};
 
 // NOLINTBEGIN
-template<typename T, typename Base = std::allocator<T>>
-struct TrackedAllocator {
-  static_assert(std::is_empty_v<Base>);
-
+template<typename T = void, TrackedPolicy kPolicy = TrackedPolicy::Value>
+class TrackedAllocator {
+ public:
   using value_type = T;
   using propagate_on_container_copy_assignment = std::false_type;
-  using propagate_on_container_move_assignment = std::true_type;
-  using propagate_on_container_swap = std::true_type;
+  using propagate_on_container_move_assignment = std::false_type;
+  using propagate_on_container_swap = std::false_type;
   using is_always_equal = std::false_type;
 
   template<typename U>
   struct rebind {
-    using other = TrackedAllocator<
-      U, typename std::allocator_traits<Base>::template rebind_alloc<U>>;
+    using other = TrackedAllocator<U, kPolicy>;
   };
 
-  TrackedAllocator() = default;
-  explicit TrackedAllocator(LocalBudget& budget) noexcept : budget{&budget} {}
+  explicit TrackedAllocator(LocalBudget& budget) noexcept : _budget{&budget} {}
 
-  template<typename U, typename B>
-  TrackedAllocator(const TrackedAllocator<U, B>& other) noexcept
-    : budget{other.budget} {}
-
-  TrackedAllocator select_on_container_copy_construction() const noexcept {
-    return {};
-  }
+  template<typename U, TrackedPolicy kOther>
+  TrackedAllocator(const TrackedAllocator<U, kOther>& other) noexcept
+    : _budget{&other.Budget()} {}
 
   T* allocate(size_t n) {
-    budget->Charge(n * sizeof(T));
-    absl::Cleanup release = [&] { budget->Free(n * sizeof(T)); };
-    auto* p = Base{}.allocate(n);
+    static_assert(!std::is_void_v<T>);
+    const auto bytes = n * sizeof(T);
+    _budget->Charge(bytes);
+    absl::Cleanup release = [&] { _budget->Free(bytes); };
+    auto* p = static_cast<T*>(Obtain(bytes));
     std::move(release).Cancel();
     return p;
   }
 
   void deallocate(T* p, size_t n) noexcept {
-    Base{}.deallocate(p, n);
-    budget->Free(n * sizeof(T));
+    const auto bytes = n * sizeof(T);
+    Release(p, bytes);
+    _budget->Free(bytes);
   }
 
   template<typename U, typename... Args>
   void construct(U* p, Args&&... args) {
-    using UBase =
-      typename std::allocator_traits<Base>::template rebind_alloc<U>;
-    UBase base;
-    std::allocator_traits<UBase>::construct(base, p,
-                                            std::forward<Args>(args)...);
+    if constexpr (kPolicy != TrackedPolicy::Value && sizeof...(Args) == 0) {
+      ::new (static_cast<void*>(p)) U;
+    } else {
+      std::construct_at(p, std::forward<Args>(args)...);
+    }
+  }
+
+  LocalBudget& Budget() const noexcept {
+    SDB_ASSERT(_budget);
+    return *_budget;
   }
 
   friend bool operator==(const TrackedAllocator& lhs,
                          const TrackedAllocator& rhs) noexcept {
-    return lhs.budget == rhs.budget;
+    return lhs._budget == rhs._budget;
   }
 
-  LocalBudget* budget = &kEmpty;
+ private:
+  static void* Obtain(size_t bytes) {
+    if constexpr (kPolicy == TrackedPolicy::HugePages) {
+      static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+      return AllocateHugePages(bytes);
+    } else {
+      return AllocateRaw(bytes, alignof(T));
+    }
+  }
+
+  static void Release(T* p, size_t bytes) noexcept {
+    if constexpr (kPolicy == TrackedPolicy::HugePages) {
+      FreeHugePages(p, bytes);
+    } else {
+      DeallocateRaw(p, bytes, alignof(T));
+    }
+  }
+
+  LocalBudget* _budget;
 };
 // NOLINTEND
 
-struct Tracked {
-  static void* operator new(size_t size) {
-    auto charge = ReserveMemory(kMemoryTag, size);
-    auto* p = ::operator new(size);
-    charge.size = 0;
-    return p;
-  }
+duckdb::Allocator DuckAllocator(TrackedAllocator<> alloc);
 
-  static void* operator new(size_t size, std::align_val_t alignment) {
-    auto charge = ReserveMemory(kMemoryTag, size);
-    auto* p = ::operator new(size, alignment);
-    charge.size = 0;
-    return p;
-  }
-
-  static void* operator new(size_t, void* p) noexcept { return p; }
-
-  static void operator delete(void* p, size_t size) noexcept {
-    ::operator delete(p, size);
-    FreeReservedMemory(kMemoryTag, size);
-  }
-
-  static void operator delete(void* p, size_t size,
-                              std::align_val_t alignment) noexcept {
-    ::operator delete(p, size, alignment);
-    FreeReservedMemory(kMemoryTag, size);
-  }
-};
+void* TrackedMalloc(TrackedAllocator<> alloc, size_t size) noexcept;
+void TrackedFree(TrackedAllocator<> alloc, void* p) noexcept;
 
 class MemoryCharge {
  public:
-  MemoryCharge() = default;
-  explicit MemoryCharge(size_t bytes) { Resize(bytes); }
-  MemoryCharge(LocalBudget& budget, size_t bytes) : _budget{&budget} {
+  explicit MemoryCharge(TrackedAllocator<> alloc, size_t bytes = 0)
+    : _budget{&alloc.Budget()} {
     Resize(bytes);
   }
   MemoryCharge(MemoryCharge&& other) noexcept
@@ -245,44 +254,23 @@ class MemoryCharge {
     }
   }
 
-  LocalBudget* _budget = &kEmpty;
+  LocalBudget* _budget;
   size_t _bytes = 0;
 };
 
 template<typename T>
 using TrackedVector = std::vector<T, TrackedAllocator<T>>;
 
+template<typename T>
+using TrackedDeque = std::deque<T, TrackedAllocator<T>>;
+
 using TrackedString =
   std::basic_string<char, std::char_traits<char>, TrackedAllocator<char>>;
 
 using TrackedBstring = basic_string<byte_type, TrackedAllocator<byte_type>>;
 
-template<typename T>
-struct TrackedArrayDelete {
-  size_t size = 0;
-  LocalBudget* budget = &kEmpty;
-
-  void operator()(T* p) const noexcept {
-    std::destroy_n(p, size);
-    TrackedAllocator<T>{*budget}.deallocate(p, size);
-  }
-};
-
-template<typename T>
-using TrackedArray = std::unique_ptr<T[], TrackedArrayDelete<T>>;
-
-template<typename T>
-TrackedArray<T> MakeTrackedArray(size_t size, LocalBudget& budget = kEmpty) {
-  TrackedAllocator<T> allocator{budget};
-  auto* p = allocator.allocate(size);
-  absl::Cleanup release = [&] { allocator.deallocate(p, size); };
-  std::uninitialized_value_construct_n(p, size);
-  std::move(release).Cancel();
-  return TrackedArray<T>{p, TrackedArrayDelete<T>{size, &budget}};
-}
-
 struct TrackedDelete {
-  LocalBudget* budget = &kEmpty;
+  LocalBudget* budget = nullptr;
   size_t size = 0;
 
   template<typename T>
@@ -294,18 +282,30 @@ struct TrackedDelete {
 };
 
 template<typename T>
-using TrackedPtr = std::unique_ptr<T, TrackedDelete>;
+using TrackedUniquePtr = std::unique_ptr<T, TrackedDelete>;
 
 template<typename T, typename... Args>
-TrackedPtr<T> MakeTracked(LocalBudget& budget, Args&&... args) {
+TrackedUniquePtr<T> MakeTrackedUnique(TrackedAllocator<> alloc,
+                                      Args&&... args) {
   static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
-  TrackedAllocator<std::byte> allocator{budget};
-  auto* p = allocator.allocate(sizeof(T));
-  absl::Cleanup release = [&] { allocator.deallocate(p, sizeof(T)); };
+  TrackedAllocator<std::byte> bytes{alloc};
+  auto* p = bytes.allocate(sizeof(T));
+  absl::Cleanup release = [&] { bytes.deallocate(p, sizeof(T)); };
   auto* object =
     std::construct_at(reinterpret_cast<T*>(p), std::forward<Args>(args)...);
   std::move(release).Cancel();
-  return TrackedPtr<T>{object, TrackedDelete{&budget, sizeof(T)}};
+  return TrackedUniquePtr<T>{object, TrackedDelete{&alloc.Budget(), sizeof(T)}};
+}
+
+template<typename T>
+TrackedUniquePtr<T> MakeTrackedUniqueForOverwrite(TrackedAllocator<> alloc) {
+  static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+  TrackedAllocator<std::byte> bytes{alloc};
+  auto* p = bytes.allocate(sizeof(T));
+  absl::Cleanup release = [&] { bytes.deallocate(p, sizeof(T)); };
+  auto* object = ::new (static_cast<void*>(p)) T;
+  std::move(release).Cancel();
+  return TrackedUniquePtr<T>{object, TrackedDelete{&alloc.Budget(), sizeof(T)}};
 }
 
 }  // namespace irs

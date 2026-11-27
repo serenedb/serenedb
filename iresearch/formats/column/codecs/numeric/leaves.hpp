@@ -48,10 +48,10 @@ struct Leaf final : State {
                                    : StateId::NumericZstd;
 
   explicit Leaf(ColumnDataCheckpointData& data)
-    : compressor{data.budget, LeafLevel(data)}, out{data.Allocator()} {}
+    : compressor{data.alloc, LeafLevel(data)}, out{data.alloc} {}
 
   typename Codec::Compressor compressor;
-  ScratchVector<char> out;
+  TrackedScratchVector<char> out;
 };
 
 template<typename Codec>

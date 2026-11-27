@@ -113,8 +113,7 @@ struct PayBuffer {
 
 class BlockGroup {
  public:
-  explicit BlockGroup(LocalBudget& budget)
-    : _data{TrackedAllocator<byte_type>{budget}} {}
+  explicit BlockGroup(TrackedAllocator<> alloc) : _data{alloc} {}
 
   bool Empty() const noexcept { return _blocks == 0; }
 
@@ -184,12 +183,12 @@ class PostingsWriter final {
     doc_id_t docs_count;
   };
 
-  explicit PostingsWriter(LocalBudget& budget)
-    : _index{budget},
-      _docs_charge{budget, 0},
-      _pos_group{budget},
-      _pay_group{budget},
-      _term_docs{TrackedAllocator<doc_id_t>{budget}} {}
+  explicit PostingsWriter(TrackedAllocator<> alloc)
+    : _index{alloc},
+      _docs_charge{alloc},
+      _pos_group{alloc},
+      _pay_group{alloc},
+      _term_docs{alloc} {}
 
   void Prepare(const FlushState& state);
   void BeginField(const FieldProperties& meta);

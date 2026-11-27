@@ -156,7 +156,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
     _file{present ? fs.OpenInputFile(fs.JoinPath(root, FileName(segment_name)),
                                      access)
                   : nullptr},
-    _ctx{db, _file.get()} {
+    _ctx{db, _file.get(), TrackedAllocator<>{_budget}} {
   ColFooter footer;
   if (!_file) {
     Adopt(std::move(footer));
@@ -205,7 +205,9 @@ ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      duckdb::shared_ptr<duckdb::InputFile> file,
                      ColFooter footer)
-  : _db{&db}, _file{std::move(file)}, _ctx{db, _file.get()} {
+  : _db{&db},
+    _file{std::move(file)},
+    _ctx{db, _file.get(), TrackedAllocator<>{_budget}} {
   Adopt(std::move(footer));
 }
 
@@ -237,7 +239,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::vector<NormColumnSpec> norms)
   : _db{&db},
     _file{std::move(norms_file)},
-    _ctx{db, _file.get()},
+    _ctx{db, _file.get(), TrackedAllocator<>{_budget}},
     _owned{std::move(columns)} {
   for (const auto& col : _owned) {
     Index(*col);
@@ -255,7 +257,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
 ColReader::ColReader(const ColReader& base,
                      std::vector<std::shared_ptr<const ColumnReader>> replaced)
   : _db{base._db},
-    _ctx{*base._db},
+    _ctx{*base._db, TrackedAllocator<>{_budget}},
     _base{&base},
     _replaced{std::move(replaced)},
     _norm_by_id{base._norm_by_id} {

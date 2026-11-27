@@ -105,6 +105,16 @@ struct ColFilterSpec {
 // every use goes through Reset(), so one per filter is enough.
 class ColFilterStateCache {
  public:
+  explicit ColFilterStateCache(MemoryBudget& memory) noexcept
+    : _memory{&memory}, _budget{memory} {}
+
+  void Bind(MemoryBudget& memory) {
+    _memory = &memory;
+    _budget.Rebind(memory);
+  }
+
+  TrackedAllocator<> Allocator() noexcept { return TrackedAllocator<>{_budget}; }
+
   duckdb::TableFilterState& State(duckdb::ClientContext& context,
                                   const duckdb::TableFilter& filter);
   bool AdmitsNull(duckdb::ClientContext& context,
@@ -133,6 +143,8 @@ class ColFilterStateCache {
 
   Entry& Find(const duckdb::TableFilter& filter);
 
+  MemoryBudget* _memory;
+  LocalBudget _budget;
   std::vector<Entry> _entries;
 };
 
@@ -307,6 +319,7 @@ class ColFilterChain {
   duckdb::ClientContext* _context = nullptr;
   ColFilterStateCache* _states = nullptr;
   const irs::ColReader* _col_reader = nullptr;
+  const irs::ReadContext* _read_ctx = nullptr;
   // The one walk behind `FilterMask` and `CountMask`: `Keep` writes the
   // survivors to `out`, otherwise the words are left zeroed.
   template<bool Keep>

@@ -481,7 +481,8 @@ TEST(PieceTest, SealsSingleDocumentPieces) {
     auto norms = piece->norms(norm);
     ASSERT_NE(nullptr, norms);
     EXPECT_EQ(3, norms->Get(doc_limits::min()));
-    const ReadContext context{*piece->GetColReader(), /*random_access=*/false};
+    const ReadContext context{*piece->GetColReader(), TestAlloc(),
+                              /*random_access=*/false};
     EXPECT_EQ(DEFAULT_BLOCK_ALLOC_SIZE, context.GetBlockAllocSize());
   }
 }

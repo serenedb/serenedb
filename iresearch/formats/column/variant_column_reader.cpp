@@ -226,7 +226,8 @@ void VariantColumnReader::ReconstructVariantRun(
     rg_meta.unshredded->ScanCount(*vstate.unshredded, result, run, out_off);
   } else {
     auto& intermediate =
-      ResetScratch(vstate.intermediate, rg_meta.intermediate_type);
+      ResetScratch(vstate.intermediate, rg_meta.intermediate_type,
+                   s.ctx->Allocator());
     auto& entries = duckdb::StructVector::GetEntries(intermediate);
     rg_meta.unshredded->ScanCount(*vstate.unshredded, entries[0], run, 0);
     rg_meta.shredded->ScanCount(*vstate.shredded, entries[1], run, 0);
@@ -234,7 +235,8 @@ void VariantColumnReader::ReconstructVariantRun(
     if (in_place) {
       duckdb::VariantUtils::UnshredVariantData(intermediate, result, run);
     } else {
-      auto& scratch = ResetScratch(vs.scratch, result.GetType());
+      auto& scratch =
+        ResetScratch(vs.scratch, result.GetType(), s.ctx->Allocator());
       duckdb::VariantUtils::UnshredVariantData(intermediate, scratch, run);
       duckdb::VectorOperations::Copy(scratch, result, run, 0, out_off);
     }

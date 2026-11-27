@@ -191,7 +191,7 @@ std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
 
 std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
   duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,
-  const IndexFieldOptions* field_options) {
+  const IndexFieldOptions* field_options, TrackedAllocator<> alloc) {
   SDB_ASSERT(absl::c_none_of(sources, [](const MergeSource& s) {
     return HasRemovals(s.reader->Meta());
   }));
@@ -207,7 +207,8 @@ std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
                             ? field_options->GetColumnOptions(id).distinct
                             : DistinctStats::None;
     columns.push_back(
-      HotColumnReader::Concat(db, id, first_col->Type(), distinct, parts));
+      HotColumnReader::Concat(db, id, first_col->Type(), distinct, parts,
+                              alloc));
   }
   return columns;
 }
@@ -220,25 +221,23 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     return true;
   }
 
-  auto& budget = output.Budget();
-  TrackedVector<std::optional<ReadContext>> source_ctxs(
-    sources.size(), TrackedAllocator<std::optional<ReadContext>>{budget});
+  const auto alloc = output.Allocator();
+  TrackedVector<std::optional<ReadContext>> source_ctxs(sources.size(), alloc);
   for (size_t i = 0; i < sources.size(); ++i) {
     if (sources[i].col_reader) {
-      source_ctxs[i].emplace(*sources[i].col_reader);
+      source_ctxs[i].emplace(*sources[i].col_reader, alloc);
     }
   }
 
   DistinctMerger distinct_merger;
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-  TrackedVector<TrackedVector<KeptWindow>> kept_cache{
-    TrackedAllocator<TrackedVector<KeptWindow>>{budget}};
+  TrackedVector<TrackedVector<KeptWindow>> kept_cache{alloc};
   kept_cache.reserve(sources.size());
   for (size_t i = 0; i < sources.size(); ++i) {
-    kept_cache.emplace_back(TrackedAllocator<KeptWindow>{budget});
+    kept_cache.emplace_back(TrackedAllocator<KeptWindow>{alloc});
   }
   auto kept_for = [&](size_t si, const SubReader& reader,
-                      uint64_t pos) -> const TrackedVector<duckdb::sel_t>& {
+                      uint64_t pos) -> std::span<const duckdb::sel_t> {
     auto& windows = kept_cache[si];
     const size_t w = pos / STANDARD_VECTOR_SIZE;
     if (windows.size() <= w) {
@@ -246,7 +245,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     }
     auto& slot = windows[w];
     if (!slot) {
-      slot.emplace(kKeptWindowRows, TrackedAllocator<duckdb::sel_t>{budget});
+      slot.emplace(kKeptWindowRows, alloc);
       const auto first_doc = static_cast<doc_id_t>(pos + doc_limits::min());
       slot->resize(MakeGenericDocsMask(reader.docs_mask())
                      .FillLive(first_doc, STANDARD_VECTOR_SIZE, slot->data()));
@@ -288,7 +287,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       distinct_merger.Begin(opts.distinct);
     }
 
-    ColumnReader::VectorScratch batch_scratch{first_col->Type()};
+    ColumnReader::VectorScratch batch_scratch{first_col->Type(), alloc};
 
     uint64_t out_doc = 0;
     for (size_t si = 0; si < sources.size(); ++si) {
@@ -346,7 +345,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
           }
           out_doc += take;
         } else {
-          const auto& kept_idx = kept_for(si, *s.reader, pos);
+          const auto kept_idx = kept_for(si, *s.reader, pos);
           duckdb::idx_t kept = 0;
           for (const auto i : kept_idx) {
             if (i >= take) {

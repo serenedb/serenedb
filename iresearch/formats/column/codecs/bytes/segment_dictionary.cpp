@@ -58,7 +58,7 @@ void TrainDictionary(std::string_view frames, std::span<const size_t> sizes,
                      size_t cap, TrackedString& dictionary) {
   SDB_ASSERT(std::in_range<unsigned>(sizes.size()));
   const auto bytes = SegmentDictionaryBytes(frames.size(), cap);
-  const MemoryCharge scratch{*dictionary.get_allocator().budget,
+  const MemoryCharge scratch{dictionary.get_allocator(),
                              TrainScratchBytes(sizes.size(), bytes)};
   dictionary.resize_and_overwrite(bytes, [&](char* buf, size_t size) {
     const auto n = ZDICT_trainFromBuffer_fastCover(

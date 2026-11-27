@@ -173,17 +173,17 @@ struct Runs final : State {
     MeasureRuns(input, *this);
   }
 
-  Runs(ColumnDataCheckpointData& data, ScratchVector<U>&& located,
-       ScratchVector<uint32_t>&& located_rows)
+  Runs(ColumnDataCheckpointData& data, TrackedScratchVector<U>&& located,
+       TrackedScratchVector<uint32_t>&& located_rows)
     : values{std::move(located)},
       lengths{data.Allocator()},
       rows{std::move(located_rows)} {
     MeasureRuns(data.Get<Values<T>>(), *this);
   }
 
-  ScratchVector<U> values;
-  ScratchVector<uint32_t> lengths;
-  ScratchVector<uint32_t> rows;
+  TrackedScratchVector<U> values;
+  TrackedScratchVector<uint32_t> lengths;
+  TrackedScratchVector<uint32_t> rows;
 };
 
 template<typename T>
@@ -217,7 +217,7 @@ class Rle {
   }
 
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
-                                 ScratchVector<uint8_t>& scratch) {
+                                 TrackedScratchVector<uint8_t>& scratch) {
     scratch.resize(size_t{count} * (_stored + _run_width));
     Narrow<sizeof(T)>(count, _stored, scratch.data(),
                       [v = _runs.values.data() + begin, lo = _lo](size_t r) {
@@ -257,8 +257,8 @@ class RleBitpacking {
 
   RleBitpacking(ColumnDataCheckpointData& data, double)
     : _runs{data.Get<Runs<T>>()},
-      _value_blocks{data.budget},
-      _length_blocks{data.budget} {
+      _value_blocks{data.alloc},
+      _length_blocks{data.alloc} {
     if (_runs.lengths.empty()) {
       return;
     }
@@ -331,11 +331,14 @@ class RunsReader final : public FrameReader<T> {
 
  public:
   RunsReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-             CodecType codec, const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, codec, slot},
+             CodecType codec, TrackedAllocator<> alloc,
+             const ReadContext::CacheSlot& slot = {})
+    : Base{base, frames, codec, alloc, slot},
       _own{this->Packed()
              ? RunsHeader{}
-             : duckdb::Load<RunsHeader>(base + OwnHeaderOffset(frames.flags))} {
+             : duckdb::Load<RunsHeader>(base + OwnHeaderOffset(frames.flags))},
+      _values{alloc},
+      _ends{alloc} {
     if (!(this->Packed() ||
           (NumericWidth(_own.run_width) && _own.run_width <= sizeof(uint32_t))))
       [[unlikely]] {
@@ -598,8 +601,8 @@ class RunsReader final : public FrameReader<T> {
   }
 
   RunsHeader _own;
-  ScratchVector<U> _values;
-  ScratchVector<uint32_t> _ends;
+  TrackedScratchVector<U> _values;
+  TrackedScratchVector<uint32_t> _ends;
   uint64_t _length_bound = 0;
   uint32_t _hint = 0;
   bool _long_runs = false;

@@ -56,7 +56,8 @@ using FooterReader =
 
 void WriteFooter(duckdb::BufferedFileWriter& out);
 
-void WriteFooter(duckdb::BufferedFileWriter& out, FooterWriter write);
+void WriteFooter(duckdb::BufferedFileWriter& out, TrackedAllocator<> alloc,
+                 FooterWriter write);
 
 Footer ReadFooter(const duckdb::InputFile& file, std::string_view name);
 
@@ -66,7 +67,7 @@ Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,
                                                        std::string_view name,
-                                                       LocalBudget& budget);
+                                                       TrackedAllocator<> alloc);
 
 std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
   const FlushState& state, std::string_view ext, uint8_t kind);

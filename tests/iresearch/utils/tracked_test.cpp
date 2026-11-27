@@ -111,29 +111,15 @@ class MemoryLimit {
   size_t _old;
 };
 
-struct Object : irs::Tracked {
-  uint64_t words[64];
-};
-
-struct Huge : irs::Tracked {
-  uint8_t bytes[1024 * kMiB];
-};
-
 TEST(TrackedTest, VectorChargesItsCapacity) {
   const auto base = TrackedMemory();
   {
-    irs::TrackedVector<uint64_t> values;
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::TrackedVector<uint64_t> values{irs::TrackedAllocator<>{budget}};
     values.reserve(kMiB);
+    EXPECT_EQ(8 * kMiB, budget.Used());
     EXPECT_EQ(base + 8 * kMiB, TrackedMemory());
   }
-  EXPECT_EQ(base, TrackedMemory());
-}
-
-TEST(TrackedTest, ObjectChargesItsSize) {
-  const auto base = TrackedMemory();
-  auto object = std::make_unique<Object>();
-  EXPECT_EQ(base + sizeof(Object), TrackedMemory());
-  object.reset();
   EXPECT_EQ(base, TrackedMemory());
 }
 
@@ -264,7 +250,8 @@ TEST(TrackedTest, ArenaAlignsOverAlignedObjects) {
   struct alignas(64) Wide {
     uint8_t bytes[64];
   };
-  irs::MemoryArena arena;
+  irs::LocalBudget budget{irs::gRootBudget};
+  irs::MemoryArena arena{irs::TrackedAllocator<>{budget}};
   arena.Allocate(3, 1);
   auto* wide = arena.Allocate<Wide>(2);
   EXPECT_EQ(0, reinterpret_cast<uintptr_t>(wide) % alignof(Wide));
@@ -276,8 +263,10 @@ TEST(TrackedTest, ArenaAlignsOverAlignedObjects) {
 TEST(TrackedTest, StringChargesItsCapacity) {
   const auto base = TrackedMemory();
   {
-    irs::TrackedString text;
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::TrackedString text{irs::TrackedAllocator<>{budget}};
     text.reserve(kMiB);
+    EXPECT_LE(kMiB, budget.Used());
     EXPECT_LE(base + static_cast<int64_t>(kMiB), TrackedMemory());
   }
   EXPECT_EQ(base, TrackedMemory());
@@ -286,15 +275,19 @@ TEST(TrackedTest, StringChargesItsCapacity) {
 TEST(TrackedTest, ChargeFollowsItsSize) {
   const auto base = TrackedMemory();
   {
-    irs::MemoryCharge charge{kMiB};
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MemoryCharge charge{irs::TrackedAllocator<>{budget}, kMiB};
+    EXPECT_EQ(kMiB, budget.Used());
     EXPECT_EQ(base + kMiB, TrackedMemory());
     charge.Resize(4 * kMiB);
+    EXPECT_EQ(4 * kMiB, budget.Used());
     EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
     charge.Resize(kMiB / 2);
-    EXPECT_EQ(base + kMiB / 2, TrackedMemory());
+    EXPECT_EQ(kMiB / 2, budget.Used());
+    EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
     irs::MemoryCharge moved{std::move(charge)};
     EXPECT_EQ(0, charge.Bytes());
-    EXPECT_EQ(base + kMiB / 2, TrackedMemory());
+    EXPECT_EQ(kMiB / 2, budget.Used());
   }
   EXPECT_EQ(base, TrackedMemory());
 }
@@ -302,42 +295,39 @@ TEST(TrackedTest, ChargeFollowsItsSize) {
 TEST(TrackedTest, ChargeOverTheLimitThrows) {
   const auto base = TrackedMemory();
   {
+    irs::LocalBudget budget{irs::gRootBudget};
     MemoryLimit limit{16 * kMiB};
-    irs::MemoryCharge charge{kMiB};
+    irs::MemoryCharge charge{irs::TrackedAllocator<>{budget}, kMiB};
     EXPECT_THROW(charge.Resize(1024 * kMiB), duckdb::OutOfMemoryException);
     EXPECT_EQ(kMiB, charge.Bytes());
+    EXPECT_EQ(kMiB, budget.Used());
   }
-  EXPECT_EQ(base, TrackedMemory());
-}
-
-TEST(TrackedTest, ArrayDestroysItsElements) {
-  const auto base = TrackedMemory();
-  auto vectors = irs::MakeTrackedArray<irs::TrackedVector<uint64_t>>(4);
-  for (size_t i = 0; i != 4; ++i) {
-    vectors[i].reserve(kMiB);
-  }
-  EXPECT_LE(base + 32 * kMiB, TrackedMemory());
-  vectors.reset();
   EXPECT_EQ(base, TrackedMemory());
 }
 
 TEST(TrackedTest, DuckAllocatorChargesItsAllocations) {
-  auto& allocator = irs::TrackedDuckAllocator();
   const auto base = TrackedMemory();
-  auto* data = allocator.AllocateData(kMiB);
-  EXPECT_EQ(base + kMiB, TrackedMemory());
-  data = allocator.ReallocateData(data, kMiB, 4 * kMiB);
-  EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
-  data = allocator.ReallocateData(data, 4 * kMiB, kMiB / 2);
-  EXPECT_EQ(base + kMiB / 2, TrackedMemory());
-  allocator.FreeData(data, kMiB / 2);
+  {
+    irs::LocalBudget budget{irs::gRootBudget};
+    auto allocator = irs::DuckAllocator(irs::TrackedAllocator<>{budget});
+    auto* data = allocator.AllocateData(kMiB);
+    EXPECT_EQ(kMiB, budget.Used());
+    data = allocator.ReallocateData(data, kMiB, 4 * kMiB);
+    EXPECT_EQ(4 * kMiB, budget.Used());
+    EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
+    data = allocator.ReallocateData(data, 4 * kMiB, kMiB / 2);
+    EXPECT_EQ(kMiB / 2, budget.Used());
+    allocator.FreeData(data, kMiB / 2);
+    EXPECT_EQ(0, budget.Used());
+  }
   EXPECT_EQ(base, TrackedMemory());
 }
 
 TEST(TrackedTest, DuckAllocatorOverTheLimitThrows) {
-  auto& allocator = irs::TrackedDuckAllocator();
   const auto base = TrackedMemory();
   {
+    irs::LocalBudget budget{irs::gRootBudget};
+    auto allocator = irs::DuckAllocator(irs::TrackedAllocator<>{budget});
     MemoryLimit limit{16 * kMiB};
     EXPECT_THROW(allocator.AllocateData(1024 * kMiB),
                  duckdb::OutOfMemoryException);
@@ -354,10 +344,13 @@ TEST(TrackedTest, DuckAllocatorOverTheLimitThrows) {
   EXPECT_EQ(base, TrackedMemory());
 }
 
-TEST(TrackedTest, HugePageVectorChargesItsCapacity) {
+TEST(TrackedTest, TrackedHugePageVectorChargesItsCapacity) {
   const auto base = TrackedMemory();
   {
-    irs::HugePageVector<uint8_t> values(4 * kMiB);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::TrackedHugePageVector<uint8_t> values(4 * kMiB,
+                                               irs::TrackedAllocator<>{budget});
+    EXPECT_EQ(4 * kMiB, budget.Used());
     EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
   }
   EXPECT_EQ(base, TrackedMemory());
@@ -366,11 +359,12 @@ TEST(TrackedTest, HugePageVectorChargesItsCapacity) {
 TEST(TrackedTest, AllocationOverTheLimitThrows) {
   const auto base = TrackedMemory();
   {
+    irs::LocalBudget budget{irs::gRootBudget};
     MemoryLimit limit{16 * kMiB};
-    irs::TrackedVector<uint8_t> values;
+    irs::TrackedVector<uint8_t> values{irs::TrackedAllocator<>{budget}};
     EXPECT_THROW(values.reserve(1024 * kMiB), duckdb::OutOfMemoryException);
     EXPECT_EQ(0, values.capacity());
-    EXPECT_THROW(std::make_unique<Huge>(), duckdb::OutOfMemoryException);
+    EXPECT_EQ(0, budget.Used());
   }
   EXPECT_EQ(base, TrackedMemory());
 }
@@ -388,9 +382,9 @@ TEST(TrackedTest, BudgetedVectorDrawsFromItsBudget) {
       EXPECT_EQ(base + 8 * kMiB, TrackedMemory());
       EXPECT_EQ(4 * kMiB, budget.Available());
       irs::TrackedVector<uint64_t> moved{std::move(values)};
-      EXPECT_EQ(&budget, moved.get_allocator().budget);
+      EXPECT_EQ(&budget, &moved.get_allocator().Budget());
       irs::TrackedVector<uint64_t> copied{moved};
-      EXPECT_EQ(&irs::kEmpty, copied.get_allocator().budget);
+      EXPECT_EQ(&budget, &copied.get_allocator().Budget());
     }
     EXPECT_EQ(base + 8 * kMiB, TrackedMemory());
     EXPECT_EQ(8 * kMiB, budget.Available());
@@ -403,7 +397,7 @@ TEST(TrackedTest, BudgetOverflowChargesThePool) {
   {
     irs::LocalBudget budget{irs::gRootBudget};
     budget.Reserve(kMiB);
-    irs::MemoryCharge charge{budget, 4 * kMiB};
+    irs::MemoryCharge charge{irs::TrackedAllocator<>{budget}, 4 * kMiB};
     EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
     EXPECT_EQ(0, budget.Available());
     charge.Resize(0);
@@ -420,7 +414,7 @@ TEST(TrackedTest, BudgetChargesItsSessionOnlyForWhatItHolds) {
   irs::MemoryBudget session{irs::MemoryBudget::kUnlimited - 1};
   {
     irs::LocalBudget budget{session};
-    irs::MemoryCharge charge{budget, 3 * kMiB};
+    irs::MemoryCharge charge{irs::TrackedAllocator<>{budget}, 3 * kMiB};
     EXPECT_EQ(3 * kMiB, session.Used());
     EXPECT_EQ(base + 3 * kMiB, TrackedMemory());
     charge.Resize(0);
@@ -439,13 +433,14 @@ TEST(TrackedTest, SessionRefusesPastItsLimit) {
   {
     irs::MemoryBudget session{kMiB};
     irs::LocalBudget budget{session};
-    irs::MemoryCharge charge{budget, kMiB};
-    EXPECT_THROW(irs::MemoryCharge(budget, 1), duckdb::OutOfMemoryException);
+    const irs::TrackedAllocator<> alloc{budget};
+    irs::MemoryCharge charge{alloc, kMiB};
+    EXPECT_THROW(irs::MemoryCharge(alloc, 1), duckdb::OutOfMemoryException);
     EXPECT_EQ(kMiB, session.Used());
     EXPECT_EQ(kMiB, budget.Used());
     EXPECT_THROW(session.Admit(1), duckdb::OutOfMemoryException);
     session.SetLimit(2 * kMiB);
-    irs::MemoryCharge more{budget, kMiB};
+    irs::MemoryCharge more{alloc, kMiB};
     EXPECT_EQ(2 * kMiB, session.Used());
     EXPECT_EQ(base + 2 * kMiB, TrackedMemory());
   }
@@ -457,15 +452,16 @@ TEST(TrackedTest, BudgetMovesBetweenParentsWithoutTouchingThePool) {
   irs::MemoryBudget session{2 * kMiB};
   {
     irs::LocalBudget budget{irs::gRootBudget};
-    irs::MemoryCharge charge{budget, kMiB};
+    const irs::TrackedAllocator<> alloc{budget};
+    irs::MemoryCharge charge{alloc, kMiB};
     budget.Rebind(session);
     EXPECT_EQ(kMiB, session.Used());
     EXPECT_EQ(base + kMiB, TrackedMemory());
-    EXPECT_THROW(irs::MemoryCharge(budget, 2 * kMiB),
+    EXPECT_THROW(irs::MemoryCharge(alloc, 2 * kMiB),
                  duckdb::OutOfMemoryException);
     budget.Return();
     EXPECT_EQ(0, session.Used());
-    irs::MemoryCharge more{budget, 2 * kMiB};
+    irs::MemoryCharge more{alloc, 2 * kMiB};
     EXPECT_EQ(base + 3 * kMiB, TrackedMemory());
     EXPECT_THROW(budget.Rebind(session), duckdb::OutOfMemoryException);
     EXPECT_EQ(0, session.Used());
@@ -474,7 +470,7 @@ TEST(TrackedTest, BudgetMovesBetweenParentsWithoutTouchingThePool) {
   EXPECT_EQ(base, TrackedMemory());
 }
 
-TEST(TrackedTest, TrackedPtrGivesItsBytesBackToItsBudget) {
+TEST(TrackedTest, TrackedUniquePtrGivesItsBytesBackToItsBudget) {
   struct Base {
     virtual ~Base() = default;
   };
@@ -483,9 +479,10 @@ TEST(TrackedTest, TrackedPtrGivesItsBytesBackToItsBudget) {
   };
   irs::LocalBudget budget{irs::gRootBudget};
   {
-    irs::TrackedPtr<Base> object = irs::MakeTracked<Derived>(budget);
+    const irs::TrackedAllocator<> alloc{budget};
+    irs::TrackedUniquePtr<Base> object = irs::MakeTrackedUnique<Derived>(alloc);
     EXPECT_EQ(sizeof(Derived), budget.Used());
-    auto other = irs::MakeTracked<Derived>(budget);
+    auto other = irs::MakeTrackedUnique<Derived>(alloc);
     EXPECT_EQ(2 * sizeof(Derived), budget.Used());
     object = std::move(other);
     EXPECT_EQ(sizeof(Derived), budget.Used());
@@ -519,7 +516,7 @@ TEST(TrackedTest, LentBytesLeaveTheBudgetForAnotherTag) {
 TEST(TrackedTest, ReserveCountsOnlyWhatIsAvailable) {
   irs::LocalBudget budget{irs::gRootBudget};
   budget.Reserve(2 * kMiB);
-  irs::MemoryCharge charge{budget, 2 * kMiB};
+  irs::MemoryCharge charge{irs::TrackedAllocator<>{budget}, 2 * kMiB};
   budget.Reserve(kMiB);
   EXPECT_EQ(3 * kMiB, budget.Held());
   budget.Reserve(kMiB);
@@ -527,9 +524,10 @@ TEST(TrackedTest, ReserveCountsOnlyWhatIsAvailable) {
 }
 
 TEST(TrackedTest, HashSetSurvivesAFailedGrowth) {
+  irs::LocalBudget budget{irs::gRootBudget};
   absl::flat_hash_set<uint64_t, absl::Hash<uint64_t>, std::equal_to<>,
                       irs::TrackedAllocator<uint64_t>>
-    set;
+    set{irs::TrackedAllocator<uint64_t>{budget}};
   {
     MemoryLimit limit{0};
     EXPECT_THROW(set.reserve(kMiB), duckdb::OutOfMemoryException);
@@ -552,7 +550,7 @@ TEST(TrackedTest, BudgetFreesWhatIsReturnedAfterItsRelease) {
   irs::LocalBudget budget{irs::gRootBudget};
   budget.Reserve(4 * kMiB);
   {
-    irs::MemoryCharge charge{budget, 3 * kMiB};
+    irs::MemoryCharge charge{irs::TrackedAllocator<>{budget}, 3 * kMiB};
     budget.Trim();
     EXPECT_EQ(base + 3 * kMiB, TrackedMemory());
   }
@@ -566,13 +564,16 @@ TEST(TrackedTest, BudgetedAllocationPassesAtTheLimit) {
   const auto base = TrackedMemory();
   {
     irs::LocalBudget budget{irs::gRootBudget};
+    irs::LocalBudget empty{irs::gRootBudget};
     budget.Reserve(8 * kMiB);
     MemoryLimit limit{0};
-    EXPECT_THROW(irs::MemoryCharge{kMiB}, duckdb::OutOfMemoryException);
+    EXPECT_THROW(irs::MemoryCharge(irs::TrackedAllocator<>{empty}, kMiB),
+                 duckdb::OutOfMemoryException);
     EXPECT_THROW(budget.Reserve(16 * kMiB), duckdb::OutOfMemoryException);
     EXPECT_EQ(8 * kMiB, budget.Held());
-    auto array = irs::MakeTrackedArray<uint64_t>(kMiB / 2, budget);
-    auto allocator = irs::BudgetAllocator(budget);
+    irs::TrackedVector<uint64_t> array(kMiB / 2,
+                                       irs::TrackedAllocator<uint64_t>{budget});
+    auto allocator = irs::DuckAllocator(irs::TrackedAllocator<>{budget});
     auto* data = allocator.AllocateData(2 * kMiB);
     allocator.FreeData(data, 2 * kMiB);
     EXPECT_EQ(4 * kMiB, budget.Available());
@@ -630,24 +631,16 @@ TEST(TrackedTest, BufferAllocatorReallocOverTheLimitThrows) {
     duckdb::OutOfMemoryException);
 }
 
-TEST(TrackedTest, MallocChargesUntilFreed) {
-  const auto base = TrackedMemory();
-  auto* p = irs::TrackedMalloc(irs::kEmpty, kMiB);
-  ASSERT_NE(nullptr, p);
-  EXPECT_LE(base + static_cast<int64_t>(kMiB), TrackedMemory());
-  irs::TrackedFree(irs::kEmpty, p);
-  EXPECT_EQ(base, TrackedMemory());
-}
-
 TEST(TrackedTest, MallocChargesItsBudget) {
   const auto base = TrackedMemory();
   {
     irs::LocalBudget budget{irs::gRootBudget};
-    auto* p = irs::TrackedMalloc(budget, kMiB);
+    const irs::TrackedAllocator<> alloc{budget};
+    auto* p = irs::TrackedMalloc(alloc, kMiB);
     ASSERT_NE(nullptr, p);
     EXPECT_LE(kMiB, budget.Used());
     EXPECT_EQ(base + static_cast<int64_t>(budget.Held()), TrackedMemory());
-    irs::TrackedFree(budget, p);
+    irs::TrackedFree(alloc, p);
     EXPECT_EQ(0, budget.Used());
   }
   EXPECT_EQ(base, TrackedMemory());
@@ -656,8 +649,11 @@ TEST(TrackedTest, MallocChargesItsBudget) {
 TEST(TrackedTest, MallocOverTheLimitReturnsNull) {
   const auto base = TrackedMemory();
   {
+    irs::LocalBudget budget{irs::gRootBudget};
     MemoryLimit limit{16 * kMiB};
-    EXPECT_EQ(nullptr, irs::TrackedMalloc(irs::kEmpty, 1024 * kMiB));
+    EXPECT_EQ(nullptr,
+              irs::TrackedMalloc(irs::TrackedAllocator<>{budget}, 1024 * kMiB));
+    EXPECT_EQ(0, budget.Used());
   }
   EXPECT_EQ(base, TrackedMemory());
 }
@@ -696,7 +692,8 @@ TEST(TrackedTest, FsstEncoderChargesItsTables) {
   std::string out(4 * 64 * views.size(), '\0');
   const auto base = TrackedMemory();
   {
-    fsst::Encoder<fsst::Fsst8> encoder;
+    irs::LocalBudget budget{irs::gRootBudget};
+    fsst::Encoder<fsst::Fsst8> encoder{irs::TrackedAllocator<>{budget}};
     encoder.Encode(views, skip, out.data(), out.size(), lengths);
     EXPECT_LE(
       base + static_cast<int64_t>(fsst::Fsst8Footprint(views.size()).kept),
@@ -708,7 +705,9 @@ TEST(TrackedTest, FsstEncoderChargesItsTables) {
 TEST(TrackedTest, Lz4HighCompressionStateIsCharged) {
   const auto base = TrackedMemory();
   {
-    irs::codecs::Lz4::Compressor compressor{irs::kEmpty, LZ4HC_CLEVEL_DEFAULT};
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::codecs::Lz4::Compressor compressor{irs::TrackedAllocator<>{budget},
+                                            LZ4HC_CLEVEL_DEFAULT};
     EXPECT_LE(base + static_cast<int64_t>(sizeof(LZ4_streamHC_t)),
               TrackedMemory());
   }
@@ -720,7 +719,8 @@ TEST(TrackedTest, ZstdContextChargesItsWorkspace) {
   std::string out(irs::codecs::Zstd::Bound(raw.size()), '\0');
   const auto base = TrackedMemory();
   {
-    irs::codecs::Zstd::Compressor compressor{irs::kEmpty, 3};
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::codecs::Zstd::Compressor compressor{irs::TrackedAllocator<>{budget}, 3};
     compressor.Compress(raw.data(), raw.size(), out.data(), out.size());
     EXPECT_LT(base, TrackedMemory());
   }
@@ -732,7 +732,9 @@ TEST(TrackedTest, ZstdOverTheLimitThrowsOutOfMemory) {
   std::string out(irs::codecs::Zstd::Bound(raw.size()), '\0');
   const auto base = TrackedMemory();
   {
-    irs::codecs::Zstd::Compressor compressor{irs::kEmpty, 19};
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::codecs::Zstd::Compressor compressor{irs::TrackedAllocator<>{budget},
+                                             19};
     MemoryLimit limit{kMiB / 4};
     EXPECT_THROW(
       compressor.Compress(raw.data(), raw.size(), out.data(), out.size()),
@@ -744,7 +746,8 @@ TEST(TrackedTest, ZstdOverTheLimitThrowsOutOfMemory) {
 TEST(TrackedTest, ZxcContextIsCharged) {
   const auto base = TrackedMemory();
   {
-    irs::codecs::Zxc::Compressor compressor{irs::kEmpty, 3};
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::codecs::Zxc::Compressor compressor{irs::TrackedAllocator<>{budget}, 3};
     EXPECT_LE(base + static_cast<int64_t>(
                        zxc_estimate_cctx_size(ZXC_BLOCK_SIZE_DEFAULT, 3)),
               TrackedMemory());
@@ -758,7 +761,9 @@ TEST(TrackedTest, TextColumnCompressionOverTheLimitThrows) {
   const auto texts = Texts(64 * 1024, 64);
   const auto base = TrackedMemory();
   {
-    irs::ColWriter writer{db, dir.Tracker("seg")};
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::ColWriter writer{db, dir.Tracker("seg"),
+                          irs::TrackedAllocator<>{budget}};
     auto& column = writer.OpenColumn(1, duckdb::LogicalType::VARCHAR);
     for (size_t at = 0; at < texts.size(); at += STANDARD_VECTOR_SIZE) {
       const auto take = static_cast<duckdb::idx_t>(

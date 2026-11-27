@@ -46,8 +46,9 @@ constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
 constexpr duckdb::field_id_t kFieldMeta = 1;
 
 void WritePackedMeta(duckdb::BinarySerializer& meta, duckdb::WriteStream& out,
-                     FooterWriter write) {
-  duckdb::MemoryStream raw{TrackedDuckAllocator()};
+                     FooterWriter write, TrackedAllocator<> alloc) {
+  auto allocator = DuckAllocator(alloc);
+  duckdb::MemoryStream raw{allocator};
   duckdb::BinarySerializer serializer{raw};
   serializer.Begin();
   write(serializer);
@@ -84,23 +85,15 @@ void ReadMeta(duckdb::BinaryDeserializer& meta, duckdb::InputFileReader& stream,
   deserializer.End();
 }
 
-void WriteFooterImpl(duckdb::BufferedFileWriter& out,
-                     const FooterWriter* write) {
+void WriteFooterImpl(duckdb::BufferedFileWriter& out, const FooterWriter* meta) {
   const uint32_t data_crc32c = out.Checksum();
   const auto begin = out.Position();
   duckdb::BinarySerializer serializer{out};
   serializer.Begin();
   serializer.WritePropertyWithDefault<uint32_t>(kFieldDataCrc32c, "data_crc32c",
                                                 data_crc32c, 0);
-  if (write) {
-    serializer.WriteObject(kFieldMeta, "meta",
-                           [&](duckdb::BinarySerializer& meta) {
-                             SDB_IF_FAILURE("irs::FooterMetaUnpacked") {
-                               (*write)(meta);
-                               return;
-                             }
-                             WritePackedMeta(meta, out, *write);
-                           });
+  if (meta) {
+    serializer.WriteObject(kFieldMeta, "meta", *meta);
   }
   serializer.End();
   const auto size = out.Position() - begin;
@@ -176,8 +169,17 @@ void WriteFooter(duckdb::BufferedFileWriter& out) {
   WriteFooterImpl(out, nullptr);
 }
 
-void WriteFooter(duckdb::BufferedFileWriter& out, FooterWriter write) {
-  WriteFooterImpl(out, &write);
+void WriteFooter(duckdb::BufferedFileWriter& out, TrackedAllocator<> alloc,
+                 FooterWriter write) {
+  const auto pack = [&](duckdb::BinarySerializer& meta) {
+    SDB_IF_FAILURE("irs::FooterMetaUnpacked") {
+      write(meta);
+      return;
+    }
+    WritePackedMeta(meta, out, write, alloc);
+  };
+  const FooterWriter meta{pack};
+  WriteFooterImpl(out, &meta);
 }
 
 Footer ReadFooter(const duckdb::InputFile& file, std::string_view name) {
@@ -192,13 +194,11 @@ Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,
                                                        std::string_view name,
-                                                       LocalBudget& budget) {
+                                                       TrackedAllocator<> alloc) {
   auto path = fs.JoinPath(root, name);
   auto writer = fs.OpenFileWriter(path);
-  if (&budget != &kEmpty) {
-    writer->FundFrom(
-      budget.Lend(duckdb::MemoryTag::EXTERNAL_FILE_CACHE, kOutputBlockBytes));
-  }
+  writer->FundFrom(alloc.Budget().Lend(duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
+                                       kOutputBlockBytes));
   return std::make_unique<duckdb::BufferedFileWriter>(fs, std::move(path),
                                                       std::move(writer));
 }
@@ -207,7 +207,7 @@ std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
   const FlushState& state, std::string_view ext, uint8_t kind) {
   auto& tracker = state.tracker;
   auto out = OpenOutput(tracker.Fs(), tracker.Root(),
-                        FileName(tracker.Name(), ext), state.budget);
+                        FileName(tracker.Name(), ext), state.alloc);
   tracker.Add(kind);
   return out;
 }

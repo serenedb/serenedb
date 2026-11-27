@@ -56,7 +56,7 @@ AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows);
 class ColWriter final {
  public:
   ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
-            WriteTier tier = WriteTier::Flush);
+            TrackedAllocator<> alloc, WriteTier tier = WriteTier::Flush);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -66,8 +66,7 @@ class ColWriter final {
 
   void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
 
-  void SetBudget(LocalBudget& budget) noexcept { _budget = &budget; }
-  LocalBudget& Budget() const noexcept { return *_budget; }
+  TrackedAllocator<> Allocator() const noexcept { return _alloc; }
 
   static constexpr size_t kSealBound =
     2 * duckdb::Storage::MAX_BLOCK_ALLOC_SIZE;
@@ -149,8 +148,7 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  LocalBudget _own_budget{gRootBudget};
-  LocalBudget* _budget = &_own_budget;
+  TrackedAllocator<> _alloc;
   std::unique_ptr<duckdb::BufferedFileWriter> _out;
   std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;

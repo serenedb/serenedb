@@ -46,8 +46,8 @@ bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept {
 }
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
-  const AnnInfo::Quantizer& quant, uint32_t d, VectorMetric metric,
-  uint32_t pq_niter, bool row_major, LocalBudget& budget) {
+  TrackedAllocator<> alloc, const AnnInfo::Quantizer& quant, uint32_t d,
+  VectorMetric metric, uint32_t pq_niter, bool row_major) {
   switch (quant.kind) {
     case VectorQuantization::None:
       return quantizers::MakePanoramaWriter(d, metric);
@@ -60,7 +60,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
       return quantizers::MakeScalarWriter(d, quant.kind);
     case VectorQuantization::PQ:
       return quantizers::MakePqWriter(metric, d, quant.pq_m, pq_niter,
-                                      row_major, budget);
+                                      row_major, alloc);
     case VectorQuantization::TQ:
       return quantizers::MakeTurboQuantWriter(metric, d, quant.nb_bits,
                                               quant.half_bit, row_major);
@@ -129,8 +129,8 @@ size_t QuantizerTrainSamples(const AnnInfo::Quantizer& quant, uint32_t d,
 }
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
-  VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric, bool row_major, LocalBudget& budget) {
+  MemoryBudget& parent, VectorQuantization quant, uint32_t d,
+  std::span<const byte_type> stats, VectorMetric metric, bool row_major) {
   switch (quant) {
     case VectorQuantization::None:
       return quantizers::MakePanoramaStats(metric, d, stats);
@@ -142,7 +142,7 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
     case VectorQuantization::BF16:
       return quantizers::MakeScalarStats(metric, d, quant, stats);
     case VectorQuantization::PQ:
-      return quantizers::MakePqStats(metric, d, stats, row_major, budget);
+      return quantizers::MakePqStats(metric, d, stats, row_major, parent);
     case VectorQuantization::TQ:
       return quantizers::MakeTurboQuantStats(metric, d, stats, row_major);
     case VectorQuantization::RaBitQ:
@@ -156,12 +156,13 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
 }
 
 std::shared_ptr<const QuantizerStats> ReadQuantizerStats(
-  duckdb::InputFileReader& in, VectorQuantization quant, uint32_t d,
-  VectorMetric metric, bool row_major) {
+  MemoryBudget& parent, duckdb::InputFileReader& in, VectorQuantization quant,
+  uint32_t d, VectorMetric metric, bool row_major) {
   const size_t size = in.Read<uint64_t>();
   const auto stats = in.Pin(in.Position(), size);
   in.Skip(size);
-  return MakeQuantizerStats(quant, d, {stats.Ptr(), size}, metric, row_major);
+  return MakeQuantizerStats(parent, quant, d, {stats.Ptr(), size}, metric,
+                            row_major);
 }
 
 void QuantizerReader::ComputeGathered(const byte_type* base,

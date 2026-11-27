@@ -248,8 +248,7 @@ void CollectSourceLeaves(const duckdb::LogicalType& type,
     leaf.heap += StoredBytes(columns);
     return;
   }
-  TrackedVector<const ColumnReader*> children{
-    TrackedAllocator<const ColumnReader*>{*leaves.get_allocator().budget}};
+  TrackedVector<const ColumnReader*> children{leaves.get_allocator()};
   switch (type.InternalType()) {
     case duckdb::PhysicalType::STRUCT: {
       const auto& fields = duckdb::StructType::GetChildTypes(type);
@@ -459,8 +458,8 @@ WriteContext& ColumnWriter::WriteCtx() const noexcept {
   return _owner->WriteCtx();
 }
 
-LocalBudget& ColumnWriter::SealBudget() const noexcept {
-  return _owner->Budget();
+TrackedAllocator<> ColumnWriter::SealAllocator() const noexcept {
+  return _owner->Allocator();
 }
 
 codecs::CodecType ColumnWriter::SealMethod() const {
@@ -470,7 +469,7 @@ codecs::CodecType ColumnWriter::SealMethod() const {
 }
 
 uint64_t ColumnWriter::SealBound(const WriteRows& rows) const {
-  SealLeaves leaves{TrackedAllocator<codecs::SealLeaf>{_owner->Budget()}};
+  SealLeaves leaves{_owner->Allocator()};
   if (IngestsList()) {
     leaves.push_back(
       {.physical = duckdb::PhysicalType::BIT, .rows = rows.count});
@@ -526,8 +525,8 @@ uint64_t ColumnWriter::PendingSealBound() const {
 uint64_t SealBoundOf(const duckdb::LogicalType& type,
                      std::span<const ColumnReader* const> columns,
                      uint64_t rows, codecs::CodecType forced,
-                     const ColCodecParams& params, LocalBudget& budget) {
-  SealLeaves leaves{TrackedAllocator<codecs::SealLeaf>{budget}};
+                     const ColCodecParams& params, TrackedAllocator<> alloc) {
+  SealLeaves leaves{alloc};
   size_t at = 0;
   CollectSourceLeaves(type, columns, rows, leaves, at);
   return LeavesBound(leaves, forced, params, Nested(type));
@@ -565,7 +564,7 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
   codecs::ColumnDataCheckpointData data{
     .type = type,
     .ctx = &ctx,
-    .budget = SealBudget(),
+    .alloc = SealAllocator(),
     .flush = flush,
     .params = _options.codec_params,
     .tuning = tuning,
@@ -619,8 +618,7 @@ void ColumnWriter::SealStruct(
   const auto& child_types = duckdb::StructType::GetChildTypes(type);
   SealNestedValidity(rows, skip_validity, child_types.size(), meta, state);
   for (size_t i = 0; i < child_types.size(); ++i) {
-    TrackedVector<WriteChunk> field_chunks{
-      TrackedAllocator<WriteChunk>{SealBudget()}};
+    TrackedVector<WriteChunk> field_chunks{SealAllocator()};
     field_chunks.reserve(rows.chunks.size());
     for (auto& c : rows.chunks) {
       field_chunks.push_back(
@@ -639,8 +637,7 @@ void ColumnWriter::SealArray(const duckdb::LogicalType& type,
   SealNestedValidity(rows, skip_validity, 1, meta, state);
   const auto array_size =
     static_cast<uint64_t>(duckdb::ArrayType::GetSize(type));
-  TrackedVector<WriteChunk> elem_chunks{
-    TrackedAllocator<WriteChunk>{SealBudget()}};
+  TrackedVector<WriteChunk> elem_chunks{SealAllocator()};
   for (auto& c : rows.chunks) {
     SliceChunks(elem_chunks, duckdb::ArrayVector::GetChild(c.data), 0,
                 c.count * array_size);
@@ -653,7 +650,7 @@ void ColumnWriter::SealArray(const duckdb::LogicalType& type,
 void ColumnWriter::SealList(const duckdb::LogicalType& type,
                             const WriteRows& rows, bool skip_validity,
                             ColumnMeta& meta, ColumnWriteState& state) {
-  ListIngest ingest{SealBudget(), type, /*borrow=*/true, state.list_distinct,
+  ListIngest ingest{SealAllocator(), type, /*borrow=*/true, state.list_distinct,
                     state.list_running};
   for (const auto& c : rows.chunks) {
     ingest.Add(c.data, 0, c.count);
@@ -748,15 +745,12 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
     return;
   }
 
-  auto& budget = SealBudget();
-  MemoryCharge shredded_charge{budget, 0};
-  TrackedVector<duckdb::Vector> shredded_hold{
-    TrackedAllocator<duckdb::Vector>{budget}};
+  const auto alloc = SealAllocator();
+  MemoryCharge shredded_charge{alloc};
+  TrackedVector<duckdb::Vector> shredded_hold{alloc};
   shredded_hold.reserve(rows.chunks.size());
-  TrackedVector<WriteChunk> unshredded_chunks{
-    TrackedAllocator<WriteChunk>{budget}};
-  TrackedVector<WriteChunk> shredded_chunks{
-    TrackedAllocator<WriteChunk>{budget}};
+  TrackedVector<WriteChunk> unshredded_chunks{alloc};
+  TrackedVector<WriteChunk> shredded_chunks{alloc};
   unshredded_chunks.reserve(rows.chunks.size());
   shredded_chunks.reserve(rows.chunks.size());
   for (auto& c : rows.chunks) {
@@ -831,9 +825,10 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     _id{id},
     _type{std::move(type)},
     _options{options},
-    _null_pad_charge{owner.Budget(), 0},
+    _staged_allocator{DuckAllocator(owner.Allocator())},
+    _null_pad_charge{owner.Allocator()},
     _deferred{deferred},
-    _distinct_charge{owner.Budget(), 0} {
+    _distinct_charge{owner.Allocator()} {
   if (_type.id() == duckdb::LogicalTypeId::VARIANT) {
     const auto& config = duckdb::DBConfig::GetConfig(_owner->Database());
     _variant_min_shred_size =
@@ -851,7 +846,7 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     return;
   }
   if (_type.InternalType() == duckdb::PhysicalType::LIST) {
-    _ingest.emplace_back(std::make_unique<ListIngest>(_owner->Budget(), _type,
+    _ingest.emplace_back(std::make_unique<ListIngest>(_owner->Allocator(), _type,
                                                       /*borrow=*/false));
     return;
   }
@@ -865,7 +860,7 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     }
     _ingest.resize(fields.size());
     _ingest[i] =
-      std::make_unique<ListIngest>(_owner->Budget(), fields[i].second,
+      std::make_unique<ListIngest>(_owner->Allocator(), fields[i].second,
                                    /*borrow=*/false);
   }
 }
@@ -880,9 +875,8 @@ WriteChunk& ColumnWriter::OpenChunk() {
     return _staged[_staged_chunks - 1];
   }
   if (_staged_chunks == _staged.size()) {
-    auto& alloc = TrackedDuckAllocator();
     auto& cache = _staged_caches.emplace_back(
-      alloc, IngestsList() ? duckdb::LogicalType::BOOLEAN : _type,
+      _staged_allocator, IngestsList() ? duckdb::LogicalType::BOOLEAN : _type,
       STANDARD_VECTOR_SIZE);
     _staged.push_back(WriteChunk{duckdb::Vector{cache}, 0});
   }
@@ -1170,7 +1164,7 @@ void ColumnWriter::DecodeRows(const ColumnReader& column, ReadContext& source,
   if (first != 0) {
     column.Skip(state, first);
   }
-  ColumnReader::VectorScratch scratch{column.Type()};
+  ColumnReader::VectorScratch scratch{column.Type(), source.Allocator()};
   for (uint64_t done = 0; done < count;) {
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(count - done, STANDARD_VECTOR_SIZE));

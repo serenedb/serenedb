@@ -55,6 +55,9 @@ class IdxWriter;
 class IvfTermIterator;
 
 struct BuiltIvf {
+  explicit BuiltIvf(TrackedAllocator<> alloc)
+    : cluster_docs{alloc}, centroids{alloc} {}
+
   bool empty = true;
   uint32_t d = 0;
   TrackedVector<doc_id_t> cluster_docs;
@@ -68,17 +71,17 @@ class QuantizerWriter;
 
 class IvfBuilder {
  public:
-  explicit IvfBuilder(AnnInfo info) : _info{std::move(info)} {}
+  IvfBuilder(AnnInfo info, TrackedAllocator<> alloc)
+    : _info{std::move(info)}, _alloc{alloc} {}
 
-  AnnFlushBound Bound(uint64_t rows) const;
+  static AnnFlushBound Bound(const AnnInfo& info, uint64_t rows);
 
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
-                   QuantizerWriter* qw, LocalBudget& budget) const;
+                   QuantizerWriter* qw) const;
 
  private:
-  CentroidsBuildParams CentroidParams(LocalBudget& budget) const noexcept;
-
   AnnInfo _info;
+  TrackedAllocator<> _alloc;
 };
 
 class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
@@ -133,7 +136,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
 
 class IvfWriter final : public AnnWriter {
  public:
-  explicit IvfWriter(AnnInfo info);
+  IvfWriter(AnnInfo info, TrackedAllocator<> alloc);
 
   ~IvfWriter() final;
 

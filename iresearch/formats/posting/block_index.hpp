@@ -484,14 +484,14 @@ class BlockCursor {
 
 class BlockIndexWriter {
  public:
-  explicit BlockIndexWriter(LocalBudget& budget)
-    : _last{TrackedAllocator<doc_id_t>{budget}},
-      _end{TrackedAllocator<uint64_t>{budget}},
-      _pos_group{TrackedAllocator<uint64_t>{budget}},
-      _pos_index{TrackedAllocator<uint16_t>{budget}},
-      _pay_group{TrackedAllocator<uint64_t>{budget}},
-      _bound{TrackedAllocator<uint32_t>{budget}},
-      _run_bound{TrackedAllocator<uint32_t>{budget}} {}
+  explicit BlockIndexWriter(TrackedAllocator<> alloc)
+    : _last{alloc},
+      _end{alloc},
+      _pos_group{alloc},
+      _pos_index{alloc},
+      _pay_group{alloc},
+      _bound{alloc},
+      _run_bound{alloc} {}
 
   void Reset() noexcept {
     _last.clear();

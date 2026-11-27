@@ -544,7 +544,7 @@ void WalkIResearchColumn(irs::ReadContext* read, const irs::ColumnReader& node,
 }  // namespace
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
-  const duckdb::QueryContext&, const irs::CompositeReader& reader,
+  const duckdb::QueryContext& context, const irs::CompositeReader& reader,
   const duckdb::TableCatalogEntry& table, duckdb::column_t key_column,
   bool segment_info) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
@@ -560,13 +560,16 @@ duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
     return std::nullopt;
   };
   const auto virtual_columns = table.GetVirtualColumns();
+  irs::LocalBudget budget{
+    context.Valid() ? ConnectionContext::Get(*context.GetClientContext()).Memory()
+                    : irs::gRootBudget};
   uint64_t start = 0;
   for (size_t segment = 0; segment < reader.size(); ++segment) {
     const auto& sub = reader[segment];
     if (const auto* columns = sub.GetColReader()) {
       std::optional<irs::ReadContext> read;
       if (segment_info) {
-        read.emplace(*columns);
+        read.emplace(*columns, irs::TrackedAllocator<>{budget});
       }
       for (const auto& column : columns->Columns()) {
         const auto column_id = locate(column->Id());
@@ -1804,7 +1807,8 @@ void SearchTableEntry::VerifyExistingRows(
   const auto projections = ConstrainedColumns(_columns, constraint);
   duckdb::DataChunk chunk;
   chunk.Initialize(duckdb::Allocator::Get(context), GetTypes());
-  irs::ColFilterStateCache filter_states;
+  irs::ColFilterStateCache filter_states{
+    ConnectionContext::Get(context).Memory()};
   duckdb::SelectionVector live_rows{STANDARD_VECTOR_SIZE +
                                     irs::doc_limits::kDocsSlack};
   const auto rows = RowsWithOwn(context);

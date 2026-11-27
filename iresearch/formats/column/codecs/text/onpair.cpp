@@ -65,12 +65,12 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : Base{data.budget,         kCodec,
+    : Base{data.alloc,          kCodec,
            data.type,           dedup,
            data.tuning.strings, data.params.segment_target},
-      _codec{data.budget},
-      _side{TrackedAllocator<char>{data.budget}},
-      _codes{TrackedAllocator<uint16_t>{data.budget}} {}
+      _codec{data.alloc},
+      _side{data.alloc},
+      _codes{data.alloc} {}
 
   void FinalizeCompress();
 
@@ -141,7 +141,10 @@ struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment& segment, const Frames& s)
     : table{OpenSymbolTable<Table>(segment.cache_slot.cache,
-                                   SymbolTable(s.header, s.base))} {
+                                   SymbolTable(s.header, s.base))},
+      groups{segment.ctx.Allocator()},
+      entry_decoded{segment.ctx.Allocator()},
+      probe{segment.ctx.Allocator()} {
     if (!table) [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
     }
@@ -234,6 +237,8 @@ struct Scan {
 };
 
 struct Fetch {
+  explicit Fetch(TrackedAllocator<> alloc) : groups{alloc}, buf{alloc} {}
+
   void Reset(const Header&, duckdb::data_ptr_t) {
     table.reset();
     groups.Clear();
@@ -382,16 +387,16 @@ bool Table::Open(std::string_view table) {
 
 void Table::Corrupted() { ThrowCorrupted("text", "entry is inconsistent"); }
 
-Codec::Codec(LocalBudget& budget)
-  : _ids{TrackedAllocator<std::pair<const std::string, uint32_t>>{budget}},
-    _lengths(kPairLengths, TrackedAllocator<uint16_t>{budget}),
-    _tokens{TrackedAllocator<std::string>{budget}},
-    _order{TrackedAllocator<uint32_t>{budget}},
-    _pairs{TrackedAllocator<std::pair<const uint32_t, uint8_t>>{budget}},
-    _keys{TrackedAllocator<Key>{budget}},
-    _firsts{TrackedAllocator<uint32_t>{budget}},
-    _chains{TrackedAllocator<Chain>{budget}},
-    _stack{TrackedAllocator<uint32_t>{budget}} {}
+Codec::Codec(TrackedAllocator<> alloc)
+  : _ids{alloc},
+    _lengths(kPairLengths, alloc),
+    _tokens{alloc},
+    _order{alloc},
+    _pairs{alloc},
+    _keys{alloc},
+    _firsts{alloc},
+    _chains{alloc},
+    _stack{alloc} {}
 
 void Codec::Reset() {
   _ids.clear();

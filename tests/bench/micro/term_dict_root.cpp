@@ -198,10 +198,10 @@ void Write(Data& data) {
   const irs::FlushState state{
     .tracker = tracker,
     .doc_count = data.keys.size(),
-    .budget = budget,
+    .alloc = irs::TrackedAllocator<>{budget},
   };
-  irs::IdxWriter idx{tracker, budget};
-  irs::term_dict::FieldWriter writer{false, budget};
+  irs::IdxWriter idx{tracker, state.alloc};
+  irs::term_dict::FieldWriter writer{false, state.alloc};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1, 0);
   writer.write(irs::StringLayout::kStrings, KeysReader{data.keys});

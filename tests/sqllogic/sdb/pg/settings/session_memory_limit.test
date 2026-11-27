@@ -62,6 +62,32 @@ n
 200
 
 statement ok
+CREATE TABLE session_memory_flushed (id INTEGER, body VARCHAR)
+    WITH (compaction_floor_segment_bytes = 1);
+
+statement ok
+CREATE INDEX session_memory_flushed_idx ON session_memory_flushed
+    USING inverted(body session_memory_en);
+
+statement ok
+SET sdb_session_memory_limit = 65536;
+
+statement error
+INSERT INTO session_memory_flushed SELECT i, 'word' || (i % 100) FROM range(10000) t(i);
+----
+db error: ERROR: failed to allocate data of size <slt:ignore> (the session's memory limit: <slt:ignore> used)
+
+
+statement ok
+RESET sdb_session_memory_limit;
+
+query
+SELECT count(*) AS n FROM session_memory_flushed;
+----
+n
+0
+
+statement ok
 SET threads = 2;
 
 statement ok

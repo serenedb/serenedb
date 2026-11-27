@@ -56,12 +56,12 @@ size_t Zxc::ContextBytes(uint8_t level) noexcept {
                                 EffectiveLevel<Zxc>(level));
 }
 
-Zxc::Compressor::Compressor(LocalBudget& budget, uint8_t level)
-  : DictionaryCompressor{budget, kDictionaryCap},
+Zxc::Compressor::Compressor(TrackedAllocator<> alloc, uint8_t level)
+  : DictionaryCompressor{alloc, kDictionaryCap},
     _level{level},
-    _ctx_charge{budget, ContextBytes(level)},
+    _ctx_charge{alloc, ContextBytes(level)},
     _ctx{NewContext(level)},
-    _attached_charge{budget, 0} {}
+    _attached_charge{alloc} {}
 
 void Zxc::Compressor::Attach() {
   const auto bytes = ZxcDictionary(Dictionary());
@@ -89,8 +89,11 @@ size_t Zxc::Compressor::Plain(const char* src, size_t size, char* dst,
   return static_cast<size_t>(n);
 }
 
-Zxc::Decompressor::Decompressor()
-  : _ctx_charge{DecoderBytes()}, _ctx{zxc_create_dctx()} {
+Zxc::Decompressor::Decompressor(TrackedAllocator<> alloc)
+  : DictionaryDecompressor{alloc},
+    _ctx_charge{alloc, DecoderBytes()},
+    _ctx{zxc_create_dctx()},
+    _blocks_charge{alloc} {
   SDB_ENSURE(_ctx, "zxc: cannot create a decompression context");
 }
 

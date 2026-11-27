@@ -24,6 +24,7 @@
 
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/tracked.hpp"
 
 namespace irs::containers {
@@ -37,5 +38,11 @@ using TrackedFlatHashMap =
 template<typename T, typename Hash = typename absl::flat_hash_set<T>::hasher,
          typename Eq = typename absl::flat_hash_set<T, Hash>::key_equal>
 using TrackedFlatHashSet = FlatHashSet<T, Hash, Eq, TrackedAllocator<T>>;
+
+template<typename K, typename V,
+         typename Hash = typename absl::node_hash_map<K, V>::hasher,
+         typename Eq = typename absl::node_hash_map<K, V, Hash>::key_equal>
+using TrackedNodeHashMap =
+  NodeHashMap<K, V, Hash, Eq, TrackedAllocator<std::pair<const K, V>>>;
 
 }  // namespace irs::containers

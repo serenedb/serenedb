@@ -221,8 +221,7 @@ class Values final : public State {
   }
 
  private:
-  Values(std::span<const WriteChunk> chunks,
-         TrackedAllocator<std::byte> allocator)
+  Values(std::span<const WriteChunk> chunks, TrackedAllocator<> allocator)
     : _chunks{chunks},
       _blocks{allocator},
       _bounds{allocator},
@@ -620,7 +619,7 @@ class Values final : public State {
   TrackedVector<const U*> _blocks;
   TrackedVector<BlockBounds<U>> _bounds;
   TrackedVector<uint8_t> _null_blocks;
-  ScratchVector<U> _owned;
+  TrackedScratchVector<U> _owned;
   std::span<const U> _values;
   size_t _size = 0;
   U _lo = 0;
@@ -632,7 +631,7 @@ class Values final : public State {
   bool _any_valid = false;
   bool _sequence = false;
   TrackedVector<BlockBounds<U>> _divided_bounds;
-  ScratchVector<U> _divided;
+  TrackedScratchVector<U> _divided;
   U _scale = 0;
 };
 

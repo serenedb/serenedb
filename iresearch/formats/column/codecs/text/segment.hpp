@@ -32,8 +32,8 @@
 namespace irs::codecs::text {
 
 struct Segment {
-  Segment(LocalBudget& budget, const duckdb::LogicalType& type)
-    : bytes{budget}, stats{duckdb::BaseStatistics::CreateEmpty(type)} {}
+  Segment(TrackedAllocator<> alloc, const duckdb::LogicalType& type)
+    : bytes{alloc}, stats{duckdb::BaseStatistics::CreateEmpty(type)} {}
 
   Config config;
   uint64_t begin = 0;

@@ -211,7 +211,8 @@ class ExplainTest : public IndexTestBase {
         continue;
       }
       auto& plan = *run.plans.emplace_back(
-        irs::explain::MakePlan(*query, scorer, run.stats, filter));
+        irs::explain::MakePlan(irs::gRootBudget, *query, scorer, run.stats,
+                               filter));
       for (const auto& row : rows) {
         if (row.segment != segment) {
           continue;
@@ -614,7 +615,8 @@ TEST_P(ExplainTest, rows_in_any_order_are_explained) {
   const auto rows = Execute(prepared);
   for (size_t segment = 0; segment != prepared.size(); ++segment) {
     const auto plan =
-      irs::explain::MakePlan(*prepared.Query(segment), bm25, stats, *filter);
+      irs::explain::MakePlan(irs::gRootBudget, *prepared.Query(segment), bm25,
+                             stats, *filter);
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
       if (it->segment != segment) {
         continue;

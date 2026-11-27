@@ -54,7 +54,8 @@ irs::detail::RawVectorReader* SegmentRescorer(const ScanGlobalState& g,
       return nullptr;
     }
     reader = std::make_unique<irs::detail::RawVectorReader>(
-      *column, *columns, static_cast<uint32_t>(vs.query_vector.size()));
+      *column, *columns, static_cast<uint32_t>(vs.query_vector.size()),
+      l.plan_memory.Allocator());
     reader->SetQuery(vs.query_vector, vs.metric);
   }
   return reader.get();
@@ -269,12 +270,13 @@ void Merge(ScanGlobalState& g, AnnLocalState& l) {
 
 irs::TrackedVector<irs::ScoreDoc> RankExactly(ScanGlobalState& g,
                                               RankedLocalState& l,
-                                              uint64_t per_segment) {
+                                              uint64_t per_segment,
+                                              irs::TrackedAllocator<> alloc) {
   auto vs = *g.vector_scorer;
   vs.exact = true;
   const auto filter =
     MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
-  irs::TrackedVector<irs::ScoreDoc> ranked;
+  irs::TrackedVector<irs::ScoreDoc> ranked{alloc};
   auto& memory = ConnectionContext::Get(*g.client_context).Memory();
   irs::QueryMemory query_memory{memory};
   irs::PlanMemory plan_memory{memory};
@@ -340,7 +342,8 @@ void FillShortAnswer(ScanGlobalState& g, RankedLocalState& l) {
       vs->radius != std::numeric_limits<float>::max()) {
     return;
   }
-  t.answer = RankExactly(g, l, t.limit);
+  t.answer =
+    RankExactly(g, l, t.limit, irs::TrackedAllocator<>{g.shared_budget});
   t.answer.resize(std::min<size_t>(t.answer.size(), t.limit));
   PlanFetch(g, l);
 }
@@ -357,8 +360,8 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
   size_t step = std::max<size_t>(verified, want);
   bool widened =
     g.vector_scorer->exact || ranked.size() >= g.reader->live_docs_count();
-  irs::TrackedVector<irs::ScoreDoc> exact;
-  irs::TrackedVector<irs::ScoreDoc> hits;
+  irs::TrackedVector<irs::ScoreDoc> exact{l.plan_memory.Allocator()};
+  irs::TrackedVector<irs::ScoreDoc> hits{l.plan_memory.Allocator()};
   duckdb::DataChunk batch;
   batch.Initialize(ctx, g.projected_types);
   while (row_hits.size() < want) {
@@ -367,7 +370,8 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
         return;
       }
       widened = true;
-      exact = RankExactly(g, l, std::numeric_limits<uint64_t>::max());
+      exact = RankExactly(g, l, std::numeric_limits<uint64_t>::max(),
+                          l.plan_memory.Allocator());
       ranked = exact;
       verified = 0;
       step = std::max<size_t>(step, want);

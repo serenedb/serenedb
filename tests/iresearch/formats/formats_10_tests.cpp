@@ -59,7 +59,7 @@ class Format10TestCase : public tests::FormatTestCase {
     auto dir = get_directory(*this);
 
     // attributes for term
-    irs::PostingsWriter writer{irs::kEmpty};
+    irs::PostingsWriter writer{TestAlloc()};
     irs::PostingMeta posting_meta;
 
     // write postings for field
@@ -69,7 +69,7 @@ class Format10TestCase : public tests::FormatTestCase {
         .tracker = dir->Tracker("segment_name"),
         .doc_count = docs.back().first + 1,
         .index_features = field.index_features,
-        .budget = budget,
+        .alloc = irs::TrackedAllocator<>{budget},
       };
 
       auto out = dir->Create("attributes");
@@ -260,7 +260,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // docs & attributes for term0
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{{6, 10}};
-  irs::PostingsWriter writer{irs::kEmpty};
+  irs::PostingsWriter writer{TestAlloc()};
   irs::PostingMeta meta0, meta1;
 
   // write postings
@@ -270,7 +270,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 100,
       .index_features = field.index_features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out = dir().Create("attributes");
@@ -418,7 +418,7 @@ TEST_P(Format10TestCase, postings_read_write) {
   // docs & attributes for term1
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
-  irs::PostingsWriter writer{irs::kEmpty};
+  irs::PostingsWriter writer{TestAlloc()};
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
 
   // write postings
@@ -428,7 +428,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 150,
       .index_features = field.index_features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out = dir().Create("attributes");
@@ -540,7 +540,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 }
 
 TEST_P(Format10TestCase, postings_writer_reuse) {
-  irs::PostingsWriter writer{irs::kEmpty};
+  irs::PostingsWriter writer{TestAlloc()};
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs0;
   irs::doc_id_t i = (irs::doc_limits::min)();
@@ -570,7 +570,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -602,7 +602,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -633,7 +633,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -664,7 +664,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -694,7 +694,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -722,7 +722,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     irs::FlushState state{
       .tracker = dir().Tracker("5"),
       .doc_count = 10000,
-      .budget = budget,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -764,15 +764,15 @@ TEST_P(Format10TestCase, ires336) {
   irs::FlushState flush_state{
     .tracker = dir->Tracker(segment_name),
     .doc_count = 10000,
-    .budget = budget,
+    .alloc = irs::TrackedAllocator<>{budget},
   };
 
   irs::FieldMeta field_meta;
   field_meta.id = kFieldId;
   {
     tests::MockTermReader term_reader{trms, field_meta};
-    irs::IdxWriter idx{dir->Tracker(segment_name), irs::kEmpty};
-    irs::term_dict::FieldWriter fw{/*compaction=*/true, irs::kEmpty};
+    irs::IdxWriter idx{dir->Tracker(segment_name), TestAlloc()};
+    irs::term_dict::FieldWriter fw{/*compaction=*/true, TestAlloc()};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state, 1, 0);
     fw.write(irs::StringLayout::kStrings, term_reader);
@@ -958,7 +958,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       field.index_features = features;
       auto dir = get_directory(*this);
 
-      irs::PostingsWriter writer{irs::kEmpty};
+      irs::PostingsWriter writer{TestAlloc()};
       irs::PostingMeta posting_meta;
 
       // write postings
@@ -968,7 +968,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
           .tracker = dir->Tracker("segment_name"),
           .doc_count = docs.back().first + 1,
           .index_features = field.index_features,
-          .budget = budget,
+          .alloc = irs::TrackedAllocator<>{budget},
         };
 
         auto out = dir->Create("attributes");
@@ -1119,7 +1119,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
       EXPECT_NE(nullptr, out);
       if (unknown_field) {
         irs::format_utils::WriteFooter(
-          *out, [](duckdb::BinarySerializer& footer) {
+          *out, TestAlloc(), [](duckdb::BinarySerializer& footer) {
             footer.WriteProperty<uint32_t>(0, "layout", 1);
           });
       } else {

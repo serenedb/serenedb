@@ -108,21 +108,22 @@ void ListKeys::Node::Resize(size_t size) {
   }
 }
 
-ListIngest::ListIngest(LocalBudget& budget, const duckdb::LogicalType& type,
-                       bool borrow, uint64_t code_base, uint64_t running)
+ListIngest::ListIngest(TrackedAllocator<> alloc,
+                       const duckdb::LogicalType& type, bool borrow,
+                       uint64_t code_base, uint64_t running)
   : _child_type{duckdb::ListType::GetChildType(type)},
     _borrow{borrow},
-    _codes{TrackedAllocator<uint64_t>{budget}},
-    _ends{TrackedAllocator<uint64_t>{budget}},
-    _copied{budget, 0},
-    _elems{TrackedAllocator<WriteChunk>{budget}},
-    _keys{budget},
-    _heads{TrackedAllocator<std::pair<const uint64_t, uint32_t>>{budget}},
-    _reps{TrackedAllocator<ListRep>{budget}},
-    _fresh{TrackedAllocator<Fresh>{budget}},
-    _picked{TrackedAllocator<duckdb::sel_t>{budget}},
-    _source{TrackedAllocator<char>{budget}},
-    _source_codes{TrackedAllocator<uint64_t>{budget}} {
+    _codes{alloc},
+    _ends{alloc},
+    _copied{alloc},
+    _elems{alloc},
+    _keys{alloc},
+    _heads{alloc},
+    _reps{alloc},
+    _fresh{alloc},
+    _picked{alloc},
+    _source{alloc},
+    _source_codes{alloc} {
   Reset(code_base, running);
 }
 
@@ -169,19 +170,22 @@ void ListIngest::CheckDistinct() {
 }
 
 ListParts ListIngest::Take() {
-  ListParts out;
-  out.codes =
+  auto codes =
     std::exchange(_codes, TrackedVector<uint64_t>{_codes.get_allocator()});
-  out.ends =
+  auto ends =
     std::exchange(_ends, TrackedVector<uint64_t>{_ends.get_allocator()});
   FlushTail();
-  out.copied = std::move(_copied);
+  ListParts out{
+    .copied = std::move(_copied),
+    .codes = std::move(codes),
+    .ends = std::move(ends),
+    .elems = std::move(_elems),
+    .elem_count = _running - _elem_base,
+    .distinct = _next_code - _code_base,
+    .next_code = _next_code,
+    .running = _running,
+  };
   _flushed = 0;
-  out.elems = std::move(_elems);
-  out.elem_count = _running - _elem_base;
-  out.distinct = _next_code - _code_base;
-  out.next_code = _next_code;
-  out.running = _running;
   _elems.clear();
   Forget();
   Reset(_next_code, _running);

@@ -144,6 +144,15 @@ def test_copy_from_stdin_with_command_reads_process_stdin(shell):
     result.check_stdout("6")
 
 
+def test_copy_from_stdin_with_command_reads_a_large_piped_stdin(shell):
+    test = ShellTest(shell).add_argument(
+        "-csv", "-c", "CREATE TABLE t(i INTEGER); COPY t FROM STDIN (FORMAT csv); SELECT count(*), sum(i) FROM t;"
+    )
+    result = test.run_raw("".join(f"{i}\n" for i in range(1, 3000001)))
+    assert result.status_code == 0, result.stderr
+    assert result.stdout.splitlines()[1:] == ["3000000,4500001500000"], result.stdout
+
+
 def test_stdin_redirected_from_a_file_reads_as_that_file(shell, tmp_path):
     data = tmp_path / "rows.csv"
     data.write_text("".join(f"{i},{i * 2}\n" for i in range(100000)))

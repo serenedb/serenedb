@@ -18,6 +18,22 @@ statement error incorrect data check
 CREATE TABLE corrupt AS SELECT * FROM read_csv('${__TEST_DIR__}/corrupt.csv.gz', header = false, all_varchar = true);
 
 
+statement count 1
+COPY (SELECT ''::bytea) TO '${__TEST_DIR__}/empty.csv.gz' (FORMAT BLOB, COMPRESSION 'none');
+
+
+statement error Input is not a GZIP stream
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/empty.csv.gz', header = false, all_varchar = true);
+
+
+statement count 1
+COPY (SELECT 'a,b'::bytea) TO '${__TEST_DIR__}/plain.csv.gz' (FORMAT BLOB, COMPRESSION 'none');
+
+
+statement error Input is not a GZIP stream
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/plain.csv.gz', header = false, all_varchar = true);
+
+
 query
 SELECT count(*) AS n, sum(id) AS total, min(v) AS first FROM read_csv('${__TEST_DIR__}/flagged.csv.gz', header = false, columns = {'id': 'INTEGER', 'v': 'VARCHAR'});
 ----

@@ -58,7 +58,8 @@ const duckdb::SequenceCatalogEntry* ReadableSequence(const Session& session,
                                                      AclMode modes) {
   const auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
   if (!entry || entry->type != CatalogType::SEQUENCE_ENTRY ||
-      !duckdb::AllowedAny(session.role, *entry, modes)) {
+      !duckdb::Check(*session.context, session.role, *entry,
+                     modes | AclMode::Any)) {
     return nullptr;
   }
   return &entry->Cast<duckdb::SequenceCatalogEntry>();
@@ -87,8 +88,8 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a sequence"));
     }
-    if (!duckdb::AllowedAny(session.role, *entry,
-                            AclMode::Select | AclMode::Usage)) {
+    if (!duckdb::Check(*session.context, session.role, *entry,
+                       AclMode::Select | AclMode::Usage | AclMode::Any)) {
       writer.WriteNull();
       continue;
     }
@@ -209,10 +210,9 @@ void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("lastval is not yet defined in this session"));
   }
-  if (!duckdb::AllowedAny(SessionOf(state).role, *entry,
-                          AclMode::Select | AclMode::Usage)) {
-    duckdb::ThrowPermissionDenied(*entry);
-  }
+  duckdb::Check(context, SessionOf(state).role, *entry,
+                AclMode::Select | AclMode::Usage | AclMode::Any)
+    .Require();
   result.Reference(duckdb::Value::BIGINT(last->value),
                    duckdb::count_t(args.size()));
 }

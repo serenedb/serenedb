@@ -1,14 +1,33 @@
+control substitution on
+
 statement ok
 DROP ROLE IF EXISTS eto_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS eto_heir;
 
 
 statement ok
 CREATE ROLE eto_vedernikoff LOGIN PASSWORD 'eto_pw';
 
 
+statement ok
+CREATE ROLE eto_heir;
+
+
+statement ok
+GRANT eto_heir TO eto_vedernikoff;
+
+
 connection c_eto user=eto_vedernikoff password=eto_pw
 statement ok
 CREATE TEMP TABLE eto_scratch (a integer);
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+CREATE TEMP TABLE eto_kept (a integer);
 
 
 connection c_eto user=eto_vedernikoff password=eto_pw
@@ -45,6 +64,48 @@ n
 
 connection c_eto user=eto_vedernikoff password=eto_pw
 statement ok
+ALTER TABLE eto_scratch OWNER TO eto_heir;
+
+
+statement ok
+REVOKE TEMPORARY ON DATABASE ${__DATABASE__} FROM PUBLIC;
+
+
+onlyif postgres
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement error
+ALTER TABLE eto_kept OWNER TO eto_heir;
+----
+db error: ERROR: permission denied for schema pg_temp_<slt:ignore>
+
+
+skipif postgres
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement error
+ALTER TABLE eto_kept OWNER TO eto_heir;
+----
+db error: ERROR: permission denied for schema pg_temp
+
+
+statement ok
+GRANT TEMPORARY ON DATABASE ${__DATABASE__} TO eto_heir;
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+ALTER TABLE eto_kept OWNER TO eto_heir;
+
+
+statement ok
+GRANT TEMPORARY ON DATABASE ${__DATABASE__} TO PUBLIC;
+
+
+statement ok
+REVOKE TEMPORARY ON DATABASE ${__DATABASE__} FROM eto_heir;
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
 DROP VIEW eto_view;
 
 
@@ -55,8 +116,17 @@ DROP TABLE eto_scratch;
 
 connection c_eto user=eto_vedernikoff password=eto_pw
 statement ok
+DROP TABLE eto_kept;
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
 DROP SEQUENCE eto_counter;
 
 
 statement ok
 DROP ROLE eto_vedernikoff;
+
+
+statement ok
+DROP ROLE eto_heir;

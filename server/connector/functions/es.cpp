@@ -496,7 +496,7 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
-  duckdb::Require(context, state.role, *table, duckdb::AclMode::Drop);
+  duckdb::Check(context, state.role, *table, duckdb::AclMode::Drop).Require();
   duckdb::DropInfo drop;
   drop.type = duckdb::CatalogType::TABLE_ENTRY;
   drop.SetQualifiedName(qname);

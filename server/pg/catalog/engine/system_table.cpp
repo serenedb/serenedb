@@ -163,7 +163,8 @@ bool SystemScan::ShowsColumn(const duckdb::CatalogEntry& relation,
     _columns_of = &relation;
     _all_columns =
       _role.MemberOf(duckdb::PermissionsOf(relation).owner) ||
-      duckdb::AllowedAny(_role, relation, duckdb::ACL_COLUMN_PRIVILEGES);
+      duckdb::Check(_context, _role, relation,
+                    duckdb::ACL_COLUMN_PRIVILEGES | duckdb::AclMode::Any);
   }
   return _all_columns ||
          (_role.HeldModes(acl) & duckdb::ACL_COLUMN_PRIVILEGES) !=

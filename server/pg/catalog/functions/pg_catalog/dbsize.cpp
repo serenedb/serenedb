@@ -245,8 +245,9 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
       const auto entry = DatabaseEntry(context, key);
       duckdb::optional_ptr<duckdb::Catalog> database =
-        entry && (role.Has(duckdb::RoleCapability::ReadAllStats) ||
-                  duckdb::Allowed(role, *entry, duckdb::AclMode::Connect))
+        entry &&
+            (role.Has(duckdb::RoleCapability::ReadAllStats) ||
+             duckdb::Check(context, role, *entry, duckdb::AclMode::Connect))
           ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
           : nullptr;
       if (!database) {
@@ -304,7 +305,8 @@ int64_t TablespaceBytes(const Session& session,
   if (tablespace.oid != SessionTablespace(session)) {
     if (const auto& role = session.role;
         !role.Has(duckdb::RoleCapability::ReadAllStats) &&
-        !duckdb::Allowed(role, tablespace, duckdb::AclMode::Create)) {
+        !duckdb::Check(*session.context, role, tablespace,
+                       duckdb::AclMode::Create)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for tablespace ",
                               tablespace.name.GetIdentifierName()));

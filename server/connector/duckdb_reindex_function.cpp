@@ -201,8 +201,8 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   auto& view = relation->Cast<duckdb::ViewCatalogEntry>();
   // PG semantics: REINDEX needs MAINTAIN (same as VACUUM). Enforced here --
   // the passes run on internal connections and reach no other gate.
-  if (!duckdb::Allowed(context.CurrentRole(), view,
-                       duckdb::AclMode::Maintain)) {
+  if (!duckdb::Check(context, context.CurrentRole(), view,
+                     duckdb::AclMode::Maintain)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied for index \"", name, "\""));
   }

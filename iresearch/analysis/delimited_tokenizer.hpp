@@ -48,9 +48,17 @@ class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
   };
   static ptr Make(Options opts);
 
+  static duckdb::LogicalTypeId Output(const Options& opts) noexcept {
+    return opts.delimiter.empty() ? duckdb::LogicalTypeId::BLOB
+                                  : duckdb::LogicalTypeId::VARCHAR;
+  }
+
   explicit DelimitedTokenizer(std::string_view delimiter);
   TokenTraits Traits() const noexcept final {
-    return {.offsets = true, .keeps_ascii = true};
+    return {.output = _mode == Mode::Chars ? duckdb::LogicalTypeId::BLOB
+                                           : duckdb::LogicalTypeId::VARCHAR,
+            .offsets = true,
+            .keeps_ascii = true};
   }
 
   auto PrepareBatch(BlockTraits) const { return std::tuple{_mode}; }

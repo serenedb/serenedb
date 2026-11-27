@@ -283,9 +283,10 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
 
   auto config = pg::BuildStage(context, group.name, std::move(options),
                                std::move(children), operation);
+  auto& db = duckdb::DatabaseInstance::GetDatabase(context);
+  irs::analysis::ResolveSqlOutputs(config, context, db.GetSharedObjectCache());
   auto key = catalog::PackTokenizerConfig(config);
 
-  auto& db = duckdb::DatabaseInstance::GetDatabase(context);
   auto pool = irs::analysis::TokenizerPool::Get(db, key);
   auto probe = pool->Acquire();
   if (!probe) {
@@ -294,10 +295,9 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   }
   SDB_ASSERT(probe);
   probe->Bind(context);
-  const auto output = probe->Traits().output;
   pool->Release(std::move(probe));
 
-  fn.SetReturnType(duckdb::LogicalType::LIST(output));
+  fn.SetReturnType(duckdb::LogicalType::LIST(irs::analysis::OutputOf(config)));
   if (!list_input) {
     fn.SetFunctionCallback(TokenizeValues);
   } else if (wrapper) {

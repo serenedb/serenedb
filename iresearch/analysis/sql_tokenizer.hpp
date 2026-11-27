@@ -70,9 +70,17 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
   struct Options {
     using Owner = SqlTokenizer;
     std::string expression;
+    duckdb::LogicalTypeId output = duckdb::LogicalTypeId::INVALID;
   };
 
   static constexpr std::string_view type_name() noexcept { return "sql"; }
+
+  static duckdb::LogicalTypeId Output(const Options& opts) noexcept {
+    return opts.output;
+  }
+  static duckdb::LogicalTypeId ResolveOutput(std::string_view expression,
+                                             duckdb::ClientContext& ctx,
+                                             duckdb::SharedObjectCache& cache);
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   SqlTokenizer(const Options& opts, duckdb::SharedObjectCache& cache);
@@ -100,6 +108,7 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
   duckdb::shared_ptr<SqlExpression> _expression;
   const duckdb::Expression* _expr = nullptr;
   std::unique_ptr<SqlCall> _call;
+  duckdb::LogicalTypeId _output;
 };
 
 class SqlPredicate final : private util::Noncopyable {

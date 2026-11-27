@@ -130,7 +130,10 @@ TEST(SqlTokenizerTest, pipelineNullDropKeepsStackedPositions) {
   stages.emplace_back(irs::analysis::DelimitedTokenizer::Make(
     irs::analysis::DelimitedTokenizer::Options{.delimiter = " "}));
   stages.emplace_back(irs::analysis::NGramTokenizer::Make(
-    {.min_gram = 2, .max_gram = 3, .preserve_original = false}));
+    {.min_gram = 2,
+     .max_gram = 3,
+     .preserve_original = false,
+     .stream_bytes_type = irs::analysis::NGramTokenizer::InputType::UTF8}));
   stages.emplace_back(SqlTokenizer::Make(
     {.expression = "CASE WHEN length(input) >= 3 THEN input END"},
     tests::Cache()));

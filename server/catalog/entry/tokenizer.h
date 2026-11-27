@@ -22,6 +22,7 @@
 
 #include <absl/synchronization/mutex.h>
 
+#include <array>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/parser/parsed_data/create_tokenizer_info.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -44,10 +45,11 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
  public:
   struct Deleter {
     std::shared_ptr<const Tokenizer> tokenizer;
+    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR;
 
     void operator()(irs::analysis::Tokenizer* analyzer) const {
       if (tokenizer) {
-        tokenizer->Release(irs::analysis::Tokenizer::ptr{analyzer});
+        tokenizer->Release(input, irs::analysis::Tokenizer::ptr{analyzer});
       } else {
         delete analyzer;
       }
@@ -59,9 +61,11 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
   Tokenizer(search::Features features, irs::analysis::TokenizerConfig config)
     : _config{std::move(config)}, _features{features} {}
 
-  TokenizerWrapper Acquire(duckdb::ClientContext& context) const;
+  TokenizerWrapper Acquire(
+    duckdb::ClientContext& context,
+    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
 
-  duckdb::LogicalTypeId Output() const;
+  duckdb::LogicalTypeId Output(duckdb::ClientContext& context) const;
 
   const irs::analysis::TokenizerConfig& Config() const noexcept {
     return _config;
@@ -70,14 +74,13 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
   search::Features GetFeatures() const noexcept { return _features; }
 
  private:
-  irs::analysis::Tokenizer::ptr Take() const;
-  void Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept;
+  void Release(duckdb::LogicalTypeId input,
+               irs::analysis::Tokenizer::ptr analyzer) const noexcept;
 
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
-  mutable duckdb::LogicalTypeId _output = duckdb::LogicalTypeId::INVALID;
   mutable absl::Mutex _mutex;
-  mutable std::vector<irs::analysis::Tokenizer::ptr> _pool
+  mutable std::array<std::vector<irs::analysis::Tokenizer::ptr>, 3> _pools
     ABSL_GUARDED_BY(_mutex);
 };
 

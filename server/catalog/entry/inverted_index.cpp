@@ -365,45 +365,40 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
   }
 }
 
-ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
-  return Acquire(field_id, *_context);
+ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
+                                         duckdb::LogicalTypeId input) const {
+  return Acquire(field_id, *_context, input);
 }
 
 ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
-                                         duckdb::ClientContext& context) const {
+                                         duckdb::ClientContext& context,
+                                         duckdb::LogicalTypeId input) const {
   const auto it = _fields.find(field_id);
   if (it == _fields.end()) {
     return {};
   }
   const auto& field = it->second;
   if (!field.tokenizer) {
-    return {.analyzer = Tokenizer::TokenizerWrapper{
-              std::make_unique<irs::KeywordTokenizer>().release(),
-              Tokenizer::Deleter{}}};
+    return {.analyzer =
+              Tokenizer::TokenizerWrapper{
+                std::make_unique<irs::KeywordTokenizer>().release(),
+                Tokenizer::Deleter{}},
+            .input = input};
   }
-  return {.analyzer = field.tokenizer->Acquire(context),
+  return {.analyzer = field.tokenizer->Acquire(context, input),
           .features = field.features,
-          .tokenizer_column = field.tokenizer_column};
+          .tokenizer_column = field.tokenizer_column,
+          .input = input};
 }
 
-duckdb::LogicalTypeId IndexTokenizers::Output(irs::field_id field_id) const {
-  const auto it = _fields.find(field_id);
-  if (it == _fields.end()) {
-    return duckdb::LogicalTypeId::INVALID;
+duckdb::LogicalTypeId IndexTokenizers::Terms(
+  irs::field_id field_id, duckdb::LogicalTypeId input) const {
+  if (input == duckdb::LogicalTypeId::BLOB) {
+    return input;
   }
-  const auto& tokenizer = it->second.tokenizer;
-  return tokenizer ? tokenizer->Output()
-                   : irs::KeywordTokenizer{}.Traits().output;
-}
-
-IndexTokenizers::Bound IndexTokenizers::AcquireAll(
-  duckdb::ClientContext& context) const {
-  Bound bound;
-  bound.reserve(_fields.size());
-  for (const auto& [field_id, field] : _fields) {
-    bound.emplace(field_id, Acquire(field_id, context));
-  }
-  return bound;
+  const auto& field = _fields.at(field_id);
+  return field.tokenizer ? field.tokenizer->Output(*_context)
+                         : duckdb::LogicalTypeId::VARCHAR;
 }
 
 InvertedIndexConfig::InvertedIndexConfig(

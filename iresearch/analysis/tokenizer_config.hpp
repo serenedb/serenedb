@@ -144,4 +144,11 @@ inline Tokenizer::ptr CreateTokenizer(TokenizerConfig cfg,
     std::move(cfg.config));
 }
 
+duckdb::LogicalTypeId OutputOf(const TokenizerConfig& cfg) noexcept;
+
+void SetInput(Tokenizer& tokenizer, duckdb::LogicalTypeId input);
+
+void ResolveSqlOutputs(TokenizerConfig& cfg, duckdb::ClientContext& ctx,
+                       duckdb::SharedObjectCache& cache);
+
 }  // namespace irs::analysis

@@ -820,9 +820,11 @@ void CompileTokenizer(duckdb::ClientContext& context,
   auto [cfg, definition] = CompileTSDictionarySpec(context, info.definition);
   auto features = ParseFeatures(info.options, TypeNameOf(cfg));
 
-  auto test_analyzer = irs::analysis::CreateTokenizer(
-    irs::analysis::Clone(cfg),
-    duckdb::DatabaseInstance::GetDatabase(context).GetSharedObjectCache());
+  auto& cache =
+    duckdb::DatabaseInstance::GetDatabase(context).GetSharedObjectCache();
+  irs::analysis::ResolveSqlOutputs(cfg, context, cache);
+  auto test_analyzer =
+    irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg), cache);
   SDB_ASSERT(test_analyzer);
   test_analyzer->Bind(context);
   irs::Finally unbind = [&]() noexcept { test_analyzer->Unbind(); };

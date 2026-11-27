@@ -295,8 +295,9 @@ std::optional<connector::SearchColumnInfo> TermColumnInfo(
       .tokenizer = {.analyzer = catalog::Tokenizer::TokenizerWrapper{
                       new irs::KeywordTokenizer(), {}}}};
   }
-  auto column_info =
-    MakeSearchColumnInfo(term, info, std::move(type), dicts.Acquire(term));
+  const auto input = connector::term_dict::ElementKind(type);
+  auto column_info = MakeSearchColumnInfo(term, info, std::move(type),
+                                          dicts.Acquire(term, input));
   if (scan.relation.Stores(col_id)) {
     column_info.text = col_id;
   }
@@ -311,9 +312,10 @@ std::optional<connector::SearchColumnInfo> ExpressionColumnInfo(
   if (!term) {
     return std::nullopt;
   }
-  auto column_info =
-    MakeSearchColumnInfo(term->field_id, config.FindEntry(term->field_id),
-                         term->type, dicts.Acquire(term->field_id));
+  auto column_info = MakeSearchColumnInfo(
+    term->field_id, config.FindEntry(term->field_id), term->type,
+    dicts.Acquire(term->field_id,
+                  connector::term_dict::ElementKind(term->type)));
   column_info.text = text;
   return column_info;
 }

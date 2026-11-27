@@ -49,6 +49,10 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
+  static constexpr duckdb::LogicalTypeId Output(const Options&) noexcept {
+    return duckdb::LogicalTypeId::BLOB;
+  }
+
   static constexpr std::string_view type_name() noexcept {
     return "generate_wildcard_ngrams";
   }
@@ -80,10 +84,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
 
   void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
 
-  void Unbind() noexcept final {
-    _analyzer->Unbind();
-    SetByteInput(false);
-  }
+  void Unbind() noexcept final { _analyzer->Unbind(); }
 
   void SetByteInput(bool bytes) noexcept { _bytes = bytes; }
   bool ByteInput() const noexcept { return _bytes; }
@@ -124,8 +125,6 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool _base_stable = false;
   bool _bytes = false;
 };
-
-void SetByteInput(Tokenizer& tokenizer);
 
 extern template class TypedTokenizer<WildcardTokenizer>;
 

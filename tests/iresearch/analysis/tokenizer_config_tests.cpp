@@ -339,6 +339,23 @@ TEST(TokenizerConfig, EverySpecRoundTripsThroughTheBinaryFormat) {
   EXPECT_GT(round_tripped, tests::fuzz::AllSpecs().size() / 2);
 }
 
+TEST(TokenizerConfig, EverySpecDeclaresTheOutputItsTokenizerReports) {
+  size_t checked = 0;
+  for (const auto& spec : tests::fuzz::AllSpecs()) {
+    SCOPED_TRACE(spec.name);
+    const auto cfg = spec.config();
+    const auto output = irs::analysis::OutputOf(cfg);
+    if (output == duckdb::LogicalTypeId::INVALID) {
+      continue;
+    }
+    const auto tokenizer =
+      irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg), tests::Cache());
+    EXPECT_EQ(output, tokenizer->Traits().output);
+    ++checked;
+  }
+  EXPECT_GT(checked, tests::fuzz::AllSpecs().size() / 2);
+}
+
 TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {
   const auto plain =
     Pack(Cfg{NGramTokenizer::Options{.min_gram = 2, .max_gram = 3}});

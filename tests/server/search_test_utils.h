@@ -57,7 +57,8 @@ inline duckdb::DatabaseInstance& EngineDb() {
   return irs::DuckDBEngine::Instance().instance();
 }
 
-inline catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
+inline catalog::ColumnTokenizer KeywordTokenizer(irs::field_id,
+                                                 duckdb::LogicalTypeId) {
   static auto gTokenizer = std::make_shared<catalog::Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});

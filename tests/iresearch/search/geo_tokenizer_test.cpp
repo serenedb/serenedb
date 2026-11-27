@@ -1655,23 +1655,6 @@ TEST(GeoJsonTokenizerSourceTest, invalidGeoJson) {
   }
 }
 
-TEST(GeoJsonTokenizerSourceTest, unbindResetsWkbInput) {
-  constexpr std::string_view kPoint =
-    R"({"type":"Point","coordinates":[37.6156,55.7522]})";
-
-  GeoJsonTokenizer::Options opts;
-  auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
-  auto& a = irs::analysis::GeoTokenizer::Cast(*tokenizer);
-
-  ASSERT_TRUE(FillGeoTerms(*tokenizer, kPoint).has_value());
-
-  a.SetWkbInput(true);
-  ASSERT_FALSE(FillGeoTerms(*tokenizer, kPoint).has_value());
-
-  tokenizer->Unbind();
-  ASSERT_TRUE(FillGeoTerms(*tokenizer, kPoint).has_value());
-}
-
 TEST(GeoJsonTokenizerSourceTest, prepareQuery) {
   {
     GeoJsonTokenizer::Options opts;

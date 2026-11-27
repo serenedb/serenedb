@@ -25,7 +25,6 @@
 
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <optional>
 #include <utility>
@@ -51,14 +50,6 @@ inline connector::SearchColumnInfo MakeSearchColumnInfo(
   irs::field_id field, const catalog::InvertedIndexField* info,
   duckdb::LogicalType type, catalog::ColumnTokenizer tokenizer) {
   const bool json_leaves = info && info->HasJsonLeafFields();
-  const auto& element = type.id() == duckdb::LogicalTypeId::LIST
-                          ? duckdb::ListType::GetChildType(type)
-                        : type.id() == duckdb::LogicalTypeId::ARRAY
-                          ? duckdb::ArrayType::GetChildType(type)
-                          : type;
-  if (element.id() == duckdb::LogicalTypeId::BLOB) {
-    irs::analysis::SetByteInput(*tokenizer.analyzer);
-  }
   return {
     .field_id = field,
     .nullable = info != nullptr,

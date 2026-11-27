@@ -67,6 +67,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
 
   TokenTraits Traits() const noexcept final {
     return {
+      .output = _analyzer->Traits().output,
       .explicit_pos =
         _output_unigrams || _producer.explicit_pos || _min != _max,
       .offsets = _producer.offsets,

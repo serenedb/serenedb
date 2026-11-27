@@ -39,12 +39,16 @@ UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
                               " produces a per-document store blob, which a "
                               "union cannot deliver"));
     }
-    if (i == 0) {
-      _output = traits.output;
-    } else if (traits.output != _output) {
-      _output = duckdb::LogicalTypeId::BLOB;
-    }
   }
+}
+
+TokenTraits UnionTokenizer::Traits() const noexcept {
+  auto output = duckdb::LogicalTypeId::VARCHAR;
+  for (size_t i = 0; i != _subs.size(); ++i) {
+    const auto type = _subs[i]->Traits().output;
+    output = i == 0 || type == output ? type : duckdb::LogicalTypeId::BLOB;
+  }
+  return {.output = output, .explicit_pos = true};
 }
 
 Tokenizer::ptr UnionTokenizer::Make(Options opts,

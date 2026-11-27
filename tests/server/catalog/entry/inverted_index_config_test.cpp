@@ -25,10 +25,6 @@
 namespace sdb::catalog {
 namespace {
 
-TEST(IndexTokenizersTest, AnUnknownFieldHasNoTokenType) {
-  EXPECT_EQ(duckdb::LogicalTypeId::INVALID, IndexTokenizers{}.Output(7));
-}
-
 TEST(InvertedIndexConfigTest, StoredExpressionNeedsAStoredField) {
   const auto keys = [] {
     return std::vector<InvertedIndexKey>{

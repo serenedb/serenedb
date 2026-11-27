@@ -59,8 +59,8 @@ class DataChunk;
 }  // namespace duckdb
 namespace sdb::connector {
 
-using TokenizerProvider =
-  absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
+using TokenizerProvider = absl::AnyInvocable<catalog::ColumnTokenizer(
+  irs::field_id, duckdb::LogicalTypeId)>;
 
 using EntryInfoProvider =
   absl::AnyInvocable<const catalog::InvertedIndexField*(irs::field_id)>;
@@ -69,15 +69,6 @@ inline EntryInfoProvider MakeEntryInfoProvider(
   const catalog::InvertedIndexConfig& config) {
   return
     [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
-}
-
-inline TokenizerProvider BoundTokenizers(
-  catalog::IndexTokenizers::Bound tokenizers) {
-  return [tokenizers = std::move(tokenizers)](irs::field_id id) mutable {
-    const auto it = tokenizers.find(id);
-    return it == tokenizers.end() ? catalog::ColumnTokenizer{}
-                                  : std::move(it->second);
-  };
 }
 
 inline std::vector<ColumnId> IndexedColumnIds(
@@ -256,7 +247,8 @@ class SearchSinkInsertBaseImpl {
   // Per-field tokenizer leases resolved once per sink: SwitchFieldImpl runs
   // per column per chunk, and re-resolving costs a catalog lookup plus an
   // analyzer pool round-trip each time.
-  catalog::ColumnTokenizer& ResolveTokenizer(irs::field_id field_id);
+  catalog::ColumnTokenizer& ResolveTokenizer(irs::field_id field_id,
+                                             duckdb::LogicalTypeId input);
 
   TokenizerProvider _tokenizer_provider;
   EntryInfoProvider _entry_info_provider;

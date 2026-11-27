@@ -325,16 +325,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   const auto& index = scan.Bind().relation.inverted_config;
   const auto* info = index->FindColumnInfo(col_id);
   const auto& col_type = col_ref->GetReturnType();
-  const auto element = [&] {
-    switch (col_type.id()) {
-      case duckdb::LogicalTypeId::LIST:
-        return duckdb::ListType::GetChildType(col_type).id();
-      case duckdb::LogicalTypeId::ARRAY:
-        return duckdb::ArrayType::GetChildType(col_type).id();
-      default:
-        return col_type.id();
-    }
-  }();
+  const auto element = connector::term_dict::ElementKind(col_type);
   if (!info || !info->IsTermDict() ||
       (element != duckdb::LogicalTypeId::VARCHAR &&
        element != duckdb::LogicalTypeId::BLOB)) {
@@ -354,8 +345,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
                              "returns"));
   }
   if (kind == TsDictColumn::Term) {
-    const auto output = scan.Bind().relation.ResolveTokenizers(context).Output(
-      index->TermField(col_id));
+    const auto output = scan.Bind().relation.ResolveTokenizers(context).Terms(
+      index->TermField(col_id), element);
     if (output != duckdb::LogicalTypeId::VARCHAR) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG(fn, "(): column has no text term dictionary"),
@@ -2195,7 +2186,8 @@ class TsDictFilterClaim {
     }
     auto& req = _bind_data.ts_dict.requests.front();
     if (!req.bytes) {
-      const auto output = _getters.tokenizers.Output(req.field_id);
+      const auto output =
+        _getters.tokenizers.Terms(req.field_id, duckdb::LogicalTypeId::VARCHAR);
       if (output != duckdb::LogicalTypeId::VARCHAR) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

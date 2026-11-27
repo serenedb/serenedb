@@ -180,7 +180,8 @@ duckdb::Vector MakeSqlNullVector(duckdb::idx_t count) {
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
-  static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
+  static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id,
+                                                   duckdb::LogicalTypeId) {
     static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
       search::Features{}, irs::analysis::TokenizerConfig{
                             .config = irs::KeywordTokenizer::Options{}});

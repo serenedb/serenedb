@@ -23,10 +23,13 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/serializer.hpp>
+#include <memory>
 #include <string>
 #include <variant>
 
+#include "../../engine_context.h"
 #include "catalog/entry/tokenizer.h"
 
 namespace sdb::catalog {
@@ -137,18 +140,21 @@ TEST(TokenizerEntry, TrailingBytesAreRefused) {
   EXPECT_FALSE(UnpackError(bytes).empty());
 }
 
-TEST(TokenizerEntry, OutputIsTheTypeOfItsTokens) {
-  const auto keyword = std::make_shared<Tokenizer>(
-    search::Features{},
+TEST(TokenizerEntry, AnAnalyzerKeepsTheInputItWasAcquiredFor) {
+  irs::analysis::WildcardTokenizer::Options options;
+  options.base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
-  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, keyword->Output());
-  const auto collation = std::make_shared<Tokenizer>(
+  const auto wildcard = std::make_shared<Tokenizer>(
     search::Features{},
-    irs::analysis::TokenizerConfig{
-      .config = irs::analysis::CollationTokenizer::Options{
-        .locale = duckdb::text::Locale::FromName("en_US.UTF-8")}});
-  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, collation->Output());
-  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, collation->Output());
+    irs::analysis::TokenizerConfig{.config = std::move(options)});
+  const auto byte_input = [&](duckdb::LogicalTypeId input) {
+    const auto analyzer = wildcard->Acquire(sdb::test::EngineContext(), input);
+    return irs::utils::downCast<irs::analysis::WildcardTokenizer>(*analyzer)
+      .ByteInput();
+  };
+  EXPECT_TRUE(byte_input(duckdb::LogicalTypeId::BLOB));
+  EXPECT_FALSE(byte_input(duckdb::LogicalTypeId::VARCHAR));
+  EXPECT_TRUE(byte_input(duckdb::LogicalTypeId::BLOB));
 }
 
 }  // namespace

@@ -70,6 +70,7 @@ struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
+  duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR;
 };
 
 struct InvertedIndexField : persistence::FieldRecord {
@@ -249,17 +250,18 @@ duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
 
 class IndexTokenizers {
  public:
-  using Bound = irs::containers::FlatHashMap<irs::field_id, ColumnTokenizer>;
-
   IndexTokenizers() = default;
   IndexTokenizers(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   const InvertedIndexConfig& config);
 
-  ColumnTokenizer Acquire(irs::field_id field_id) const;
-  ColumnTokenizer Acquire(irs::field_id field_id,
-                          duckdb::ClientContext& context) const;
-  duckdb::LogicalTypeId Output(irs::field_id field_id) const;
-  Bound AcquireAll(duckdb::ClientContext& context) const;
+  ColumnTokenizer Acquire(
+    irs::field_id field_id,
+    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
+  ColumnTokenizer Acquire(
+    irs::field_id field_id, duckdb::ClientContext& context,
+    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
+  duckdb::LogicalTypeId Terms(irs::field_id field_id,
+                              duckdb::LogicalTypeId input) const;
 
  private:
   struct Field {

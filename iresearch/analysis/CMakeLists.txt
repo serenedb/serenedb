@@ -35,6 +35,7 @@ target_sources(
         text/dict/stem_cache.cpp
         text/dict/stopwords_loader.cpp
         token_attributes.cpp
+        tokenizer_config.cpp
         tokenizer_pool.cpp
         union_tokenizer.cpp
         wildcard_tokenizer.cpp

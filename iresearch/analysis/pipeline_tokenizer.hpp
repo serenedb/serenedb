@@ -58,7 +58,11 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
     return irs::Type<PipelineTokenizer>::id();
   }
 
-  TokenTraits Traits() const noexcept final { return _traits; }
+  TokenTraits Traits() const noexcept final {
+    auto traits = _traits;
+    traits.output = _pipeline.back()->Traits().output;
+    return traits;
+  }
 
   BlockTraits WantedBlockTraits() const noexcept final {
     return _wanted_traits;

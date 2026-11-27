@@ -70,6 +70,7 @@ irs::analysis::Tokenizer::ptr MakeNGram(size_t min_gram, size_t max_gram,
       .min_gram = min_gram,
       .max_gram = max_gram,
       .preserve_original = preserve_original,
+      .stream_bytes_type = irs::analysis::NGramTokenizer::InputType::UTF8,
     });
 }
 

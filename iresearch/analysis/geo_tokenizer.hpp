@@ -122,6 +122,10 @@ class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
+  static constexpr duckdb::LogicalTypeId Output(const Options&) noexcept {
+    return duckdb::LogicalTypeId::BLOB;
+  }
+
   static constexpr std::string_view type_name() noexcept {
     return "encode_geopoint";
   }
@@ -133,8 +137,6 @@ class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
   TokenTraits Traits() const noexcept final {
     return {.output = duckdb::LogicalTypeId::BLOB};
   }
-
-  void Unbind() noexcept final { SetWkbInput(false); }
 
   size_t MemoryUsage() const noexcept final { return ScratchMemoryUsage(); }
 
@@ -183,6 +185,10 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
+  static constexpr duckdb::LogicalTypeId Output(const Options&) noexcept {
+    return duckdb::LogicalTypeId::BLOB;
+  }
+
   static constexpr std::string_view type_name() noexcept {
     return "encode_geojson";
   }
@@ -197,8 +203,6 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
       .store = _coding != Coding::Source,
     };
   }
-
-  void Unbind() noexcept final { SetWkbInput(false); }
 
   size_t MemoryUsage() const noexcept final {
     return ScratchMemoryUsage() + _cache.capacity() * sizeof(S2LatLng) +

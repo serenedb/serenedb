@@ -61,6 +61,19 @@ duckdb::LogicalTypeId ElementType(const duckdb::LogicalType& type) noexcept {
            : type.id();
 }
 
+duckdb::LogicalTypeId TermType(const duckdb::LogicalType& type) {
+  const auto element = ElementType(type);
+  if (element != duckdb::LogicalTypeId::VARCHAR &&
+      element != duckdb::LogicalTypeId::BLOB) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG(
+        "sql: expression must return VARCHAR, BLOB, or a list of them, got ",
+        type.ToString()));
+  }
+  return element;
+}
+
 void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
   switch (expr.GetExpressionClass()) {
     case duckdb::ExpressionClass::SUBQUERY:
@@ -385,7 +398,8 @@ const duckdb::Expression& SqlExpression::Bind(duckdb::ClientContext& ctx) {
 
 SqlTokenizer::SqlTokenizer(const Options& opts,
                            duckdb::SharedObjectCache& cache)
-  : _expression{SqlExpression::Get(cache, type_name(), opts.expression)} {}
+  : _expression{SqlExpression::Get(cache, type_name(), opts.expression)},
+    _output{opts.output} {}
 
 SqlTokenizer::~SqlTokenizer() = default;
 
@@ -394,9 +408,19 @@ Tokenizer::ptr SqlTokenizer::Make(Options opts,
   return std::make_unique<SqlTokenizer>(opts, cache);
 }
 
+duckdb::LogicalTypeId SqlTokenizer::ResolveOutput(
+  std::string_view expression, duckdb::ClientContext& ctx,
+  duckdb::SharedObjectCache& cache) {
+  return TermType(SqlExpression::Get(cache, type_name(), expression)
+                    ->Bind(ctx)
+                    .GetReturnType());
+}
+
 TokenTraits SqlTokenizer::Traits() const noexcept {
   if (!_expr) {
-    return {};
+    return {.output = _output == duckdb::LogicalTypeId::INVALID
+                        ? duckdb::LogicalTypeId::VARCHAR
+                        : _output};
   }
   const auto& type = _expr->GetReturnType();
   return {.output = ElementType(type),
@@ -405,15 +429,15 @@ TokenTraits SqlTokenizer::Traits() const noexcept {
 
 void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {
   const auto& expr = _expression->Bind(ctx);
-  const auto& type = expr.GetReturnType();
-  const auto element = ElementType(type);
-  if (element != duckdb::LogicalTypeId::VARCHAR &&
-      element != duckdb::LogicalTypeId::BLOB) {
+  const auto element = TermType(expr.GetReturnType());
+  if (_output != duckdb::LogicalTypeId::INVALID && element != _output) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-      ERR_MSG(
-        "sql: expression must return VARCHAR, BLOB, or a list of them, got ",
-        type.ToString()));
+      ERR_MSG("sql: expression returns ",
+              duckdb::LogicalTypeIdToString(element),
+              ", but the dictionary was created when it returned ",
+              duckdb::LogicalTypeIdToString(_output)),
+      ERR_HINT("Recreate the text search dictionary."));
   }
   _expr = &expr;
   try {

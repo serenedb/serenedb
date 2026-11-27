@@ -799,7 +799,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
   };
 
   if (_layout == irs::DictLayout::Json) {
-    _field.PrepareForJsonValue(ResolveTokenizer(field_id), _layout);
+    _field.PrepareForJsonValue(
+      ResolveTokenizer(field_id, duckdb::LogicalTypeId::VARCHAR), _layout);
     if (irs::field_limits::valid(_field.store_column)) {
       EnsureBlobColumnWriter(_field.store_column);
     }
@@ -826,19 +827,17 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       (kind == duckdb::LogicalTypeId::ARRAY ? duckdb::ArrayType::GetSize(type)
                                             : 0);
     if (_layout == irs::DictLayout::JsonList) {
-      _field.PrepareForJsonValue(ResolveTokenizer(field_id), _layout);
+      _field.PrepareForJsonValue(
+        ResolveTokenizer(field_id, duckdb::LogicalTypeId::VARCHAR), _layout);
       append_stored();
       WriteJsonListBatch(count, array_size);
       return;
     }
     if (child_kind == duckdb::LogicalTypeId::VARCHAR ||
         child_kind == duckdb::LogicalTypeId::BLOB) {
-      auto& tokenizer = ResolveTokenizer(field_id);
+      auto& tokenizer = ResolveTokenizer(field_id, child_kind);
       _field.PrepareForStringValue(
         tokenizer, {.layout = _layout, .member = irs::DictMember::Strings});
-      if (child_kind == duckdb::LogicalTypeId::BLOB) {
-        SetByteInput(*tokenizer.analyzer);
-      }
     } else if (term_dict::IsNumeric(child_kind)) {
       _field.PrepareForNumericValue(
         {.layout = _layout, .member = irs::DictMember::Numbers});
@@ -860,14 +859,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB:
     case duckdb::LogicalTypeId::GEOMETRY: {
-      auto& tokenizer = ResolveTokenizer(field_id);
+      auto& tokenizer = ResolveTokenizer(field_id, kind);
       _field.PrepareForStringValue(tokenizer, irs::StringLayout::kStrings);
-      if (kind == duckdb::LogicalTypeId::GEOMETRY) {
-        irs::analysis::GeoTokenizer::Cast(*tokenizer.analyzer)
-          .SetWkbInput(true);
-      } else if (kind == duckdb::LogicalTypeId::BLOB) {
-        SetByteInput(*tokenizer.analyzer);
-      }
       append_stored();
       if (_field.keyword) {
         WriteKeywordColumn(_field, vec, count);
@@ -905,10 +898,10 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 }
 
 catalog::ColumnTokenizer& SearchSinkInsertBaseImpl::ResolveTokenizer(
-  irs::field_id field_id) {
+  irs::field_id field_id, duckdb::LogicalTypeId input) {
   auto& tokenizer = _tokenizer_cache.try_emplace(field_id).first->second;
   if (!tokenizer.analyzer) {
-    tokenizer = _tokenizer_provider(field_id);
+    tokenizer = _tokenizer_provider(field_id, input);
   }
   return tokenizer;
 }
@@ -1048,15 +1041,18 @@ SearchTableInsertSink MakeSearchTableInsertSink(
   for (const auto& key : config->constraint_keys) {
     constraint_keys.emplace_back(context, shard.GetId(), key);
   }
-  auto tokenizers =
-    catalog::IndexTokenizers{context, catalog, *config}.AcquireAll(context);
+  auto tokenizers = [dicts =
+                       catalog::IndexTokenizers{context, catalog, *config}](
+                      irs::field_id id, duckdb::LogicalTypeId input) {
+    return dicts.Acquire(id, input);
+  };
   auto entry_of = [config](irs::field_id field_id) {
     const auto* entry = config->FindEntry(field_id);
     return entry ? entry : AllStoredEntry();
   };
   trx.SetFieldOptions(config);
   return {.sink = std::make_unique<SearchSinkInsertBaseImpl>(
-            trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
+            trx, std::move(tokenizers), std::move(entry_of),
             catalog::PkColumnKind::None, std::move(indexed_exprs), config.get(),
             std::move(constraint_keys)),
           .version = version};

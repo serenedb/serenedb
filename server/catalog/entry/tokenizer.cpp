@@ -22,7 +22,6 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/common/atomic.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -32,6 +31,20 @@
 #include "catalog/persistence/blob.h"
 
 namespace sdb::catalog {
+namespace {
+
+size_t PoolOf(duckdb::LogicalTypeId input) noexcept {
+  switch (input) {
+    case duckdb::LogicalTypeId::BLOB:
+      return 1;
+    case duckdb::LogicalTypeId::GEOMETRY:
+      return 2;
+    default:
+      return 0;
+  }
+}
+
+}  // namespace
 
 std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config) {
   return persistence::Pack(config);
@@ -59,42 +72,41 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
   permissions = info.permissions;
 }
 
-irs::analysis::Tokenizer::ptr Tokenizer::Take() const {
+Tokenizer::TokenizerWrapper Tokenizer::Acquire(
+  duckdb::ClientContext& context, duckdb::LogicalTypeId input) const {
   irs::analysis::Tokenizer::ptr analyzer;
   {
     const absl::MutexLock lock{&_mutex};
-    if (!_pool.empty()) {
-      analyzer = std::move(_pool.back());
-      _pool.pop_back();
+    auto& pool = _pools[PoolOf(input)];
+    if (!pool.empty()) {
+      analyzer = std::move(pool.back());
+      pool.pop_back();
     }
   }
   if (!analyzer) {
     analyzer = irs::analysis::CreateTokenizer(
       irs::analysis::Clone(_config),
       irs::DuckDBEngine::Instance().instance().GetSharedObjectCache());
-    duckdb::StoreRacy(_output, analyzer->Traits().output);
+    irs::analysis::SetInput(*analyzer, input);
   }
-  return analyzer;
-}
-
-Tokenizer::TokenizerWrapper Tokenizer::Acquire(
-  duckdb::ClientContext& context) const {
-  TokenizerWrapper wrapper{Take().release(), Deleter{shared_from_this()}};
+  TokenizerWrapper wrapper{analyzer.release(),
+                           Deleter{shared_from_this(), input}};
   wrapper->Bind(context);
   return wrapper;
 }
 
-duckdb::LogicalTypeId Tokenizer::Output() const {
-  if (duckdb::LoadRacy(_output) == duckdb::LogicalTypeId::INVALID) {
-    Release(Take());
-  }
-  return duckdb::LoadRacy(_output);
+duckdb::LogicalTypeId Tokenizer::Output(duckdb::ClientContext& context) const {
+  const auto output = irs::analysis::OutputOf(_config);
+  return output != duckdb::LogicalTypeId::INVALID
+           ? output
+           : Acquire(context)->Traits().output;
 }
 
-void Tokenizer::Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept {
+void Tokenizer::Release(duckdb::LogicalTypeId input,
+                        irs::analysis::Tokenizer::ptr analyzer) const noexcept {
   analyzer->Unbind();
   const absl::MutexLock lock{&_mutex};
-  _pool.emplace_back(std::move(analyzer));
+  _pools[PoolOf(input)].emplace_back(std::move(analyzer));
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {

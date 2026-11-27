@@ -178,6 +178,7 @@ struct TsDictRequest {
   TsDictTermUses term_uses = TsDictTermUses::None;
   irs::DictLayout layout = irs::DictLayout::String;
   bool nulls = false;
+  bool bytes = false;
 };
 
 struct TsDictSpec {

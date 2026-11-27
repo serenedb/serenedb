@@ -858,6 +858,63 @@ term	freq
 666F78	2
 717569636B	2
 
+# The aligned lists work without ts_dict_raw_agg next to them, and so do
+# filters over the terms.
+query
+SELECT list_sort(ts_dict_count(v)) AS rows FROM bt_idx
+----
+rows
+{1,1,1,1,1,1,1}
+
+query
+SELECT unnest(ts_dict_count(v)) AS rows FROM bt_idx WHERE v @@ ts_starts_with('\xc3'::bytea) ORDER BY rows
+----
+rows
+1
+1
+
+query
+SELECT list_sort(ts_dict_freq(p)) AS freq FROM bp_idx
+----
+freq
+{2,2}
+
+query
+SELECT list_sort(ts_dict_score(v)) AS similarity FROM bt_idx WHERE v @@ ts_levenshtein('\xc3a8'::bytea, 1)
+----
+similarity
+{0,0.5}
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(v), lambda x: hex(x))) AS terms,
+       list_sort(ts_dict_count(v)) AS rows
+FROM bt_idx
+WHERE octet_length(v) = 2
+----
+terms	rows
+{6262,C3A9,E4B8,FF61}	{1,1,1,1}
+
+query
+SELECT list_sort(ts_dict_count(v)) AS rows FROM bt_idx WHERE octet_length(v) = 1
+----
+rows
+{1,1}
+
+statement ok
+CREATE TABLE bl(id INTEGER PRIMARY KEY, l BYTEA[])
+
+statement ok
+CREATE INDEX bl_idx ON bl USING inverted(id, l)
+
+statement ok
+INSERT INTO bl VALUES (1, ['\xff61'::bytea, '\x62'::bytea]), (2, ['\xff61'::bytea])
+
+query
+SELECT list_sort(ts_dict_count(l)) AS rows FROM bl_idx
+----
+rows
+{1,2}
+
 statement ok
 CREATE TABLE bd(id INTEGER PRIMARY KEY, a VARCHAR, b BYTEA, e FLOAT[3])
 

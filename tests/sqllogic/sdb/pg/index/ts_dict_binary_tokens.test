@@ -43,6 +43,19 @@ grams	counts
 {3637FF,37FF,FF3637}	{2,2,2}
 
 query
+SELECT list_sort(ts_dict_count(w)) AS counts FROM beast_idx
+----
+counts
+{2,2,2}
+
+statement error
+SELECT ts_dict_count(w) FROM beast_idx WHERE length(w) = 3
+----
+db error: ERROR: ts_dict_agg() WHERE evaluates scalar post-filters over text terms only
+HINT: the column's dictionary produces BLOB tokens
+
+
+query
 SELECT list_sort(ts_dict_agg(k)) AS channels FROM beast_idx
 ----
 channels

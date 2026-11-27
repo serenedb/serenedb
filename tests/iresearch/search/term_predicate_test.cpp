@@ -389,6 +389,34 @@ TEST(term_predicate_test, edit_distance_zero_is_term_match) {
   EXPECT_FALSE(Accepts(*pred, "abd"));
 }
 
+TEST(term_predicate_test, edit_distance_compares_bytes) {
+  irs::ByEditDistance f;
+  f.mutable_options()->term = irs::bstring{B("a\xC3\xA9")};
+  f.mutable_options()->max_distance = 1;
+  f.mutable_options()->bytes = true;
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "a\xC3\xA9"));
+  EXPECT_TRUE(Accepts(*pred, "a\xC3"));
+  EXPECT_TRUE(Accepts(*pred, "a\xC3\xA8"));
+  EXPECT_FALSE(Accepts(*pred, "ae"));
+}
+
+TEST(term_predicate_test, edit_distance_starts_with_compares_bytes) {
+  irs::ByEditDistance f;
+  f.mutable_options()->term = irs::bstring{B("a\xC3\xA9")};
+  f.mutable_options()->max_distance = 1;
+  f.mutable_options()->starts_with = true;
+  f.mutable_options()->bytes = true;
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "a\xC3\xA9xyz"));
+  EXPECT_TRUE(Accepts(*pred, "a\xC3"));
+  EXPECT_FALSE(Accepts(*pred, "aex"));
+}
+
 TEST(term_predicate_test, all_and_empty) {
   irs::All all;
   const auto all_pred = all.CompileTermPredicate();

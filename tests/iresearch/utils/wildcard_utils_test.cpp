@@ -127,6 +127,20 @@ TEST_F(WildcardUtilsTest, wildcard_type) {
               irs::ViewCast<irs::byte_type>(std::string_view("%c%%"))));
 }
 
+TEST_F(WildcardUtilsTest, wildcard_type_bytes) {
+  const auto type = [](std::string_view pattern) {
+    return irs::ComputeWildcardType(irs::ViewCast<irs::byte_type>(pattern),
+                                    true);
+  };
+  ASSERT_EQ(irs::WildcardType::Term, type("\xD0"));
+  ASSERT_EQ(irs::WildcardType::Prefix, type("\xD0\x25"));
+  ASSERT_EQ(irs::WildcardType::Prefix, type("\xD0\x25\x25"));
+  ASSERT_EQ(irs::WildcardType::Prefix, type("\xD0\xE2\x25"));
+  ASSERT_EQ(irs::WildcardType::Wildcard, type("\xD0\x5F"));
+  ASSERT_EQ(irs::WildcardType::Wildcard, type("\x25\xD0\x25"));
+  ASSERT_EQ(irs::WildcardType::TermEscaped, type("\xD0\\\x25"));
+}
+
 TEST_F(WildcardUtilsTest, wildcard_prefix) {
   ASSERT_EQ(B("foo"), irs::ExtractWildcardPrefix(B("foo%")));
   ASSERT_EQ(B("foo"), irs::ExtractWildcardPrefix(B("foo%%")));

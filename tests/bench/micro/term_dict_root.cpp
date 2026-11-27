@@ -454,13 +454,16 @@ void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance,
   const auto targets = typos ? TyposOf(data) : TargetsOf(data);
   state.counters["targets"] = static_cast<double>(targets.size());
   const auto& description = irs::DefaultPDP(distance, false);
-  std::vector<std::shared_ptr<const irs::LevenshteinAcceptor>> fuzzy;
+  std::vector<std::shared_ptr<const irs::BasicLevenshteinAcceptor<false>>>
+    fuzzy;
   std::vector<std::shared_ptr<const irs::FuzzyConjunction>> dfas;
   for (const auto& target : targets) {
-    fuzzy.push_back(std::make_shared<const irs::LevenshteinAcceptor>(
-      description, bytes_view{}, target));
+    fuzzy.push_back(
+      std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+        description, bytes_view{}, target));
     dfas.push_back(
-      irs::FuzzyConjunctionOf<irs::LevenshteinAcceptor>::Make(fuzzy.back()));
+      irs::FuzzyConjunctionOf<irs::BasicLevenshteinAcceptor<false>>::Make(
+        fuzzy.back()));
   }
   size_t terms = 0;
   for (auto _ : state) {

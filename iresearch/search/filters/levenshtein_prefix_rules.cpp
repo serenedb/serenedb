@@ -43,6 +43,11 @@ struct LevenshteinPrefixFusionRule {
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
 };
 
+bool SplitsCharacter(const ByEditDistanceOptions& opts, bytes_view target,
+                     size_t cut) noexcept {
+  return !opts.bytes && cut < target.size() && (target[cut] & 0xC0) == 0x80;
+}
+
 struct PrefixEntry {
   const Filter* node;
   field_id field;
@@ -92,7 +97,9 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
     for (const auto& entry : prefixes) {
       if (entry.field != filter.field_id() ||
           (scores && entry.scorer != child->GetScorer()) ||
-          !bytes_view{target}.starts_with(entry.term)) {
+          !bytes_view{target}.starts_with(entry.term) ||
+          (entry.term.size() > opts.prefix.size() &&
+           SplitsCharacter(opts, target, entry.term.size()))) {
         continue;
       }
       changed = true;

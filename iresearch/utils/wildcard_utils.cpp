@@ -29,7 +29,7 @@
 
 namespace irs {
 
-WildcardType ComputeWildcardType(bytes_view pattern) noexcept {
+WildcardType ComputeWildcardType(bytes_view pattern, bool bytes) noexcept {
   if (pattern.empty()) {
     return WildcardType::Term;
   }
@@ -41,7 +41,7 @@ WildcardType ComputeWildcardType(bytes_view pattern) noexcept {
 
   const auto* it = pattern.data();
   const auto* end = it + pattern.size();
-  for (; it != end; it = utf8_utils::Next(it, end)) {
+  for (; it != end; it = bytes ? it + 1 : utf8_utils::Next(it, end)) {
     auto prev_any_str = std::exchange(curr_any_str, 0);
     if (escaped) {
       escaped = false;

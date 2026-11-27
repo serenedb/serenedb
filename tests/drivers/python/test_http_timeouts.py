@@ -37,13 +37,13 @@ def test_a_response_read_slower_than_the_timeouts_arrives_whole(http_port):
     size = 64 << 20
     conn = http.client.HTTPConnection("127.0.0.1", http_port, timeout=120)
     try:
-        conn.request("GET", f"/_test/bytes?n={size}",
+        conn.request("GET", f"/test/bytes?n={size}",
                      headers={"Authorization": AUTH})
         response = conn.getresponse()
         assert response.status == 200
         time.sleep(3)
         assert len(response.read()) == size
-        conn.request("GET", "/_test/ping", headers={"Authorization": AUTH})
+        conn.request("GET", "/test/ping", headers={"Authorization": AUTH})
         response = conn.getresponse()
         assert response.status == 200
         assert response.read() == b"pong"
@@ -52,7 +52,7 @@ def test_a_response_read_slower_than_the_timeouts_arrives_whole(http_port):
 
 
 def echo_head(length):
-    return (f"POST /_test/echo HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+    return (f"POST /test/echo HTTP/1.1\r\nHost: 127.0.0.1\r\n"
             f"Authorization: {AUTH}\r\nContent-Length: {length}\r\n\r\n").encode()
 
 

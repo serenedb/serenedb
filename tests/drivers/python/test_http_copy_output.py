@@ -45,7 +45,7 @@ def http_conn():
 
 
 def copy(conn: http.client.HTTPConnection, sql: str) -> tuple[int, bytes]:
-    conn.request("POST", "/_test/copy", body=sql.encode(),
+    conn.request("POST", "/test/copy", body=sql.encode(),
                  headers={"Authorization": AUTH, "Content-Type": "text/plain"})
     response = conn.getresponse()
     return response.status, response.read()
@@ -102,7 +102,7 @@ def _running(conn: psycopg.Connection, marker: str) -> int:
 def test_a_client_that_goes_away_cancels_its_query(leave, query):
     marker = f"drv_http_copy_cancel_{leave.replace('-', '_')}"
     sql = f"COPY ({query.format(marker=marker)}) TO STDOUT".encode()
-    request = (f"POST /_test/copy HTTP/1.1\r\nHost: {HOST}\r\n"
+    request = (f"POST /test/copy HTTP/1.1\r\nHost: {HOST}\r\n"
                f"Authorization: {AUTH}\r\n"
                f"Content-Length: {len(sql)}\r\n\r\n").encode() + sql
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:

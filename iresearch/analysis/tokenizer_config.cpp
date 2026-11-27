@@ -82,16 +82,14 @@ void ResolveSqlOutputs(TokenizerConfig& cfg, duckdb::ClientContext& ctx,
                                           PipelineTokenizer::Options> ||
                            std::is_same_v<Options, UnionTokenizer::Options>) {
         for (auto& child : opts.children) {
-          if (child) {
-            ResolveSqlOutputs(*child, ctx, cache);
-          }
+          SDB_ASSERT(child);
+          ResolveSqlOutputs(*child, ctx, cache);
         }
       } else if constexpr (std::is_same_v<Options,
                                           WildcardTokenizer::Options> ||
                            std::is_same_v<Options, ShingleTokenizer::Options>) {
-        if (opts.base_analyzer) {
-          ResolveSqlOutputs(*opts.base_analyzer, ctx, cache);
-        }
+        SDB_ASSERT(opts.base_analyzer);
+        ResolveSqlOutputs(*opts.base_analyzer, ctx, cache);
       }
     },
     cfg.config);

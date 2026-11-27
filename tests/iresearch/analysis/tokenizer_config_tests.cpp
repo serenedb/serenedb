@@ -376,6 +376,32 @@ TEST(TokenizerConfig, AnSqlStageWithoutItsTypeLeavesTheOutputUnknown) {
   EXPECT_EQ(duckdb::LogicalTypeId::BLOB, OutputOf(Cfg{std::move(mixed)}));
 }
 
+TEST(TokenizerConfig, APipelineTakesTheTypeOfItsLastStageButADroppedKeyword) {
+  const auto bytes = [] {
+    return Cfg{NGramTokenizer::Options{
+      .min_gram = 2,
+      .max_gram = 2,
+      .preserve_original = false,
+      .stream_bytes_type = NGramTokenizer::InputType::Binary}};
+  };
+  PipelineTokenizer::Options trailing;
+  trailing.children.push_back(Child(bytes()));
+  trailing.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
+  PipelineTokenizer::Options leading;
+  leading.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
+  leading.children.push_back(Child(bytes()));
+  const auto check = [](const Cfg& pipeline) {
+    EXPECT_EQ(duckdb::LogicalTypeId::BLOB, OutputOf(pipeline));
+    EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+              irs::analysis::CreateTokenizer(irs::analysis::Clone(pipeline),
+                                             tests::Cache())
+                ->Traits()
+                .output);
+  };
+  check(Cfg{std::move(trailing)});
+  check(Cfg{std::move(leading)});
+}
+
 TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {
   const auto plain =
     Pack(Cfg{NGramTokenizer::Options{.min_gram = 2, .max_gram = 3}});

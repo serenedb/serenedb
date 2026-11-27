@@ -251,6 +251,27 @@ TEST(WildcardNGramFilterOptionsTest, short_pieces) {
   EXPECT_NE(nullptr, irs::ByWildcardNGramOptions("bcde%", four, false).matcher);
 }
 
+TEST(WildcardNGramFilterOptionsTest, byte_pieces_on_character_grams) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  const auto part = [&](std::string_view like) {
+    const irs::ByWildcardNGramOptions opts{like, analyzer, false, true};
+    EXPECT_NE(nullptr, opts.matcher) << like;
+    EXPECT_EQ(1U, opts.grams.size()) << like;
+    EXPECT_EQ(1U, opts.grams.front().size()) << like;
+    return opts.grams.front().begin()->part;
+  };
+  const auto prefix = [](std::string_view term) {
+    return irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{
+      {.term = irs::bstring{irs::ViewCast<irs::byte_type>(term)}}}};
+  };
+  EXPECT_EQ(prefix("bc"), part("\xA9"
+                               "bc%"));
+  EXPECT_EQ(prefix("ab"), part("%ab\xC3"));
+  EXPECT_EQ(irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{}},
+            part("%\xA9"));
+}
+
 TEST(WildcardNGramFilterOptionsTest, equality_empty) {
   irs::ByWildcardNGramOptions a;
   irs::ByWildcardNGramOptions b;

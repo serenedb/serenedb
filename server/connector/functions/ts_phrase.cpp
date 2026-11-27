@@ -760,9 +760,6 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
     }
 
     auto get_text_arg = [&] {
-      if (!f) {
-        return std::move(bare_text);
-      }
       std::string out;
       if (f->GetChildren().size() != 1) {
         THROW_SQL_ERROR(
@@ -778,15 +775,10 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
     };
 
     switch (leaf_op) {
-      case TSQueryOp::Term: {
-        if (!f) {
-          EmitPhraseTokens(options, ctx, column_info, bare_text, gap);
-          break;
-        }
-        auto text = get_text_arg();
-        options.push_back<irs::ByTermOptions>(gap.min, gap.max)
-          .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
-      } break;
+      case TSQueryOp::Term:
+        SDB_ASSERT(!f);
+        EmitPhraseTokens(options, ctx, column_info, bare_text, gap);
+        break;
       case TSQueryOp::Prefix: {
         auto text = get_text_arg();
         options.push_back<irs::ByPrefixOptions>(gap.min, gap.max)

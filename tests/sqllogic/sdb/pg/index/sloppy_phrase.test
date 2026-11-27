@@ -589,3 +589,24 @@ SELECT id FROM sloppy_stem_idx WHERE body @@ (ts_any(['quick fox']) ## 'dog');
 ----
 db error: ERROR: ## ts_any phrase part term 'quick fox' spans several positions
 HINT: A phrase position holds one token; use ts_phrase for a run of words.
+
+
+query error
+SELECT id FROM sloppy_stem_idx WHERE body @@ (ts_any(['!!']) ## 'dog');
+----
+db error: ERROR: ## ts_any phrase part produced no tokens after analysis
+HINT: All its terms were stripped (e.g. stopwords). Provide at least one searchable term.
+
+
+query error
+SELECT id FROM sloppy_seg_idx WHERE body @@ (ts_phrase('quick', slpo := 1) ## 'dog');
+----
+db error: ERROR: ts_phrase has no argument named slpo
+HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INTEGER[].
+
+
+query error
+SELECT id FROM sloppy_seg_idx WHERE body @@ ts_phrase('quick', id::VARCHAR);
+----
+db error: ERROR: ts_phrase argument 1 must be a constant
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).

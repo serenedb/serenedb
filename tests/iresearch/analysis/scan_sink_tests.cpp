@@ -307,7 +307,10 @@ std::vector<Fixture> Fixtures() {
         std::vector<TokenizerConfig> stages;
         stages.emplace_back(make());
         stages.emplace_back(NGramTokenizer::Options{
-          .min_gram = 2, .max_gram = 3, .preserve_original = false});
+          .min_gram = 2,
+          .max_gram = 3,
+          .preserve_original = false,
+          .stream_bytes_type = NGramTokenizer::InputType::UTF8});
         auto filters = Filters(1);
         stages.insert(stages.end(), std::make_move_iterator(filters.begin()),
                       std::make_move_iterator(filters.end()));

@@ -48,7 +48,8 @@ class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
   };
   static ptr Make(Options opts);
 
-  static duckdb::LogicalTypeId Output(const Options& opts) noexcept {
+  static duckdb::LogicalTypeId Output(const Options& opts,
+                                      duckdb::LogicalTypeId) noexcept {
     return opts.delimiter.empty() ? duckdb::LogicalTypeId::BLOB
                                   : duckdb::LogicalTypeId::VARCHAR;
   }

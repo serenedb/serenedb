@@ -25,11 +25,12 @@
 
 namespace irs::analysis {
 
-duckdb::LogicalTypeId OutputOf(const TokenizerConfig& cfg) noexcept {
+duckdb::LogicalTypeId OutputOf(const TokenizerConfig& cfg,
+                               duckdb::LogicalTypeId input) noexcept {
   return std::visit(
-    []<typename Options>(const Options& opts) {
-      if constexpr (requires { Options::Owner::Output(opts); }) {
-        return Options::Owner::Output(opts);
+    [&]<typename Options>(const Options& opts) {
+      if constexpr (requires { Options::Owner::Output(opts, input); }) {
+        return Options::Owner::Output(opts, input);
       } else {
         return duckdb::LogicalTypeId::VARCHAR;
       }

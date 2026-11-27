@@ -75,7 +75,8 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
 
   static constexpr std::string_view type_name() noexcept { return "sql"; }
 
-  static duckdb::LogicalTypeId Output(const Options& opts) noexcept {
+  static duckdb::LogicalTypeId Output(const Options& opts,
+                                      duckdb::LogicalTypeId) noexcept {
     return opts.output;
   }
   static duckdb::LogicalTypeId ResolveOutput(std::string_view expression,

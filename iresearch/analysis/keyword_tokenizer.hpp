@@ -34,6 +34,10 @@ class KeywordTokenizer : public analysis::TypedTokenizer<KeywordTokenizer>,
     using Owner = KeywordTokenizer;
   };
   static ptr Make(Options) { return std::make_unique<KeywordTokenizer>(); }
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 
   TokenTraits Traits() const noexcept final {
     return {

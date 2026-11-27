@@ -73,7 +73,8 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
   size_t max_gram() const noexcept { return _options.max_gram; }
   bool preserve_original() const noexcept { return _options.preserve_original; }
 
-  static duckdb::LogicalTypeId Output(const Options& opts) noexcept {
+  static duckdb::LogicalTypeId Output(const Options& opts,
+                                      duckdb::LogicalTypeId) noexcept {
     return opts.stream_bytes_type == InputType::Binary
              ? duckdb::LogicalTypeId::BLOB
              : duckdb::LogicalTypeId::VARCHAR;
@@ -81,7 +82,7 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
 
   TokenTraits Traits() const noexcept final {
     return {
-      .output = Output(_options),
+      .output = Output(_options, duckdb::LogicalTypeId::VARCHAR),
       .explicit_pos = !DenseFill(),
       .offsets = true,
     };

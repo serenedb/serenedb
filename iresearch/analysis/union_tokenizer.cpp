@@ -62,10 +62,11 @@ TokenTraits UnionTokenizer::Traits() const noexcept {
   return {.output = output, .explicit_pos = true};
 }
 
-duckdb::LogicalTypeId UnionTokenizer::Output(const Options& opts) noexcept {
+duckdb::LogicalTypeId UnionTokenizer::Output(
+  const Options& opts, duckdb::LogicalTypeId input) noexcept {
   auto output = duckdb::LogicalTypeId::VARCHAR;
   for (const auto& child : opts.children) {
-    output = CommonOutput(output, OutputOf(*child));
+    output = CommonOutput(output, OutputOf(*child, input));
   }
   return output;
 }

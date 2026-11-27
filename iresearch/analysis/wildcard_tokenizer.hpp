@@ -49,7 +49,8 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr duckdb::LogicalTypeId Output(const Options&) noexcept {
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId) noexcept {
     return duckdb::LogicalTypeId::BLOB;
   }
 

@@ -122,7 +122,8 @@ class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
-  static constexpr duckdb::LogicalTypeId Output(const Options&) noexcept {
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId) noexcept {
     return duckdb::LogicalTypeId::BLOB;
   }
 
@@ -185,7 +186,8 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
   };
   static analysis::Tokenizer::ptr Make(Options opts);
 
-  static constexpr duckdb::LogicalTypeId Output(const Options&) noexcept {
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId) noexcept {
     return duckdb::LogicalTypeId::BLOB;
   }
 

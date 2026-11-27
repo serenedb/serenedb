@@ -144,7 +144,9 @@ inline Tokenizer::ptr CreateTokenizer(TokenizerConfig cfg,
     std::move(cfg.config));
 }
 
-duckdb::LogicalTypeId OutputOf(const TokenizerConfig& cfg) noexcept;
+duckdb::LogicalTypeId OutputOf(
+  const TokenizerConfig& cfg,
+  duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) noexcept;
 
 void SetInput(Tokenizer& tokenizer, duckdb::LogicalTypeId input);
 

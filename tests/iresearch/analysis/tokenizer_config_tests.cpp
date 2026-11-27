@@ -376,7 +376,12 @@ TEST(TokenizerConfig, AnSqlStageWithoutItsTypeLeavesTheOutputUnknown) {
   EXPECT_EQ(duckdb::LogicalTypeId::BLOB, OutputOf(Cfg{std::move(mixed)}));
 }
 
-TEST(TokenizerConfig, APipelineTakesTheTypeOfItsLastStageButADroppedKeyword) {
+TEST(TokenizerConfig, AKeywordStageKeepsTheTypeItIsGiven) {
+  const Cfg keyword{irs::KeywordTokenizer::Options{}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, OutputOf(keyword));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            OutputOf(keyword, duckdb::LogicalTypeId::BLOB));
+
   const auto bytes = [] {
     return Cfg{NGramTokenizer::Options{
       .min_gram = 2,

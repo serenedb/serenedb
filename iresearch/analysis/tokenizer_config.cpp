@@ -48,10 +48,7 @@ void ResolveSqlOutputs(TokenizerConfig& cfg, duckdb::ClientContext& ctx,
   std::visit(
     [&]<typename Options>(Options& opts) {
       if constexpr (std::is_same_v<Options, SqlTokenizer::Options>) {
-        if (opts.output == duckdb::LogicalTypeId::INVALID) {
-          opts.output =
-            SqlTokenizer::ResolveOutput(opts.expression, ctx, cache);
-        }
+        opts.output = SqlTokenizer::ResolveOutput(opts.expression, ctx, cache);
       } else if constexpr (std::is_same_v<Options,
                                           PipelineTokenizer::Options> ||
                            std::is_same_v<Options, UnionTokenizer::Options>) {
@@ -62,8 +59,9 @@ void ResolveSqlOutputs(TokenizerConfig& cfg, duckdb::ClientContext& ctx,
       } else if constexpr (std::is_same_v<Options,
                                           WildcardTokenizer::Options> ||
                            std::is_same_v<Options, ShingleTokenizer::Options>) {
-        SDB_ASSERT(opts.base_analyzer);
-        ResolveSqlOutputs(*opts.base_analyzer, ctx, cache);
+        if (opts.base_analyzer) {
+          ResolveSqlOutputs(*opts.base_analyzer, ctx, cache);
+        }
       }
     },
     cfg.config);

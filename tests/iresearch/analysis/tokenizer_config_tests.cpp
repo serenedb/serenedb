@@ -340,20 +340,15 @@ TEST(TokenizerConfig, EverySpecRoundTripsThroughTheBinaryFormat) {
 }
 
 TEST(TokenizerConfig, EverySpecDeclaresTheOutputItsTokenizerReports) {
-  size_t checked = 0;
   for (const auto& spec : tests::fuzz::AllSpecs()) {
     SCOPED_TRACE(spec.name);
-    const auto cfg = spec.config();
-    const auto output = irs::analysis::OutputOf(cfg);
-    if (output == duckdb::LogicalTypeId::INVALID) {
-      continue;
-    }
+    auto cfg = spec.config();
+    irs::analysis::ResolveSqlOutputs(cfg, tests::EngineContext(),
+                                     tests::Cache());
     const auto tokenizer =
       irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg), tests::Cache());
-    EXPECT_EQ(output, tokenizer->Traits().output);
-    ++checked;
+    EXPECT_EQ(irs::analysis::OutputOf(cfg), tokenizer->Traits().output);
   }
-  EXPECT_GT(checked, tests::fuzz::AllSpecs().size() / 2);
 }
 
 TEST(TokenizerConfig, AnSqlStageWithoutItsTypeLeavesTheOutputUnknown) {
@@ -411,6 +406,20 @@ TEST(TokenizerConfig, AKeywordStageKeepsTheTypeItIsGiven) {
   };
   check(Cfg{std::move(trailing)});
   check(Cfg{std::move(leading)});
+}
+
+TEST(TokenizerConfig, AShingleWithoutABaseKeepsTheTypeItIsGiven) {
+  Cfg shingle{ShingleTokenizer::Options{}};
+  irs::analysis::ResolveSqlOutputs(shingle, tests::EngineContext(),
+                                   tests::Cache());
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            OutputOf(shingle, duckdb::LogicalTypeId::BLOB));
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, OutputOf(shingle));
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
+            irs::analysis::CreateTokenizer(irs::analysis::Clone(shingle),
+                                           tests::Cache())
+              ->Traits()
+              .output);
 }
 
 TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {

@@ -39,7 +39,7 @@ Tokenizer::ptr ShingleTokenizer::Make(Options opts,
 
 duckdb::LogicalTypeId ShingleTokenizer::Output(
   const Options& opts, duckdb::LogicalTypeId input) noexcept {
-  return OutputOf(*opts.base_analyzer, input);
+  return opts.base_analyzer ? OutputOf(*opts.base_analyzer, input) : input;
 }
 
 ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)

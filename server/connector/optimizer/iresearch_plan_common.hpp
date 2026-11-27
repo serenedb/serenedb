@@ -67,6 +67,7 @@ struct SearchGetters {
   const connector::ExpressionGetter& expr_getter;
   irs::containers::FlatHashSet<irs::field_id>& analyzed_fields;
   const BindingColumnId& column_id;
+  const catalog::IndexTokenizers& tokenizers;
 };
 
 bool WithSearchGetters(PlannedScan& scan, duckdb::ClientContext& context,

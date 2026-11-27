@@ -419,7 +419,8 @@ bool WithSearchGetters(PlannedScan& scan, duckdb::ClientContext& context,
     return scan.IdOf(ref.Binding());
   };
 
-  return fn(SearchGetters{getter, expr_getter, analyzed_fields, column_id});
+  return fn(
+    SearchGetters{getter, expr_getter, analyzed_fields, column_id, dicts});
 }
 
 namespace {
@@ -1319,7 +1320,7 @@ bool ClaimSearchConjuncts(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   connector::ScanBindData& scan, const SearchGetters& getters,
   duckdb::ClientContext& context) {
-  auto& [getter, expr_getter, analyzed_fields, column_id] = getters;
+  auto& [getter, expr_getter, analyzed_fields, column_id, _] = getters;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;

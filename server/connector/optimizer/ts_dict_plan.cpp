@@ -178,15 +178,6 @@ duckdb::idx_t EnsureTsDictColumn(PlannedScan& scan, TsDictReq& req,
   return appended.get_column;
 }
 
-duckdb::LogicalTypeId TokenTypeOf(PlannedScan& scan, irs::field_id field_id,
-                                  duckdb::ClientContext& context) {
-  return scan.Bind()
-    .relation.ResolveTokenizers(context)
-    .Acquire(field_id)
-    .analyzer->Traits()
-    .output;
-}
-
 struct TsDictColumnRef {
   size_t request;
   TsDictColumn kind;
@@ -363,7 +354,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
                              "returns"));
   }
   if (kind == TsDictColumn::Term) {
-    const auto output = TokenTypeOf(scan, index->TermField(col_id), context);
+    const auto tokenizer =
+      scan.Bind().relation.ResolveTokenizers(context).Acquire(
+        index->TermField(col_id));
+    const auto output = tokenizer.analyzer->Traits().output;
     if (output != duckdb::LogicalTypeId::VARCHAR) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG(fn, "(): column has no text term dictionary"),
@@ -1810,7 +1804,7 @@ bool TsDictFacetPushdown::WhereOk() {
   }
   const bool claimable =
     WithSearchGetters(*_found, _context, [&](const SearchGetters& getters) {
-      auto& [getter, expr_getter, analyzed_fields, column_id] = getters;
+      auto& [getter, expr_getter, analyzed_fields, column_id, _] = getters;
       size_t computed_residuals = 0;
       for (auto& expr : _where->expressions) {
         if (expr->HasParameter()) {
@@ -2203,7 +2197,8 @@ class TsDictFilterClaim {
     }
     auto& req = _bind_data.ts_dict.requests.front();
     if (!req.bytes) {
-      const auto output = TokenTypeOf(_scan, req.field_id, _context);
+      const auto output =
+        _getters.tokenizers.Acquire(req.field_id).analyzer->Traits().output;
       if (output != duckdb::LogicalTypeId::VARCHAR) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

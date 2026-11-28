@@ -382,15 +382,11 @@ ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
           .tokenizer_column = field.tokenizer_column};
 }
 
-TokenizerBindingRef IndexTokenizers::Binding(irs::field_id field_id) const {
-  const auto it = _fields.find(field_id);
-  return it == _fields.end() ? nullptr : it->second.binding;
-}
-
 duckdb::LogicalTypeId IndexTokenizers::Terms(
   irs::field_id field_id, duckdb::LogicalTypeId values) const {
-  const auto binding = Binding(field_id);
-  return binding ? binding->Terms() : values;
+  const auto it = _fields.find(field_id);
+  return it != _fields.end() && it->second.binding ? it->second.binding->Terms()
+                                                   : values;
 }
 
 InvertedIndexConfig::InvertedIndexConfig(

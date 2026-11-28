@@ -254,7 +254,6 @@ class IndexTokenizers {
                   const InvertedIndexConfig& config);
 
   ColumnTokenizer Acquire(irs::field_id field_id) const;
-  TokenizerBindingRef Binding(irs::field_id field_id) const;
   duckdb::LogicalTypeId Terms(irs::field_id field_id,
                               duckdb::LogicalTypeId values) const;
 

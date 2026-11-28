@@ -214,6 +214,19 @@ TEST(SqlTokenizerTest, rebindAcrossPoolCycles) {
   ASSERT_EQ(tests::AnalyzeTerms(*a, "y"), (std::vector<std::string>{"Y"}));
 }
 
+TEST(SqlTokenizerTest, storedExpressionThatDoesNotReadNamesTheStage) {
+  auto bound = tests::Bound(Sql("upper(input)"));
+  auto& opts = std::get<SqlTokenizer::Options>(bound.config);
+  opts.bound.resize(opts.bound.size() / 2);
+  auto a = irs::analysis::CreateTokenizer(std::move(bound), tests::Cache());
+  try {
+    a->Bind(tests::EngineContext());
+    FAIL() << "a truncated expression bound";
+  } catch (const irs::SqlException& e) {
+    EXPECT_TRUE(std::string_view{e.what()}.starts_with("sql: ")) << e.what();
+  }
+}
+
 TEST(SqlTokenizerTest, parseErrors) {
   for (const auto* expression :
        {"lower((", "input, input", "(SELECT 'x')", "upper($1)",

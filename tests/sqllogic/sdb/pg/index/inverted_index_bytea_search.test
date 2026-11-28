@@ -1267,3 +1267,31 @@ CREATE INDEX bb64t_idx ON bb64t USING inverted(id, t btext_b64)
 db error: ERROR: Column 't': sql: No function matches the given name and argument types 'to_base64(VARCHAR)'. You might need to add explicit type casts.
 	Candidate functions:
 	to_base64(blob BLOB) -> VARCHAR
+
+
+query
+SELECT list_transform(ts_lexize(name, 'Quick Fox'::bytea), lambda x: decode(x)) AS lexemes FROM (VALUES ('btext_words')) t(name)
+----
+lexemes
+{quick,fox}
+
+statement ok
+CREATE TABLE bkw(id INTEGER PRIMARY KEY, v BYTEA)
+
+statement ok
+CREATE INDEX bkw_idx ON bkw USING inverted(id, v)
+
+statement ok
+INSERT INTO bkw VALUES (1, 'quick'::bytea), (2, 'Quick'::bytea)
+
+query
+SELECT id FROM bkw_idx WHERE v @@ to_tsquery('QUICK')::tokenize('btext_words') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bkw_idx WHERE v @@ ts_tokenize('QUICK fox', 'btext_words') ORDER BY id
+----
+id
+1

@@ -382,6 +382,10 @@ TEST(TokenizerConfig, APipelineThreadsTheTermTypeThroughItsStages) {
   }
   EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
             tests::Bound(pipeline(keyword, text)).terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(pipeline(), duckdb::LogicalType::BLOB).terms);
+  EXPECT_THROW(tests::Bound(pipeline(), duckdb::LogicalType::INTEGER),
+               irs::SqlException);
 }
 
 TEST(TokenizerConfig, AUnionTakesTheTypeItsMembersShare) {

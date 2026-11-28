@@ -178,6 +178,12 @@ void CheckTokens(const SearchColumnInfo& column_info,
       ERR_HINT("Index the column with a text search dictionary, ", hint, "."));
   }
   if (!MatchesPhrases(column_info)) {
+    if (column_info.layout == irs::DictLayout::JsonList) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(label, " on a list of JSON values needs positions"),
+        ERR_HINT("Add `position` to the dictionary, ", hint, "."));
+    }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(label,

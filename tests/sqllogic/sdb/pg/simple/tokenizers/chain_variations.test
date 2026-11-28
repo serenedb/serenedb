@@ -320,6 +320,12 @@ db error: ERROR: sql: No function matches the given name and argument types 'upp
 	upper(string VARCHAR) -> VARCHAR
 
 
+statement error
+CREATE TEXT SEARCH DICTIONARY geopoint_after_bytes AS generate_ngrams(2, 2, input_type := 'binary') | encode_geopoint();
+----
+db error: ERROR: encode_geopoint: takes JSON text or GEOMETRY, not BLOB
+
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY lower_then_binary_grams AS normalize_tokens(case := 'lower') | generate_ngrams(2, 2, input_type := 'binary');
 

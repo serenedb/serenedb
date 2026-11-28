@@ -7,6 +7,10 @@ DROP TABLE IF EXISTS rop_t;
 
 
 statement ok
+DROP TABLE IF EXISTS rop_u;
+
+
+statement ok
 DROP ROLE IF EXISTS rop_alice, rop_bob, rop_dave;
 
 
@@ -133,11 +137,35 @@ rop_bob
 
 
 statement ok
+CREATE TABLE rop_u (a int);
+
+
+statement ok
+ALTER TABLE rop_u OWNER TO rop_alice;
+
+
+connection c_dave user=rop_dave password=rop_pw
+statement ok
+REASSIGN OWNED BY rop_alice TO CURRENT_USER;
+
+
+query
+SELECT relowner::regrole::text AS owner FROM pg_class WHERE relname = 'rop_u';
+----
+owner
+rop_dave
+
+
+statement ok
 DROP DATABASE rop_db;
 
 
 statement ok
 DROP TABLE rop_t;
+
+
+statement ok
+DROP TABLE rop_u;
 
 
 statement ok

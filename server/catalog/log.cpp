@@ -880,8 +880,8 @@ void Log::FoldTail(Lsn bound, CatalogPart part, Compact compact) {
 }
 
 void Log::WriteSnapshot(Lsn covered, uint64_t oids,
-                        std::span<const RecordBuffer> records,
-                        CatalogPart part, Compact compact) {
+                        std::span<const RecordBuffer> records, CatalogPart part,
+                        Compact compact) {
   absl::MutexLock files{&_files_mutex};
   SnapshotHeader header{.covered = covered, .oids = oids};
   {

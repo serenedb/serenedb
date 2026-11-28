@@ -103,6 +103,7 @@ void OpenLocalFiles(std::span<const std::shared_ptr<Store>> stores) {
   }
   Runtime::Get()
     .Run([local = std::move(local)] {
+      const auto begin = std::chrono::steady_clock::now();
       for (const auto& weak : local) {
         if (lifecycle::IsStopping() || Runtime::Get().IsStopping()) {
           return;
@@ -119,6 +120,10 @@ void OpenLocalFiles(std::span<const std::shared_ptr<Store>> stores) {
                    duckdb::ErrorData{e}.RawMessage());
         }
       }
+      SDB_INFO(SEARCH, "opened the files of ", local.size(),
+               " table(s) after startup in ",
+               absl::FormatDuration(
+                 absl::FromChrono(std::chrono::steady_clock::now() - begin)));
     })
     .Detach();
 }

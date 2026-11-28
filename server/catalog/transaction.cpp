@@ -159,8 +159,8 @@ void PastTick(duckdb::transaction_t commit, Apply&& apply) noexcept {
   try {
     std::forward<Apply>(apply)();
   } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "commit ", commit,
-              " failed after taking its tick: ", duckdb::ErrorData{e}.RawMessage());
+    SDB_FATAL(GENERAL, "commit ", commit, " failed after taking its tick: ",
+              duckdb::ErrorData{e}.RawMessage());
   } catch (...) {
     SDB_FATAL(GENERAL, "commit ", commit, " failed after taking its tick");
   }

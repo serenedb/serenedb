@@ -78,6 +78,8 @@ class CompositeReader final : public IndexReader {
 
   const FieldTermRange* GetTermRange(field_id field, DictRef dict) const;
 
+  void LoadColumnStats() const;
+  void LoadTermStats() const;
   void LoadStats() const;
 
  private:
@@ -102,7 +104,8 @@ class CompositeReader final : public IndexReader {
   };
 
   using Columns = containers::FlatHashMap<field_id, ColumnStats>;
-  using Terms = containers::NodeHashMap<std::pair<field_id, DictRef>, TermStats>;
+  using Terms =
+    containers::NodeHashMap<std::pair<field_id, DictRef>, TermStats>;
 
   template<typename Stats>
   struct Lazy {

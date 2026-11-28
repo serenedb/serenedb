@@ -64,16 +64,16 @@ bool Opened(const SegmentReader& reader) noexcept {
   return reader.GetImpl()->FilesOpened();
 }
 
-void OpenRemote(std::span<const SegmentReader> readers,
-                absl::FunctionRef<void(const SubReader&)> open) {
-  const bool remote = absl::c_any_of(readers, [](const SegmentReader& reader) {
-    return !Opened(reader) && reader.GetImpl()->Remote();
-  });
-  if (!remote) {
-    return;
+void OpenInParallel(std::span<const SegmentReader> readers,
+                    absl::FunctionRef<void(const SubReader&)> open) {
+  std::vector<const SegmentReader*> closed;
+  for (const auto& reader : readers) {
+    if (!Opened(reader)) {
+      closed.push_back(&reader);
+    }
   }
-  ForEach(DuckDBEngine::Instance().instance(), true, readers.size(),
-          [&](size_t i) { open(readers[i]); });
+  ForEach(DuckDBEngine::Instance().instance(), true, closed.size(),
+          [&](size_t i) { open(*closed[i]); });
 }
 
 }  // namespace
@@ -106,9 +106,8 @@ CompositeReader::CompositeReader(const CompositeReader& base,
     return;
   }
   if (base._terms->once.Done()) {
-    _terms->once.Call([&] {
-      _terms->stats = UpdateTerms(base._terms->stats, added, removed);
-    });
+    _terms->once.Call(
+      [&] { _terms->stats = UpdateTerms(base._terms->stats, added, removed); });
   }
   if (base._columns->once.Done()) {
     _columns->once.Call([&] {
@@ -145,13 +144,18 @@ const CompositeReader::Terms* CompositeReader::LoadedTerms() const {
   return &_terms->stats;
 }
 
+void CompositeReader::LoadColumnStats() const { LoadedColumns(); }
+
+void CompositeReader::LoadTermStats() const { LoadedTerms(); }
+
 void CompositeReader::LoadStats() const {
   LoadedColumns();
   LoadedTerms();
 }
 
 CompositeReader::Columns CompositeReader::BuildColumns() const {
-  OpenRemote(_readers, [](const SubReader& reader) { reader.GetColReader(); });
+  OpenInParallel(_readers,
+                 [](const SubReader& reader) { reader.GetColReader(); });
   Columns columns;
   for (const auto& reader : _readers) {
     AddColumns(columns, *reader);
@@ -161,7 +165,7 @@ CompositeReader::Columns CompositeReader::BuildColumns() const {
 }
 
 CompositeReader::Terms CompositeReader::BuildTerms() const {
-  OpenRemote(_readers, [](const SubReader& reader) { reader.field_ids(); });
+  OpenInParallel(_readers, [](const SubReader& reader) { reader.field_ids(); });
   Terms terms;
   for (const auto& reader : _readers) {
     AddTerms(terms, *reader, /*keep_sorted=*/false);

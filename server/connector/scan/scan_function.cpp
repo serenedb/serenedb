@@ -88,6 +88,19 @@ bool HasNested(const irs::Filter& filter) {
 
 constexpr std::string_view kIndexProfileMetric = "operator.index_profile";
 
+void OpenSegmentFiles(const ScanGlobalState& g, bool terms) {
+  const auto* reader = g.view.reader;
+  if (!reader || reader != g.reader) {
+    return;
+  }
+  if (!g.col_filters.empty()) {
+    reader->LoadColumnStats();
+  }
+  if (terms) {
+    reader->LoadTermStats();
+  }
+}
+
 void ClassifySegments(ScanGlobalState& g) {
   const auto start = g.profile ? duckdb::TimePoint::Now() : 0;
   absl::Cleanup classified = [&] {
@@ -336,6 +349,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                           absl::c_any_of(*state->reader, [](const auto& seg) {
                             return seg.live_docs_count() != seg.docs_count();
                           }));
+    OpenSegmentFiles(*state, true);
     BuildTsDictFields(*state);
     ClassifySegments(*state);
     BuildClaimPlan(*state, context);
@@ -378,6 +392,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (profiled) {
     StartProfile(*state, bind_data, snapshot_ticks);
   }
+  OpenSegmentFiles(*state, state->filter != &MatchAllFilter());
   if (state->remote) {
     PrefetchTerms(*state->filter, *state->reader);
   }

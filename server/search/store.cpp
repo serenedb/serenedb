@@ -1520,16 +1520,9 @@ bool Store::FinishReplay() {
 }
 
 void Store::OpenFiles() const {
-  if (!_table || _remote || !_on_disk) {
-    return;
+  if (_table && !_remote && _on_disk) {
+    _table->State()->reader.LoadStats();
   }
-  for (const auto& unit : _table->State()->units) {
-    if (lifecycle::IsStopping()) {
-      return;
-    }
-    unit->reader->OpenFiles();
-  }
-  _table->State()->reader.LoadStats();
 }
 
 }  // namespace sdb::search

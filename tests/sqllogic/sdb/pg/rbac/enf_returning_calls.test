@@ -1,0 +1,88 @@
+statement ok
+DROP ROLE IF EXISTS repro_ret_writer;
+
+
+statement ok
+CREATE SEQUENCE repro_ret_seq;
+
+
+statement ok
+CREATE FUNCTION repro_ret_fn() RETURNS int LANGUAGE sql AS 'SELECT 42';
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION repro_ret_fn() FROM PUBLIC;
+
+
+statement ok
+CREATE TABLE repro_ret_t (id int);
+
+
+statement ok
+CREATE ROLE repro_ret_writer;
+
+
+statement ok
+GRANT INSERT ON repro_ret_t TO repro_ret_writer;
+
+
+statement ok
+SET ROLE repro_ret_writer;
+
+
+statement error
+SELECT setval('repro_ret_seq', 1000);
+----
+db error: ERROR: Sequence with name repro_ret_seq does not exist!<slt:ignore>
+
+
+statement error
+INSERT INTO repro_ret_t VALUES (1) RETURNING setval('repro_ret_seq', 1000);
+----
+db error: ERROR: Sequence with name repro_ret_seq does not exist!<slt:ignore>
+
+
+statement error
+INSERT INTO repro_ret_t VALUES (2) RETURNING nextval('repro_ret_seq');
+----
+db error: ERROR: Sequence with name repro_ret_seq does not exist!<slt:ignore>
+
+
+statement error
+INSERT INTO repro_ret_t VALUES (3) RETURNING repro_ret_fn();
+----
+db error: ERROR: Scalar Function with name repro_ret_fn does not exist!<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n FROM repro_ret_t;
+----
+n
+0
+
+
+query
+SELECT last_value FROM pg_sequences WHERE sequencename = 'repro_ret_seq';
+----
+last_value
+NULL
+
+
+statement ok
+DROP TABLE repro_ret_t;
+
+
+statement ok
+DROP FUNCTION repro_ret_fn;
+
+
+statement ok
+DROP SEQUENCE repro_ret_seq;
+
+
+statement ok
+DROP ROLE repro_ret_writer;

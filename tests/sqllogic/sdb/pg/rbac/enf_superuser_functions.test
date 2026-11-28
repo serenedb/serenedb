@@ -250,6 +250,64 @@ listed
 t
 
 
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM destroy_external_resource('query', 'SELECT error(secret) FROM esf_vault');
+----
+db error: ERROR: permission denied for function destroy_external_resource
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM create_external_resource('query');
+----
+db error: ERROR: permission denied for function create_external_resource
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM register_external_resource_type('esf_type', kind := 'esf', create_function := 'query');
+----
+db error: ERROR: permission denied for function register_external_resource_type
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM sdb_external_resources();
+----
+db error: ERROR: permission denied for function sdb_external_resources
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+CREATE EXTERNAL RESOURCE 'query';
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+DESTROY EXTERNAL RESOURCE esf_resource;
+----
+db error: ERROR: permission denied: superuser required
+
+
+query
+SELECT has_function_privilege('esf_vedernikoff', 'pg_config()', 'EXECUTE') AS config,
+       has_function_privilege('esf_vedernikoff', 'pg_hba_file_rules()', 'EXECUTE') AS hba;
+----
+config	hba
+f	f
+
+
+query
+SELECT proname, proacl FROM pg_proc WHERE proname IN ('pg_config', 'pg_hba_file_rules') ORDER BY proname;
+----
+proname	proacl
+pg_config	{postgres=X/postgres}
+pg_hba_file_rules	{postgres=X/postgres}
+
+
 statement ok
 DROP VIEW esf_peek;
 

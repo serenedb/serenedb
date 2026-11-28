@@ -43,17 +43,27 @@ Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside 
 
 ## Locations
 
-A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files in `<system identifier>/engine_v1` at its location, named by the server's system identifier, so several servers can share a location. Of one server, one tablespace at a time can use a location:
+A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. One tablespace at a time can use a location:
 
 ```text
 ERROR:  tablespace location "/mnt/nvme/serenedb" is already used by tablespace "fast"
 ```
 
-The directory is created when it does not exist, on an object store as an empty object named after the location with a trailing slash, and with it `<system identifier>/engine_v1/store` inside it, the directory that holds the index files of everything placed in the tablespace. A flush into a tablespace whose `store` directory was removed fails until the directory is there again. The server reads and writes nothing above the location, so a secret whose scope is the location is enough; `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow reading, listing and writing the location. A location with an `engine_v1` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
+The directory is created when it does not exist, on an object store as an empty object named after the location with a trailing slash, and with it `segments` inside it, the directory that holds the index files of everything placed in the tablespace. A flush into a tablespace whose `segments` directory was removed fails until the directory is there again. The server reads and writes nothing above the location, so a secret whose scope is the location is enough; `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow reading, listing and writing the location. A location with a `segments` directory in its path, such as one inside the files of another tablespace or of the server directory, is refused:
 
 ```text
-ERROR:  tablespace location "/mnt/nvme/serenedb/engine_v1/inside" is inside the files of a tablespace
+ERROR:  tablespace location "/mnt/nvme/serenedb/segments/inside" is inside the files of a tablespace
 ```
+
+A location belongs to one server: `CREATE TABLESPACE` writes an `OWNER` file there that names the server's system identifier, and another server's `CREATE TABLESPACE` on that location is refused, since the index files of two servers would share names:
+
+```text
+ERROR:  tablespace location "/mnt/nvme/serenedb" belongs to another server
+DETAIL:  Its OWNER file names the server with system identifier 7696604830604944365.
+HINT:  Use another location, or remove this one once no server uses it.
+```
+
+`DROP TABLESPACE` removes `OWNER` once the index files of the objects dropped from the tablespace are gone, which frees the location for any server. A server that restarts after a crash writes `OWNER` again for every tablespace it has, and does not start when another server owns one of their locations.
 
 A `memory://` location is refused, since files there are lost when the server stops:
 
@@ -78,20 +88,20 @@ On S3, the parts of an upload that the server stops in the middle of stay in the
 
 A local location has to exist on the server's machine at the same path for as long as the tablespace holds files.
 
-A [backup](../../../operations/backup.md) copies only the data directory, so `pg_backup_start` fails while a tablespace other than `pg_default` and `pg_global` exists.
+A [backup](../../../operations/backup.md) copies only the server directory, so `pg_backup_start` fails while a tablespace other than `pg_default` and `pg_global` exists.
 
 The built-in tablespaces are always there:
 
 | Tablespace | Location |
 | ---------- | -------- |
-| `pg_default` | the data directory; where objects go when nothing names another tablespace |
+| `pg_default` | the server directory; where objects go when nothing names another tablespace |
 | `pg_global` | reserved; nothing can be placed in it |
 
 `pg_tablespace` lists the tablespaces and `pg_tablespace_location(oid)` returns a tablespace's location, an empty string for the built-in ones:
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_006" />
 
-`pg_tablespace_size(name)` or `pg_tablespace_size(oid)` returns the bytes of a tablespace's files, which psql's `\db+` shows: for `pg_default` the files of the tables and indexes in the data directory, for `pg_global` the catalog that all databases share. On an object store each call costs a listing of the tablespace's directory.
+`pg_tablespace_size(name)` or `pg_tablespace_size(oid)` returns the bytes of a tablespace's files, which psql's `\db+` shows: for `pg_default` the files of the tables and indexes in the server directory, for `pg_global` the catalog that all databases share. On an object store each call costs a listing of the tablespace's directory.
 
 ## Placing objects
 

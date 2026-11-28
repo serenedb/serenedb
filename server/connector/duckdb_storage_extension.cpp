@@ -52,7 +52,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
       ERR_MSG("cannot attach \"", info.path,
               "\" as a SereneDB database: a SereneDB database is created "
               "with CREATE DATABASE"),
-      ERR_HINT("Attach the data directory of another server with READ_ONLY."));
+      ERR_HINT(
+        "Attach the server directory of another server with READ_ONLY."));
   }
   return catalog::AttachForeignDatabase(context, db, info, options);
 }

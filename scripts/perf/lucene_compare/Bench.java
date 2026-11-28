@@ -484,7 +484,7 @@ public final class Bench {
       sst.execute("COPY " + table + " FROM '" + csv + "' (FORMAT CSV, HEADER false)");
       sst.execute("VACUUM (FLUSH_TABLE) " + table);
       final double sdbIngest = (System.nanoTime() - s1) / 1e9;
-      final long sdbBytes = sdbIndexSize(sst, Paths.get(env("SDB_DATA")), index);
+      final long sdbBytes = sdbIndexSize(sst, index);
       WALL[SERENEDB] += System.nanoTime() - s0;
 
       final long p0 = System.nanoTime();
@@ -836,14 +836,13 @@ public final class Bench {
     }
   }
 
-  static long sdbIndexSize(Statement st, Path sdbData, String index) throws SQLException, IOException {
-    final long oid;
-    try (ResultSet rs = st.executeQuery("SELECT oid FROM pg_class WHERE relname = '" + index + "'")) {
+  static long sdbIndexSize(Statement st, String index) throws SQLException {
+    try (ResultSet rs = st.executeQuery(
+        "SELECT coalesce(sum(m.value), 0) FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id "
+            + "WHERE m.metric = 'index_size' AND c.relname = '" + index + "'")) {
       rs.next();
-      oid = rs.getLong(1);
+      return rs.getLong(1);
     }
-    final Path dir = sdbData.resolve("engine_v1").resolve("store").resolve(Long.toString(oid));
-    return Files.isDirectory(dir) ? dirSize(dir) : 0;
   }
 
   static long dirSize(Path dir) throws IOException {

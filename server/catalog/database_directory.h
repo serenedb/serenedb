@@ -31,6 +31,7 @@
 namespace sdb::catalog {
 
 inline constexpr std::string_view kStoreDir = "segments";
+inline constexpr std::string_view kOwnerFile = "OWNER";
 
 duckdb::FileSystem& StorageFileSystem();
 void CreateDirectory(const std::string& path);
@@ -46,7 +47,10 @@ uint64_t StorageBytes(const std::string& directory);
 
 std::string StoreDirOf(std::string_view tablespace_directory);
 const std::shared_ptr<std::atomic_uint64_t>& SegmentIds();
-void RemoveStorage(absl::AnyInvocable<bool()> remove_files);
+void RemoveStorage(std::string store, absl::AnyInvocable<bool()> remove_files);
+
+void ClaimLocation(const std::string& location);
+void ReleaseLocation(std::string location);
 
 class DatabaseDirectory final {
  public:

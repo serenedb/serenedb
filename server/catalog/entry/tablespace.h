@@ -42,6 +42,8 @@ class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
+  void OnDrop() final;
+  void Rollback(duckdb::CatalogEntry& prev_entry) final;
 
   const std::string& Location() const noexcept { return _location; }
   const std::string& Directory() const noexcept { return _directory; }

@@ -119,6 +119,9 @@ Bytes ReadWhole(duckdb::QueryContext context, duckdb::FileSystem& fs,
 
 void WriteWhole(duckdb::FileSystem& fs, const std::string& path,
                 std::string_view content, bool durable);
+void WriteWhole(duckdb::FileSystem& fs, const std::string& path,
+                absl::FunctionRef<void(duckdb::FileHandle&)> write,
+                bool durable);
 
 void ForEach(duckdb::DatabaseInstance& db, bool remote, size_t count,
              absl::FunctionRef<void(size_t)> visit);

@@ -825,7 +825,7 @@ The `jsonb` type is a `json` value that keeps its text as written (see [`jsonb`]
 | pg_options_to_table                | Yes           |  |
 | pg_encoding_to_char                | Yes           | Also `pg_char_to_encoding` |
 | pg_tablespace_location             | Yes           | The location in normal form; an empty string for `pg_default` and `pg_global`, and `NULL` for an OID that is not a tablespace |
-| pg_tablespace_size                 | Yes           | `pg_default` counts the files of the tables and indexes in the data directory and `pg_global` the catalog that all databases share |
+| pg_tablespace_size                 | Yes           | `pg_default` counts the files of the tables and indexes in the server directory and `pg_global` the catalog that all databases share |
 | pg_tablespace_databases            | Yes           | Lists the databases with files in the tablespace |
 | pg_size_bytes                      | Yes           |  |
 | pg_column_size                     | Partial       | Counts a value as it is held in memory: a value read from a table counts as a computed one, so a short string takes 4 bytes more than its length. A whole row, as in `pg_column_size(t)`, counts as in PostgreSQL |

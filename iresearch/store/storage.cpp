@@ -25,6 +25,7 @@
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/open_file_info.hpp>
+#include <duckdb/common/path.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/database_file_opener.hpp>
 #include <duckdb/parallel/task_executor.hpp>
@@ -145,6 +146,19 @@ duckdb::unique_ptr<duckdb::FileHandle> OpenWhole(duckdb::FileSystem& fs,
 
 void WriteWhole(duckdb::FileSystem& fs, const std::string& path,
                 std::string_view content, bool durable) {
+  WriteWhole(
+    fs, path,
+    [&](duckdb::FileHandle& handle) {
+      handle.Write(duckdb::QueryContext{}, const_cast<char*>(content.data()),
+                   content.size(), 0);
+    },
+    durable);
+}
+
+void WriteWhole(duckdb::FileSystem& fs, const std::string& path,
+                absl::FunctionRef<void(duckdb::FileHandle&)> write,
+                bool durable) {
+  durable = durable && !duckdb::Path::IsRemote(path);
   const auto target = durable ? absl::StrCat(path, ".tmp") : path;
   fs.TryRemoveFile(target);
   {
@@ -152,8 +166,7 @@ void WriteWhole(duckdb::FileSystem& fs, const std::string& path,
       fs.OpenFile(target, duckdb::FileFlags::FILE_FLAGS_WRITE |
                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE |
                             duckdb::FileFlags::FILE_FLAGS_PRIVATE);
-    handle->Write(duckdb::QueryContext{}, const_cast<char*>(content.data()),
-                  content.size(), 0);
+    write(*handle);
     if (durable) {
       handle->Sync();
     }

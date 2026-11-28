@@ -24,6 +24,8 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
+#include "catalog/database_directory.h"
+
 namespace sdb::catalog {
 
 void RequireUnreservedTablespaceName(std::string_view name) {
@@ -55,6 +57,18 @@ duckdb::unique_ptr<duckdb::CreateInfo> TablespaceCatalogEntry::GetInfo() const {
   info->comment = comment;
   info->tags = tags;
   return std::move(info);
+}
+
+void TablespaceCatalogEntry::OnDrop() {
+  if (!internal && !_directory.empty()) {
+    ReleaseLocation(_directory);
+  }
+}
+
+void TablespaceCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
+  if (!internal && !_directory.empty() && CreatedObject(prev_entry)) {
+    ReleaseLocation(_directory);
+  }
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> TablespaceCatalogEntry::Copy(

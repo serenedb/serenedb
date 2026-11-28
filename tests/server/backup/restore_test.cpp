@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "backup/backup_label.h"
+#include "backup/backup_session.h"
 #include "backup/pg_control.h"
 #include "backup/restore.h"
 #include "catalog/boot.h"
@@ -66,6 +67,8 @@ catalog::RecordBuffer Bytes(const std::string& payload) {
   return record;
 }
 
+std::span<uint8_t> Whole(std::span<uint8_t> payload) { return payload; }
+
 std::vector<std::vector<uint8_t>> Keep(
   std::span<const std::span<uint8_t>> parts) {
   std::vector<std::vector<uint8_t>> kept;
@@ -75,6 +78,10 @@ std::vector<std::vector<uint8_t>> Keep(
   return kept;
 }
 
+catalog::ServerDirectory Layout(const std::filesystem::path& root) {
+  return {root.string(), catalog::ServerDirectory::DefaultLog(root.string())};
+}
+
 class RestoreTest : public ::testing::Test {
  protected:
   void SetUp() final {
@@ -82,51 +89,38 @@ class RestoreTest : public ::testing::Test {
             absl::StrCat("restore_", ::getpid());
     std::filesystem::remove_all(_root);
     std::filesystem::create_directory(_root);
-    _layout = std::make_unique<catalog::DataDirectory>(_root.string());
+    _layout = std::make_unique<catalog::ServerDirectory>(Layout(_root));
     WritePgControl(_root.string(), {.system_identifier = kSystemIdentifier});
-    BackUpLog(false);
-    std::filesystem::create_directories(_layout->LogDir());
-    WriteFile(Chunk(0), 500, 'X');
+    std::filesystem::create_directories(_layout->BackupsDir());
+    _cut.snapshot = absl::StrCat(kSessionPinPrefix, kStartLsn);
+    {
+      const auto fs = duckdb::FileSystem::CreateLocal();
+      catalog::Log log{*fs, _layout->LogDir(), _layout->SnapshotPath()};
+      log.Replay([](std::span<uint8_t>) {}, &Whole);
+      log.Append(Bytes(Payload('A')));
+      const auto b = log.Append(Bytes(Half('B')));
+      log.WriteSnapshot(b, {}, &Whole, &Keep, false);
+      log.Pin(Pin().string());
+      log.Append(Bytes(Half('C')));
+      const auto d = log.Append(Bytes(Payload('D')));
+      log.WriteSnapshot(d, {}, &Whole, &Keep, false);
+      log.Append(Bytes(Payload('E')));
+    }
     std::filesystem::create_directories(StoreDir());
     WriteFile(StoreDir() / kSegmentFile, 4, 'S');
     WriteFile(_root / "recovery.signal", 0, ' ');
     WriteFile(_root / "standby.signal", 0, ' ');
-    _cut.log_size = _ends[2];
   }
 
   void TearDown() final { std::filesystem::remove_all(_root); }
 
-  void BackUpLog(bool snapshot) {
-    std::filesystem::remove_all(Link());
-    const auto source = _root / "source";
-    std::filesystem::remove_all(source);
-    _ends.clear();
-    {
-      const auto fs = duckdb::FileSystem::CreateLocal();
-      catalog::Log log{*fs, source.string()};
-      log.Replay([](std::span<uint8_t>) {},
-                 [](std::span<uint8_t> payload) { return payload; });
-      _ends.push_back(log.Append(Bytes(Payload('A'))));
-      _ends.push_back(log.Append(Bytes(Half('B'))));
-      _ends.push_back(log.Append(Bytes(Half('C'))));
-      if (snapshot) {
-        log.WriteSnapshot(
-          _ends[1], {}, [](std::span<uint8_t> payload) { return payload; },
-          &Keep);
-        log.DropCovered();
-      }
-      _ends.push_back(log.Append(Bytes(Payload('D'))));
-      log.Link(Link().string());
-    }
-    std::filesystem::remove_all(source);
-  }
-
   std::vector<std::string> Records() const {
     std::vector<std::string> records;
     const auto fs = duckdb::FileSystem::CreateLocal();
-    catalog::Log::Read(*fs, _layout->LogDir(), [&](std::span<uint8_t> payload) {
-      records.emplace_back(payload.begin(), payload.end());
-    });
+    catalog::Log::Read(*fs, _layout->LogDir(), _layout->SnapshotPath(),
+                       [&](std::span<uint8_t> payload) {
+                         records.emplace_back(payload.begin(), payload.end());
+                       });
     return records;
   }
 
@@ -136,14 +130,9 @@ class RestoreTest : public ::testing::Test {
     out << std::string(size, fill);
   }
 
-  static std::string Content(const std::filesystem::path& path) {
-    std::ifstream in{path, std::ios::binary};
-    return std::string(std::istreambuf_iterator<char>{in}, {});
+  std::filesystem::path Pin() const {
+    return std::filesystem::path{_layout->BackupsDir()} / _cut.snapshot;
   }
-
-  std::filesystem::path EngineDir() const { return _layout->engine; }
-
-  std::filesystem::path Link() const { return EngineDir() / kBackupDir; }
 
   std::filesystem::path Chunk(uint64_t number) const {
     return std::filesystem::path{_layout->LogDir()} /
@@ -158,7 +147,7 @@ class RestoreTest : public ::testing::Test {
                             _cut);
   }
 
-  void Prepare() const { PrepareDataDirectory(*_layout); }
+  void Prepare() const { PrepareServerDirectory(*_layout); }
 
   void ExpectRefused(std::string_view message) const {
     EXPECT_EXIT(
@@ -192,7 +181,7 @@ class RestoreTest : public ::testing::Test {
     std::filesystem::copy(_root, reference,
                           std::filesystem::copy_options::recursive);
     absl::Cleanup drop = [&] { std::filesystem::remove_all(reference); };
-    PrepareDataDirectory(catalog::DataDirectory{reference.string()});
+    PrepareServerDirectory(Layout(reference));
 
     if (!arm()) {
       GTEST_SKIP() << "this build has no fault injection";
@@ -204,29 +193,28 @@ class RestoreTest : public ::testing::Test {
 
     Prepare();
     EXPECT_EQ(Tree(_root), Tree(reference));
+    EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B')}));
     const auto control = ReadPgControl(_root.string());
     ASSERT_TRUE(control);
     EXPECT_EQ(control->checkpoint, kStartLsn);
   }
 
   std::filesystem::path _root;
-  std::unique_ptr<catalog::DataDirectory> _layout;
+  std::unique_ptr<catalog::ServerDirectory> _layout;
   Cut _cut;
-  std::vector<catalog::Lsn> _ends;
 };
 
 TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   WriteLabel();
   Prepare();
 
-  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C')}));
-  EXPECT_FALSE(Exists(Link()));
-
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B')}));
+  EXPECT_FALSE(Exists(Pin()));
   EXPECT_TRUE(Exists(StoreDir() / kSegmentFile));
 
   EXPECT_FALSE(Exists(_root / "recovery.signal"));
   EXPECT_FALSE(Exists(_root / "standby.signal"));
-  EXPECT_TRUE(Exists(EngineDir() / "subscriptions.hold"));
+  EXPECT_TRUE(Exists(_root / "subscriptions.hold"));
   const auto control = ReadPgControl(_root.string());
   ASSERT_TRUE(control);
   EXPECT_EQ(control->system_identifier, kSystemIdentifier);
@@ -235,55 +223,13 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   EXPECT_TRUE(Exists(_root / "backup_label.old"));
 }
 
-TEST_F(RestoreTest, AChunkPastTheCutIsRemoved) {
-  _cut.log_size = _ends[0];
+TEST_F(RestoreTest, TheCommitsAfterTheBackupStartAreDiscarded) {
+  EXPECT_TRUE(Exists(Chunk(1)));
   WriteLabel();
   Prepare();
-  EXPECT_EQ(Records(), std::vector{Payload('A')});
   EXPECT_FALSE(Exists(Chunk(1)));
-}
-
-TEST_F(RestoreTest, ARestartedRestoreFinishes) {
-  std::filesystem::rename(Link() / catalog::Log::ChunkName(0), Chunk(0));
-  std::filesystem::rename(Link() / catalog::Log::ChunkName(1), Chunk(1));
-  std::filesystem::remove(Link());
-  WriteLabel();
-  Prepare();
-  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C')}));
-  EXPECT_TRUE(Exists(_root / "backup_label.old"));
-}
-
-TEST_F(RestoreTest, ARestoreThatMovedPartOfTheLogFinishes) {
-  std::filesystem::rename(Link() / catalog::Log::ChunkName(1), Chunk(1));
-  WriteLabel();
-  Prepare();
-  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C')}));
-  EXPECT_FALSE(Exists(Link()));
-}
-
-TEST_F(RestoreTest, ARestoreThatMovedAllOfTheLogFinishes) {
-  BackUpLog(true);
-  _cut.log_size = _ends[3];
-  for (const auto& entry : std::filesystem::directory_iterator{Link()}) {
-    std::filesystem::rename(
-      entry.path(),
-      std::filesystem::path{_layout->LogDir()} / entry.path().filename());
-  }
-  WriteLabel();
-  Prepare();
-  EXPECT_EQ(Records(),
-            (std::vector{Payload('A'), Half('B'), Half('C'), Payload('D')}));
-  EXPECT_FALSE(Exists(Link()));
-}
-
-TEST_F(RestoreTest, TheRestoredLogStartsAtItsSnapshot) {
-  BackUpLog(true);
-  _cut.log_size = _ends[3];
-  WriteLabel();
-  Prepare();
-  EXPECT_EQ(Records(),
-            (std::vector{Payload('A'), Half('B'), Half('C'), Payload('D')}));
-  EXPECT_EQ(Content(Chunk(0)), std::string(500, 'X'));
+  EXPECT_EQ(std::filesystem::file_size(Chunk(0)), catalog::Log::kChunkBytes);
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B')}));
 }
 
 TEST_F(RestoreTest, ACrashAfterTheLogIsFinishedByTheNextBoot) {
@@ -306,11 +252,16 @@ TEST_F(RestoreTest, ACrashBeforeTheLabelIsRetiredIsFinishedByTheNextBoot) {
     [] { return duckdb::FaultPoints::Arm("crash_in_restore_before_retire"); });
 }
 
-TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {
+TEST_F(RestoreTest, WithoutALabelOnlyTheSessionPinsGo) {
+  const auto named = std::filesystem::path{_layout->BackupsDir()} / "named";
+  WriteFile(named, 4, 'N');
   std::filesystem::remove(_root / kPgControlFile);
   Prepare();
-  EXPECT_FALSE(Exists(Link()));
-  EXPECT_EQ(Content(Chunk(0)), std::string(500, 'X'));
+  EXPECT_FALSE(Exists(Pin()));
+  EXPECT_TRUE(Exists(named));
+  EXPECT_TRUE(Exists(Chunk(1)));
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C'),
+                                    Payload('D'), Payload('E')}));
   EXPECT_TRUE(Exists(StoreDir() / kSegmentFile));
   EXPECT_TRUE(Exists(_root / "recovery.signal"));
   EXPECT_TRUE(ReadPgControl(_root.string()));
@@ -344,20 +295,10 @@ TEST_F(RestoreTest, RefusesAMissingStoreDirectory) {
   ExpectRefused("the backup names a missing directory");
 }
 
-TEST_F(RestoreTest, RefusesALogShorterThanTheCut) {
+TEST_F(RestoreTest, RefusesACopyWithoutTheSnapshotOfTheBackup) {
   WriteLabel();
-  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(1),
-                               _ends[2] - _ends[1] - 1);
-  ExpectRefused(absl::StrCat("it ends at LSN ", _ends[1],
-                             ", before the cut at LSN ", _ends[2]));
-}
-
-TEST_F(RestoreTest, RefusesALogWithAShortChunkBeforeTheCut) {
-  WriteLabel();
-  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(0),
-                               _ends[1] - 1);
-  ExpectRefused(absl::StrCat("it ends at LSN ", _ends[0],
-                             ", before the cut at LSN ", _ends[2]));
+  std::filesystem::remove(Pin());
+  ExpectRefused("the copy has no snapshot of the backup");
 }
 
 }  // namespace

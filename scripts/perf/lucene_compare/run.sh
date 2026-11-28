@@ -148,7 +148,7 @@ run_type() {
 	load "before"
 	start=$(date +%s)
 	say
-	in_java -e SDB_PORT="$sdb_port" -e SDB_DATA="$sdb_dir" -e PG_PORT="$pg_port" -e PG_DATA_MOUNT=/data \
+	in_java -e SDB_PORT="$sdb_port" -e PG_PORT="$pg_port" -e PG_DATA_MOUNT=/data \
 		-e REPORT="$report" -e PLANS="$plans" "$java_image" timeout 900 java "${java_opts[@]}" -cp "$classpath" \
 		Bench bench "$data" "$type"
 	say "- total wall time for \`$type\` incl. server start: $(($(date +%s) - start)) s"

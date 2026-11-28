@@ -1,9 +1,9 @@
-"""What boot does with a data directory that lost files.
+"""What boot does with a server directory that lost files.
 
 A table or index whose files are missing refuses to start, since coming
 back without its data would turn a lost file into silent data loss. A missing
-catalog log beside the index files refuses to start too, and so does a data
-directory of an earlier layout, which boot leaves as it found it.
+log after a snapshot that needs it refuses to start too, and so does a damaged
+snapshot, which boot leaves as it found it.
 """
 
 from __future__ import annotations
@@ -80,16 +80,16 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
             conn.execute("VACUUM (FLUSH_TABLE) kept")
     finally:
         server.stop()
-    store = datadir / "engine_v1" / "store"
+    store = datadir / "segments"
     files = sorted(store.iterdir())
     assert files
-    shutil.rmtree(datadir / "engine_v1" / "wal")
+    shutil.rmtree(datadir / "logs")
 
     refused = _Server(datadir)
     try:
         assert not refused.wait_ready(timeout=30)
         assert refused.proc.wait(timeout=30) != 0
-        assert "holds no catalog log" in refused.output()
+        assert "which is missing" in refused.output()
     finally:
         refused.stop()
     assert sorted(store.iterdir()) == files
@@ -110,7 +110,7 @@ def test_missing_segment_file(tmp_path: Path) -> None:
                 "WHERE table_name = 'docs'").fetchone()[0]
     finally:
         server.stop()
-    lost = min((datadir / "engine_v1" / "store").iterdir())
+    lost = min((datadir / "segments").iterdir())
     lost.unlink()
 
     refused = _Server(datadir)
@@ -128,8 +128,7 @@ def _contents(root: Path) -> dict[str, bytes]:
             for path in sorted(root.rglob("*")) if path.is_file()}
 
 
-def test_a_data_directory_of_an_earlier_layout_is_refused_untouched(
-        tmp_path: Path) -> None:
+def test_a_damaged_snapshot_is_refused_untouched(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     server = _Server(datadir)
     try:
@@ -140,15 +139,15 @@ def test_a_data_directory_of_an_earlier_layout_is_refused_untouched(
             conn.execute("VACUUM (FLUSH_TABLE) docs")
     finally:
         server.stop()
-    (datadir / "engine_v1" / "wal" / "snapshot").write_bytes(b"")
-    engine = _contents(datadir / "engine_v1")
+    (datadir / "snapshot").write_bytes(b"")
+    kept = {name: _contents(datadir / name) for name in ("logs", "segments")}
 
     refused = _Server(datadir)
     try:
         assert not refused.wait_ready(timeout=30)
         assert refused.proc.wait(timeout=30) != 0
-        assert "was written with an earlier layout of the data directory" in \
-            refused.output()
+        assert "is damaged" in refused.output()
     finally:
         refused.stop()
-    assert _contents(datadir / "engine_v1") == engine
+    assert {name: _contents(datadir / name) for name in kept} == kept
+    assert (datadir / "snapshot").read_bytes() == b""

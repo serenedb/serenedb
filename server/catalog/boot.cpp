@@ -144,9 +144,8 @@ bool HoldsFiles(const std::string& directory) {
     return false;
   }
   bool found = false;
-  fs.ListFiles(
-    directory, [&](duckdb::OpenFileInfo&) { found = true; }, nullptr,
-    {.strict = true});
+  fs.ListFiles(directory, [&](duckdb::OpenFileInfo&) { found = true; }, nullptr,
+               {.strict = true});
   return found;
 }
 
@@ -238,10 +237,12 @@ void InitCatalog(bool default_database, bool require_existing) {
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
   auto& fs = StorageFileSystem();
+  bool created = false;
   if (!layout.InMemory()) {
     BeginStorageWork();
     backup::PrepareServerDirectory(layout);
-    if (!Log::HasSnapshot(fs, layout.SnapshotPath())) {
+    created = !Log::HasSnapshot(fs, layout.SnapshotPath());
+    if (created) {
       if (require_existing) {
         SDB_FATAL(STARTUP, "'", layout.directory,
                   "' holds no server, and --require_existing refuses to "
@@ -265,6 +266,9 @@ void InitCatalog(bool default_database, bool require_existing) {
   if (!layout.InMemory()) {
     auto log =
       std::make_unique<Log>(fs, layout.LogDir(), layout.SnapshotPath());
+    if (created) {
+      log->Clear();
+    }
     const auto target = [&](duckdb::idx_t id) {
       return InstanceCatalog(context, id);
     };
@@ -305,12 +309,23 @@ void InitCatalog(bool default_database, bool require_existing) {
   std::vector<StoreListing> listings;
   if (!clean) {
     std::vector<std::string> directories;
+    std::vector<std::string> locations;
     context.RunFunctionInTransaction([&] {
-      for (const auto& tablespace :
+      for (auto& tablespace :
            cluster.TablespaceDirs(cluster.GetCatalogTransaction(context))) {
         directories.push_back(StoreDirOf(tablespace));
+        if (tablespace != layout.directory) {
+          locations.push_back(std::move(tablespace));
+        }
       }
     });
+    for (const auto& location : locations) {
+      try {
+        ClaimLocation(location);
+      } catch (const std::exception& e) {
+        SDB_FATAL(STARTUP, duckdb::ErrorData{e}.RawMessage());
+      }
+    }
     listings = ListStores(std::move(directories));
   }
   const bool recovered = search::RecoverSearchStorages(context, attached);

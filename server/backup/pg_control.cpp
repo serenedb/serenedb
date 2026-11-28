@@ -164,9 +164,8 @@ void WritePgControl(const std::string& data_dir, const ControlState& state) {
 
 std::string OpenPgVersion(const std::string& data_dir) {
   auto path = duckdb::FileSystem::JoinPath(data_dir, kPgVersionFile);
-  const int fd =
-    ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
-           S_IRUSR | S_IWUSR);
+  const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                        S_IRUSR | S_IWUSR);
   if (fd < 0) {
     const int error = errno;
     if (error == EEXIST) {

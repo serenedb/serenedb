@@ -37,6 +37,8 @@
 
 namespace sdb::backup {
 
+inline constexpr std::string_view kSessionPinPrefix = "pg_backup-";
+
 struct Cut {
   std::string snapshot;
 };

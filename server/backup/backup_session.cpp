@@ -121,7 +121,7 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
     {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
   auto& positions = PositionSource::Instance();
   const auto start_lsn = positions.Issue();
-  auto name = absl::StrCat("pg_backup-", start_lsn);
+  auto name = absl::StrCat(kSessionPinPrefix, start_lsn);
   auto pin = fs.JoinPath(layout.BackupsDir(), name);
   absl::Cleanup remove_pin = [&]() noexcept { fs.TryRemoveFile(pin); };
 

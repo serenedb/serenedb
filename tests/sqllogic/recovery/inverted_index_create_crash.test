@@ -39,7 +39,7 @@ count
 
 connection cc_after
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*'))
        - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files') AS leftover;
 ----
 leftover
@@ -60,7 +60,7 @@ VACUUM (FLUSH_TABLE) cc_t;
 
 connection cc_after
 query
-SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*');
+SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*');
 ----
 indexed
 t

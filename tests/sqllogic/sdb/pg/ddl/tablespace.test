@@ -51,9 +51,9 @@ db error: ERROR: tablespace "<slt:ignore>" already exists
 
 
 statement error
-CREATE TABLESPACE other_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts/engine_v1/inside';
+CREATE TABLESPACE other_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts/segments/inside';
 ----
-db error: ERROR: tablespace location "<slt:ignore>/ts/engine_v1/inside" is inside the files of a tablespace
+db error: ERROR: tablespace location "<slt:ignore>/ts/segments/inside" is inside the files of a tablespace
 
 
 statement ok
@@ -113,7 +113,7 @@ notes_idx	t
 query
 SELECT count(*) = (SELECT sum(value) FROM sdb_metrics WHERE metric = 'num_files'
                    AND relation_id IN (SELECT oid FROM pg_class WHERE relname IN ('docs', 'notes_idx'))) AS all_in_ts
-FROM glob('${__TEST_DIR__}/ts/*/engine_v1/store/*');
+FROM glob('${__TEST_DIR__}/ts/segments/*');
 ----
 all_in_ts
 t
@@ -444,7 +444,7 @@ VACUUM (FLUSH_TABLE) ts_db_${__DATABASE__}.public.stored;
 query
 SELECT count(*) > 0 AND count(*) = (SELECT sum(value) FROM ts_db_${__DATABASE__}.pg_catalog.sdb_metrics
                                     WHERE metric = 'num_files') AS all_in_db_ts
-FROM glob('${__TEST_DIR__}/db_ts/*/engine_v1/store/*');
+FROM glob('${__TEST_DIR__}/db_ts/segments/*');
 ----
 all_in_db_ts
 t

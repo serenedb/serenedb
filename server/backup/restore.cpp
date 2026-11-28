@@ -25,6 +25,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/path.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/log.hpp>
@@ -65,19 +66,22 @@ void RequireDirectory(duckdb::FileSystem& fs, const std::string& path) {
   }
 }
 
-void RemoveFiles(duckdb::FileSystem& fs, const std::string& dir) {
+void RemoveSessionPins(duckdb::FileSystem& fs, const std::string& dir) {
   if (!fs.DirectoryExists(dir)) {
     return;
   }
   std::vector<std::string> names;
-  fs.ListFiles(
-    dir,
-    [&](duckdb::OpenFileInfo& info) {
-      if (!duckdb::FileSystem::IsDirectory(info)) {
-        names.push_back(std::move(info.path));
-      }
-    },
-    nullptr, {.strict = true});
+  fs.ListFiles(dir,
+               [&](duckdb::OpenFileInfo& info) {
+                 if (!duckdb::FileSystem::IsDirectory(info) &&
+                     info.path.starts_with(kSessionPinPrefix)) {
+                   names.push_back(std::move(info.path));
+                 }
+               },
+               nullptr, {.strict = true});
+  if (names.empty()) {
+    return;
+  }
   for (const auto& name : names) {
     fs.RemoveFile(fs.JoinPath(dir, name));
   }
@@ -96,7 +100,7 @@ void Restore(const catalog::ServerDirectory& layout,
   const auto control = ReadPgControl(data_dir);
   if (!control) {
     Fail("the copy has no control file", fs.JoinPath(data_dir, kPgControlFile),
-         "copy the whole data directory");
+         "copy the whole server directory");
   }
   if (control->system_identifier != label->system_identifier) {
     Fail("the backup belongs to another cluster:", label_path,
@@ -109,10 +113,8 @@ void Restore(const catalog::ServerDirectory& layout,
     Fail("the copy has no snapshot of the backup", pin,
          "copy the whole server directory");
   }
-  fs.MoveFile(pin, layout.SnapshotPath());
-  fs.SyncDirectory(data_dir);
-  RemoveFiles(fs, layout.LogDir());
-  RemoveFiles(fs, layout.BackupsDir());
+  catalog::Log::Copy(fs, pin, layout.SnapshotPath());
+  catalog::Log::Discard(fs, layout.LogDir(), layout.SnapshotPath());
   SDB_IF_FAILURE("crash_in_restore_after_log") { SDB_IMMEDIATE_ABORT(); }
 
   fs.TryRemoveFile(fs.JoinPath(data_dir, "recovery.signal"));
@@ -139,6 +141,9 @@ void PrepareServerDirectory(const catalog::ServerDirectory& layout) {
     if (const auto label_path = fs.JoinPath(data_dir, kBackupLabelFile);
         fs.FileExists(label_path)) {
       Restore(layout, label_path);
+    }
+    if (!duckdb::Path::IsRemote(data_dir)) {
+      RemoveSessionPins(fs, layout.BackupsDir());
     }
     PositionSource::Instance().Open(data_dir);
   } catch (const std::exception& e) {

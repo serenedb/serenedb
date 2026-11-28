@@ -27,7 +27,7 @@ INSERT INTO bcrash VALUES (2);
 
 connection default
 query
-SELECT count(*) > 0 AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+SELECT count(*) > 0 AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/backups/*');
 ----
 cut
 t
@@ -55,8 +55,8 @@ x
 connection after_crash
 query
 SELECT
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/backup/%') AS backup_files,
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/subscriptions.hold') AS hold_files,
+  count(*) FILTER (WHERE file LIKE '%/backups/%') AS backup_files,
+  count(*) FILTER (WHERE file LIKE '%/subscriptions.hold') AS hold_files,
   count(*) FILTER (WHERE file LIKE '%/backup_label%') AS labels
 FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/**');
 ----

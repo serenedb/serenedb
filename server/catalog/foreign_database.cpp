@@ -56,7 +56,7 @@ std::string DatabaseName(const duckdb::AttachOptions& options) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FDW_INVALID_OPTION_NAME),
         ERR_MSG("invalid option \"", key, "\""),
-        ERR_HINT("A SereneDB data directory takes the options path and ",
+        ERR_HINT("A SereneDB server directory takes the options path and ",
                  kDatabaseOption, "."));
     }
     name = value.ToString();
@@ -86,7 +86,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
   const auto root = std::filesystem::canonical(info.path, ec).string();
   if (ec) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("could not open data directory \"", info.path,
+                    ERR_MSG("could not open server directory \"", info.path,
                             "\": ", ec.message()));
   }
   auto& fs = duckdb::FileSystem::GetFileSystem(context);
@@ -112,10 +112,9 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
     .lock = std::move(*lock),
   };
   LoggedDatabases databases;
-  Log::Read(fs, foreign.dir, foreign.snapshot,
-            [&](std::span<uint8_t> payload) {
-              ReadDatabases(context, CatalogPart(payload), databases);
-            });
+  Log::Read(fs, foreign.dir, foreign.snapshot, [&](std::span<uint8_t> payload) {
+    ReadDatabases(context, CatalogPart(payload), databases);
+  });
   const auto it = absl::c_find_if(databases, [&](const auto& database) {
     return database.second.GetIdentifierName() == name;
   });

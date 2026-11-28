@@ -145,6 +145,8 @@ class Log {
                    const std::string& snapshot, Apply apply);
   static void Copy(duckdb::FileSystem& fs, const std::string& from,
                    const std::string& to);
+  static void Discard(duckdb::FileSystem& fs, const std::string& dir,
+                      const std::string& snapshot);
 
   Log(duckdb::FileSystem& fs, std::string dir, std::string snapshot);
 

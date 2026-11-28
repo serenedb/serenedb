@@ -13,7 +13,7 @@ docker run -d --name serenedb -p 7890:7890 -e POSTGRES_PASSWORD=<password> -v se
 ```
 
 - `-p 7890:7890` exposes the database port.
-- `-e POSTGRES_PASSWORD=<password>` sets the password of the `postgres` superuser when the data directory is first created. A connection through `-p` reaches the container from Docker's network, not over loopback, so the server asks for this password.
+- `-e POSTGRES_PASSWORD=<password>` sets the password of the `postgres` superuser when the server directory is first created. A connection through `-p` reaches the container from Docker's network, not over loopback, so the server asks for this password.
 - `-v serenedb-data:/var/lib/serenedb` stores your data in a Docker-managed volume named `serenedb-data`, so it survives a restart. Leave it off for a throwaway container.
 
 Connect with the password you set:

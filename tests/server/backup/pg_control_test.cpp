@@ -127,15 +127,13 @@ TEST_F(PgControlTest, PositionsNeverGoBelowTheFloor) {
   EXPECT_EQ(positions.Issue(), floor + 2);
 }
 
-TEST_F(PgControlTest, PgVersionAppearsOnlyWhenPublished) {
-  const auto pending = PendingPgVersion(_root);
-  EXPECT_EQ(pending, _root / kPendingPgVersionFile);
-  EXPECT_TRUE(std::filesystem::exists(pending));
-  EXPECT_FALSE(std::filesystem::exists(_root / kPgVersionFile));
-  EXPECT_EQ(PendingPgVersion(_root), pending);
-  PublishPgVersion(_root);
+TEST_F(PgControlTest, PgVersionIsWrittenOnceAndKept) {
+  const auto path = OpenPgVersion(_root.string());
+  EXPECT_EQ(path, (_root / kPgVersionFile).string());
   EXPECT_EQ(ReadFile(kPgVersionFile), "18\n");
-  EXPECT_FALSE(std::filesystem::exists(pending));
+  std::ofstream{_root / kPgVersionFile, std::ios::trunc} << "17\n";
+  EXPECT_EQ(OpenPgVersion(_root.string()), path);
+  EXPECT_EQ(ReadFile(kPgVersionFile), "17\n");
 }
 
 }  // namespace

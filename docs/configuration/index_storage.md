@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The files of tables and inverted indexes live in the [tablespace](../sql/statements/create_tablespace/index.md) they are created in: the data directory by default, another local disk, or an object store.
+The files of tables and inverted indexes live in the [tablespace](../sql/statements/create_tablespace/index.md) they are created in: the server directory by default, another local disk, or an object store.
 
 ## Choosing the location
 
@@ -13,7 +13,7 @@ A tablespace's location is a local directory or an object store URL:
 
 | Location | Index files live in |
 | -------- | ------------------- |
-| `pg_default`, the default tablespace | the data directory |
+| `pg_default`, the default tablespace | the server directory |
 | `/mnt/fast/indexes` | that directory |
 | `s3://bucket/prefix` | an S3 bucket, or a bucket of an S3-compatible store, under that prefix |
 | `az://container/prefix` | an Azure Blob Storage container, under that prefix |

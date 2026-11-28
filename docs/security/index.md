@@ -29,7 +29,7 @@ Remote connections are different: a role without a password can never log in ove
 ALTER ROLE postgres PASSWORD 'a-strong-password';
 ```
 
-or at first boot with the `POSTGRES_PASSWORD` environment variable, which seeds the password when the data directory is created — handy for containers:
+or at first boot with the `POSTGRES_PASSWORD` environment variable, which seeds the password when the server directory is created — handy for containers:
 
 ```sh
 POSTGRES_PASSWORD=a-strong-password serened /data --listen postgres://0.0.0.0:7890

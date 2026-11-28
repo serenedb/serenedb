@@ -107,11 +107,6 @@ def _matches(server: _Server) -> list[int]:
     return [row[0] for row in rows]
 
 
-def _directory(location: Path) -> Path:
-    [directory] = location.iterdir()
-    return directory / "engine_v1"
-
-
 def _refused(datadir: Path) -> str:
     server = _Server(datadir)
     try:
@@ -197,9 +192,9 @@ def test_a_database_in_a_tablespace_keeps_its_objects_there(
             assert _placement(conn, names) == {
                 "docs": "", "notes": "", "notes_home": "",
                 "notes_other": "other", "in_default": "pg_default"}
-            in_home = _directory(home) / "store"
-            in_other = _directory(other) / "store"
-            in_default = datadir / "engine_v1" / "store"
+            in_home = home / "segments"
+            in_other = other / "segments"
+            in_default = datadir / "segments"
             for store, placed in ((in_home, ["docs", "notes"]),
                                   (in_other, ["notes_other"]),
                                   (in_default, ["in_default"])):
@@ -278,7 +273,7 @@ def test_a_database_in_a_tablespace_needs_create_on_it(
                 conn.execute("CREATE DATABASE placed TABLESPACE home")
     finally:
         server.stop()
-    assert not list(home.glob("*/engine_v1/store/*"))
+    assert not list(home.glob("segments/*"))
 
 
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
@@ -308,7 +303,7 @@ def s3_store():
 
 def _index_files(fake: FakeS3, prefix: str) -> list[str]:
     return [key for key in fake.keys("bucket", prefix)
-            if not key.endswith("/")]
+            if "/segments/" in key and not key.endswith("/")]
 
 
 def _create_secret(server: _Server, store: _Store, location: str) -> None:
@@ -443,7 +438,7 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
         assert _matches(server) == [1, 3]
     finally:
         server.stop()
-    assert not any((datadir / "engine_v1" / "store").iterdir()), list(
+    assert not any((datadir / "segments").iterdir()), list(
         datadir.rglob("*"))
 
     again = _Server(datadir)
@@ -942,8 +937,7 @@ def test_throttled_requests_are_retried(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("kind", ["s3", "azure"])
-def test_clusters_sharing_a_location_keep_apart(tmp_path: Path,
-                                                kind: str) -> None:
+def test_a_location_belongs_to_one_server(tmp_path: Path, kind: str) -> None:
     with FakeS3() if kind == "s3" else FakeAzure() as fake:
         if kind == "s3":
             bucket, location = "bucket", f"s3://bucket/shared-{tmp_path.name}"
@@ -957,10 +951,8 @@ def test_clusters_sharing_a_location_keep_apart(tmp_path: Path,
         prefix = f"shared-{tmp_path.name}/"
 
         def files() -> list[str]:
-            return [key for key in keys(bucket, prefix) if not key.endswith("/")]
-
-        def clusters() -> set[str]:
-            return {key.split("/")[1] for key in files()}
+            return [key for key in keys(bucket, f"{prefix}segments/")
+                    if not key.endswith("/")]
 
         def rows(server: _Server, table: str) -> list[tuple[int]]:
             with server.connect() as conn:
@@ -994,27 +986,14 @@ def test_clusters_sharing_a_location_keep_apart(tmp_path: Path,
                     conn.execute(
                         f"CREATE TABLESPACE shared LOCATION '{location}'")
             with other.connect() as conn:
-                conn.execute(f"CREATE TABLESPACE theirs LOCATION '{location}'")
-                conn.execute("CREATE TABLE theirs_rows (id INT) "
-                             " TABLESPACE theirs")
-                conn.execute("INSERT INTO theirs_rows VALUES (3)")
-                conn.execute("VACUUM (FLUSH_TABLE) theirs_rows")
-            assert rows(other, "theirs_rows") == [(3,)]
-            assert len(clusters()) == 2, keys(bucket)
-            with other.connect() as conn:
-                conn.execute("DROP TABLE theirs_rows")
-                conn.execute("DROP TABLESPACE theirs")
+                with pytest.raises(psycopg.errors.ObjectInUse,
+                                   match="belongs to another server"):
+                    conn.execute(
+                        f"CREATE TABLESPACE theirs LOCATION '{location}'")
         finally:
             first.stop()
             other.stop()
-        assert len(clusters()) == 1, keys(bucket)
 
-        for datadir in ("other", "first"):
-            again = _Server(tmp_path / datadir)
-            try:
-                assert again.wait_ready(), again.output()
-            finally:
-                again.stop()
         again = _Server(tmp_path / "first")
         try:
             assert again.wait_ready(), again.output()
@@ -1343,7 +1322,8 @@ def test_a_table_in_a_dfs_tablespace_survives_a_restart(tmp_path: Path) -> None:
         finally:
             again.stop()
         assert not [name for name in fake.names("indexes", f"dfs-{tmp_path.name}/")
-                    if not name.endswith("/")], fake.names("indexes")
+                    if "/segments/" in name and not name.endswith("/")], \
+            fake.names("indexes")
 
 
 @pytest.mark.parametrize("kind", ["s3", "azure"])
@@ -1375,7 +1355,7 @@ def test_a_restart_lists_each_directory_one_level_deep(tmp_path: Path, kind: str
         finally:
             server.stop()
         markers = [key for key in keys(bucket, f"{prefix}/") if key.endswith("/")]
-        assert len(markers) == 4, keys(bucket)
+        assert len(markers) == 2, keys(bucket)
         store = max(markers, key=lambda key: key.count("/")).removesuffix("/")
         for i in range(6000):
             fake.replace(bucket, f"{store}/archive/{i}", b"")
@@ -1560,7 +1540,7 @@ def test_a_secret_replaced_while_a_removal_outside_sessions_reads_it(
                 conn.execute("INSERT INTO gone SELECT i FROM range(1000) t(i)")
                 conn.execute("VACUUM (FLUSH_TABLE) gone")
                 written = {key for key in fake.keys("bucket", f"replaced-{tmp_path.name}/")
-                           if "/store/" in key and not key.endswith("/")}
+                           if "/segments/" in key and not key.endswith("/")}
                 assert written, fake.keys("bucket")
                 conn.execute(f"SET sdb_faults = '{fault}'")
                 conn.execute("DROP TABLE gone")

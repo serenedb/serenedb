@@ -57,7 +57,7 @@ CREATE TABLE dlc_oids AS
 # own: the rest belong to another database or to no object at all.
 statement ok
 CREATE MACRO dlc_files() AS (
-  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'));
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*'));
 
 
 statement ok

@@ -88,8 +88,8 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "pool at runtime.");
 
 ABSL_FLAG(std::string, temp_directory, "",
-          "Local directory for spill files and evicted blocks of files on an "
-          "object store. Empty uses <server directory>/temp.");
+          "Local directory for the temporary files of queries that spill to "
+          "disk. Empty uses <server directory>/temp.");
 
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
@@ -113,10 +113,10 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
   config.create_secret_storage = catalog::CreateSecretStorage;
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
-  config.AddExtensionOption(
-    duckdb::Identifier{"data_directory"}, "Shows the server directory.",
-    duckdb::LogicalType::VARCHAR, directory, nullptr, nullptr,
-    duckdb::SetScope::AUTOMATIC, true);
+  config.AddExtensionOption(duckdb::Identifier{"data_directory"},
+                            "Shows the server directory.",
+                            duckdb::LogicalType::VARCHAR, directory, nullptr,
+                            nullptr, duckdb::SetScope::AUTOMATIC, true);
   connector::RegisterIResearchReplacementScan(config);
 }
 

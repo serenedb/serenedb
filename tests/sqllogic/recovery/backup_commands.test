@@ -99,7 +99,7 @@ INSERT INTO bcmd_db.public.t VALUES (1);
 
 statement ok
 CREATE TEMP TABLE bcmd_files AS
-SELECT 'before' AS owner, file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*');
+SELECT 'before' AS owner, file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*');
 
 
 statement ok
@@ -107,7 +107,7 @@ VACUUM (FLUSH_TABLE) bcmd_gone;
 
 
 statement ok
-INSERT INTO bcmd_files SELECT 'gone', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+INSERT INTO bcmd_files SELECT 'gone', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*')
 WHERE file NOT IN (SELECT file FROM bcmd_files);
 
 
@@ -116,7 +116,7 @@ VACUUM (FLUSH_TABLE) bcmd_db.public.t;
 
 
 statement ok
-INSERT INTO bcmd_files SELECT 'other', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+INSERT INTO bcmd_files SELECT 'other', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*')
 WHERE file NOT IN (SELECT file FROM bcmd_files);
 
 
@@ -173,7 +173,7 @@ query
 SELECT
   count(*) FILTER (WHERE owner = 'gone') > 0 AS table_kept,
   count(*) FILTER (WHERE owner = 'other') > 0 AS database_kept
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*') JOIN bcmd_files USING (file);
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*') JOIN bcmd_files USING (file);
 ----
 table_kept	database_kept
 t	t
@@ -215,7 +215,7 @@ connection default
 statement ok
 CREATE TEMP TABLE bcmd_wal AS
 SELECT min(regexp_extract(file, '[^/]+$')) AS oldest
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/logs/*.log');
 
 
 connection default
@@ -268,7 +268,7 @@ query ok retry 40 backoff 250ms
 SELECT
   count(*) FILTER (WHERE owner = 'gone') AS table_files,
   count(*) FILTER (WHERE owner = 'other') AS database_files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*') JOIN bcmd_files USING (file);
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*') JOIN bcmd_files USING (file);
 ----
 table_files	database_files
 0	0

@@ -32,7 +32,7 @@ SELECT pg_backup_start('bfc');
 
 connection default
 query ok retry 40 backoff 250ms
-SELECT count(*) > 0 AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+SELECT count(*) > 0 AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/backups/*');
 ----
 cut
 t

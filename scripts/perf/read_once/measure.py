@@ -22,7 +22,7 @@ import psycopg
 
 HEADER = struct.Struct("<II")
 U32 = struct.Struct("<I")
-SNAPSHOT_HEADER = struct.Struct("<QQQ")
+SNAPSHOT_HEADER = struct.Struct("<QQQQQ")
 SEGMENT_SUFFIXES = (".col", ".idx", ".doc", ".pos", ".pay")
 FOOTER_SUFFIXES = (".col", ".idx")
 SIZE_BUCKETS = [
@@ -356,27 +356,17 @@ def dump_payload(blobs, region, name, payload):
         blobs.add(f"{region}_search", name, bytes(payload[U32.size + catalog :]))
 
 
-def current_snapshot(wal):
-    pointer = wal / "current_snapshot"
-    if not pointer.exists():
-        return None
-    buf = pointer.read_bytes()
-    payloads, end = parse_records(buf)
-    if len(payloads) != 1 or len(payloads[0]) != 8 or end != len(buf):
-        raise RuntimeError(f"{pointer} is not a snapshot pointer")
-    return wal / f"{struct.unpack_from('<Q', payloads[0])[0]:016x}.snapshot"
-
-
-def parse_wal(wal, blobs, tag):
+def parse_wal(datadir, blobs, tag):
     result = {}
     covered = number = begin = 0
-    snapshot_path = current_snapshot(wal)
-    if snapshot_path:
+    wal = datadir / "logs"
+    snapshot_path = datadir / "snapshot"
+    if snapshot_path.exists():
         buf = snapshot_path.read_bytes()
         payloads, end = parse_records(buf)
         if not payloads or len(payloads[0]) != SNAPSHOT_HEADER.size:
             raise RuntimeError(f"{snapshot_path} does not start with a snapshot header")
-        covered, number, begin = SNAPSHOT_HEADER.unpack_from(payloads[0])
+        _, covered, number, begin, _ = SNAPSHOT_HEADER.unpack_from(payloads[0])
         history = PayloadStats()
         tables = PayloadStats()
         for i, payload in enumerate(payloads[1:]):
@@ -502,7 +492,6 @@ def hits_source(args):
 
 def phase_log(args, out, blobs):
     datadir = fresh_dir(out / "log_data")
-    wal = datadir / "engine_v1" / "wal"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:
@@ -552,7 +541,7 @@ def phase_log(args, out, blobs):
         res["table_after_writes"] = server.relation_metrics("hits_log")
 
         res["crash"] = server.stop(crash=True)
-        res["wal_after_crash"] = parse_wal(wal, blobs, "writes")
+        res["wal_after_crash"] = parse_wal(datadir, blobs, "writes")
         res["evicted_before_recovery"] = evict(datadir)
         log("log: recovery")
         res["recovery"] = server.start("recovery")
@@ -565,7 +554,7 @@ def phase_log(args, out, blobs):
         res["table_after_recovery"] = server.relation_metrics("hits_log")
         res["metrics_after_checkpoint"] = server.log_metrics()
         res["crash_after_checkpoint"] = server.stop(crash=True)
-        res["wal_after_checkpoint"] = parse_wal(wal, blobs, "checkpoint")
+        res["wal_after_checkpoint"] = parse_wal(datadir, blobs, "checkpoint")
         res["evicted_before_snapshot_start"] = evict(datadir)
         log("log: start from the snapshot")
         res["snapshot_start"] = server.start("snapshot")
@@ -585,7 +574,6 @@ def phase_log(args, out, blobs):
 
 def phase_update(args, out, blobs):
     datadir = fresh_dir(out / "update_data")
-    wal = datadir / "engine_v1" / "wal"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:
@@ -631,7 +619,7 @@ def phase_update(args, out, blobs):
         expected = server.sql("SELECT count(*) FROM hits_upd")[0][0]
 
         res["crash"] = server.stop(crash=True)
-        res["wal_after_crash"] = parse_wal(wal, blobs, "updates")
+        res["wal_after_crash"] = parse_wal(datadir, blobs, "updates")
         res["evicted_before_recovery"] = evict(datadir)
         log("update: recovery")
         res["recovery"] = server.start("recovery")
@@ -649,7 +637,7 @@ def phase_update(args, out, blobs):
 
 def phase_bulk(args, out, blobs):
     datadir = fresh_dir(out / "bulk_data")
-    store = datadir / "engine_v1" / "store"
+    store = datadir / "segments"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:
@@ -696,7 +684,7 @@ def ann_query(args):
 
 def phase_hnsw(args, out, blobs):
     datadir = fresh_dir(out / "hnsw_data")
-    store = datadir / "engine_v1" / "store"
+    store = datadir / "segments"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:

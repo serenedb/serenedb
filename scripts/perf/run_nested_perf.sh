@@ -232,10 +232,10 @@ ndb_pre_total=$((NATIVE_SIZE_PRE_MAIN + NATIVE_SIZE_PRE_WAL))
 		"${total}" "$(human "${total}")"
 	declare -a exts=(col idx doc pos pay)
 	for ext in "${exts[@]}"; do
-		s=$(sum_ext "${SERENED_DATA_DIR}/engine_v1/store" "${ext}")
+		s=$(sum_ext "${SERENED_DATA_DIR}/segments" "${ext}")
 		printf "  .%-7s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
-	wal_total=$(sum_glob "${SERENED_DATA_DIR}/engine_v1/wal" -type f)
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/logs" "${SERENED_DATA_DIR}/snapshot" -type f)
 	printf "  %-8s %14d bytes (%s)\n" "wal" \
 		"${wal_total}" "$(human "${wal_total}")"
 } | tee -a "${RUN_LOG}"
@@ -290,8 +290,8 @@ ratio() {
 			"$(ratio "${n}" "${i}")"
 	done
 	echo
-	col_total=$(sum_ext "${SERENED_DATA_DIR}/engine_v1/store" "col")
-	wal_total=$(sum_glob "${SERENED_DATA_DIR}/engine_v1/wal" -type f)
+	col_total=$(sum_ext "${SERENED_DATA_DIR}/segments" "col")
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/logs" "${SERENED_DATA_DIR}/snapshot" -type f)
 	printf "%-26s %12s\n" "storage" "bytes"
 	printf "%-26s %12s\n" "--------------------------" "------------"
 	printf "%-26s %12s (%s)\n" "duckdb native (post-ckpt)" \

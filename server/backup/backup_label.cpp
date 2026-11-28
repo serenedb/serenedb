@@ -140,7 +140,8 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
       has_system = true;
     } else if (absl::ConsumePrefix(&value, kSnapshotKey)) {
       label.cut.snapshot = absl::StripAsciiWhitespace(value);
-      if (label.cut.snapshot.empty() ||
+      if (label.cut.snapshot.empty() || label.cut.snapshot == "." ||
+          label.cut.snapshot == ".." ||
           label.cut.snapshot.find('/') != std::string::npos) {
         return Malformed(line);
       }

@@ -517,8 +517,8 @@ def _retained_backup(tmp_path: Path) -> Path:
         source.stop()
 
     (copy / "backup_label").write_text(label)
-    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
-    assert len(chunks) >= 2, chunks
+    pins = list((copy / "backups").iterdir())
+    assert len(pins) == 1, pins
     return copy
 
 
@@ -544,17 +544,15 @@ def test_backup_restores_rows_held_only_in_the_log(tmp_path: Path) -> None:
         restored.stop()
 
 
-@pytest.mark.parametrize("missing", ["oldest", "newest"])
-def test_backup_without_a_log_file_refuses_to_boot(tmp_path: Path, missing: str) -> None:
+def test_backup_without_its_snapshot_refuses_to_boot(tmp_path: Path) -> None:
     copy = _retained_backup(tmp_path)
-    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
-    name = (chunks[0] if missing == "oldest" else chunks[-1]).name
-    for directory in ("backup", "wal"):
-        (copy / "engine_v1" / directory / name).unlink(missing_ok=True)
+    for pin in (copy / "backups").iterdir():
+        pin.unlink()
     restored = Serened(SERENED_BIN, datadir=str(copy),
                        log_path=str(tmp_path / "restored.log"))
     try:
-        with pytest.raises(RuntimeError, match="the copy is incomplete"):
+        with pytest.raises(RuntimeError,
+                           match="the copy has no snapshot of the backup"):
             restored.start()
         assert (copy / "backup_label").is_file()
     finally:
@@ -718,7 +716,7 @@ def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> N
     try:
         restored.start()
         assert not _subscription_enabled(restored)
-        assert not (copy / "engine_v1" / "subscriptions.hold").exists()
+        assert not (copy / "subscriptions.hold").exists()
         _expect_one_warning(
             tmp_path / "restored.log",
             'subscription "bsub" in database "postgres" was disabled because the '

@@ -331,7 +331,7 @@ Don't run a `CHECKPOINT` on shutdown:
 
 ## Temp Directory for Spilling Data to Disk
 
-By default, the server spills to disk in the `tmp` directory of its data directory (`<datadir>/tmp`). To change this, use:
+By default, the server spills to disk in the `temp` directory of its server directory, or in the directory the `--temp_directory` flag names. To change this, use:
 
 <SqlLogicTest id="configuration/pragmas/example_061" />
 

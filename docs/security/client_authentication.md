@@ -44,7 +44,7 @@ Passwords are stored as SCRAM-SHA-256 verifiers, never in cleartext. Set one at 
 
 <SqlLogicTest id="security/client_authentication/example_003" />
 
-For containers and provisioning, the `POSTGRES_PASSWORD` environment variable seeds the superuser's password when the data directory is first created:
+For containers and provisioning, the `POSTGRES_PASSWORD` environment variable seeds the superuser's password when the server directory is first created:
 
 ```sh
 POSTGRES_PASSWORD=a-strong-password serened /data --listen postgres://0.0.0.0:7890
@@ -58,7 +58,7 @@ Connect over loopback — `psql -h 127.0.0.1 -U postgres` is always trusted — 
 
 ## The HBA ruleset
 
-The ruleset is a server setting in PostgreSQL's `pg_hba.conf` grammar, managed with SQL. Setting it requires superuser; it is persisted to `<datadir>/pg_hba.conf` and takes effect immediately:
+The ruleset is a server setting in PostgreSQL's `pg_hba.conf` grammar, managed with SQL. Setting it requires superuser; it is persisted to `pg_hba.conf` in the server directory and takes effect immediately:
 
 ```sql
 SET hba = '

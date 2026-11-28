@@ -34,6 +34,7 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb_versions/storage_version.hpp>
 #include <filesystem>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -174,29 +175,6 @@ SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& path) {
   }
   snapshot.records.erase(snapshot.records.begin());
   return snapshot;
-}
-
-void ReplaceWhole(duckdb::FileSystem& fs, const std::string& path,
-                  absl::FunctionRef<uint64_t(duckdb::FileHandle&)> write) {
-  if (duckdb::Path::IsRemote(path)) {
-    const auto file =
-      fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                          duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    write(*file);
-    file->Close();
-    return;
-  }
-  const auto replacing = absl::StrCat(path, kReplacingSuffix);
-  fs.TryRemoveFile(replacing);
-  {
-    const auto file =
-      fs.OpenFile(replacing, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                               duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    write(*file);
-    file->Sync();
-  }
-  fs.MoveFile(replacing, path);
-  fs.SyncDirectory(fs.JoinPath(path, ".."));
 }
 
 class SnapshotWriter {
@@ -354,17 +332,17 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
     const auto begin = first ? snapshot.begin : scanned.end;
     const auto from = static_cast<size_t>(scanned.end - begin);
     auto bytes = ReadFile(fs, fs.JoinPath(dir, Log::ChunkName(number)));
-    if (first && !bytes && snapshot.clean == 0 && from != 0) {
-      ThrowDamaged(dir, absl::StrCat("the snapshot continues in log file ",
-                                     number,
-                                     ", which is missing: the commits after "
-                                     "LSN ",
-                                     snapshot.covered, " are not here"));
+    if (first && !bytes && past.exists && snapshot.clean == 0) {
+      ThrowDamaged(dir,
+                   absl::StrCat("the snapshot continues in log file ", number,
+                                ", which is missing: the commits after "
+                                "LSN ",
+                                snapshot.covered, " are not here"));
     }
     if (first && bytes && bytes->size() < from) {
-      ThrowDamaged(dir, absl::StrCat("log file ", number, " ends before LSN ",
-                                     snapshot.covered,
-                                     ", which the snapshot covers"));
+      ThrowDamaged(
+        dir, absl::StrCat("log file ", number, " ends before LSN ",
+                          snapshot.covered, ", which the snapshot covers"));
     }
     if (!bytes) {
       scanned.next = number;
@@ -417,23 +395,55 @@ void Log::Copy(duckdb::FileSystem& fs, const std::string& from,
                const std::string& to) {
   if (!duckdb::Path::IsRemote(from)) {
     std::error_code ec;
-    std::filesystem::create_hard_link(from, to, ec);
+    if (std::filesystem::equivalent(from, to, ec)) {
+      return;
+    }
+    const auto replacing = absl::StrCat(to, kReplacingSuffix);
+    fs.TryRemoveFile(replacing);
+    std::filesystem::create_hard_link(from, replacing, ec);
     if (ec) {
       THROW_SQL_ERROR(ERR_CODE(irs::pg::ErrcodeForFileAccess(ec.value())),
-                      ERR_MSG("could not link \"", to, "\": ", ec.message()));
+                      ERR_MSG("could not link \"", from, "\" to \"", replacing,
+                              "\": ", ec.message()));
     }
+    fs.MoveFile(replacing, to);
     fs.SyncDirectory(fs.JoinPath(to, ".."));
     return;
   }
   auto bytes = ReadFile(fs, from);
   if (!bytes) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("could not copy \"", from, "\": it does not exist"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("could not copy \"", from, "\": it does not exist"));
   }
-  ReplaceWhole(fs, to, [&](duckdb::FileHandle& file) {
-    file.Write(duckdb::QueryContext{}, bytes->data(), bytes->size(), 0);
-    return bytes->size();
-  });
+  irs::WriteWhole(fs, to,
+                  std::string_view{reinterpret_cast<const char*>(bytes->data()),
+                                   bytes->size()},
+                  true);
+}
+
+void Log::Discard(duckdb::FileSystem& fs, const std::string& dir,
+                  const std::string& snapshot) {
+  const auto past = ReadSnapshot(fs, snapshot);
+  if (!past.exists) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("could not discard the log after snapshot \"",
+                            snapshot, "\": it does not exist"));
+  }
+  fs.CreateDirectoryExtended(
+    dir, {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
+  for (const auto& name : LogFiles(fs, dir)) {
+    fs.RemoveFile(fs.JoinPath(dir, name));
+  }
+  {
+    const auto file =
+      fs.OpenFile(fs.JoinPath(dir, ChunkName(past.header.number)),
+                  duckdb::FileFlags::FILE_FLAGS_WRITE |
+                    duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+    ZeroFill(*file, 0, kChunkBytes);
+    file->Sync();
+  }
+  fs.SyncDirectory(dir);
 }
 
 Log::Log(duckdb::FileSystem& fs, std::string dir, std::string snapshot)
@@ -459,11 +469,6 @@ void Log::SyncDirectory() const { _fs.SyncDirectory(_dir); }
 
 Log::Replayed Log::Replay(Apply apply, CatalogPart part) {
   absl::MutexLock files{&_files_mutex};
-  if (!HasSnapshot(_fs, _snapshot_path)) {
-    for (const auto& name : LogFiles(_fs, _dir)) {
-      _fs.TryRemoveFile(_fs.JoinPath(_dir, name));
-    }
-  }
   std::vector<std::vector<uint8_t>> history;
   const auto scanned = ScanLog(
     _fs, _dir, _snapshot_path,
@@ -833,18 +838,20 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
   }
   auto history = compact(parts);
   uint64_t size = 0;
-  ReplaceWhole(_fs, _snapshot_path, [&](duckdb::FileHandle& file) {
-    SnapshotWriter out{file};
-    out.Record({reinterpret_cast<const uint8_t*>(&header), sizeof(header)});
-    for (const auto& payload : history) {
-      out.Record(payload);
-    }
-    for (const auto& record : records) {
-      out.Record(record);
-    }
-    size = out.Finish();
-    return size;
-  });
+  irs::WriteWhole(
+    _fs, _snapshot_path,
+    [&](duckdb::FileHandle& file) {
+      SnapshotWriter out{file};
+      out.Record({reinterpret_cast<const uint8_t*>(&header), sizeof(header)});
+      for (const auto& payload : history) {
+        out.Record(payload);
+      }
+      for (const auto& record : records) {
+        out.Record(record);
+      }
+      size = out.Finish();
+    },
+    true);
   _history_bytes.store(TotalBytes(history), std::memory_order_relaxed);
   _history = std::move(history);
   _snapshot_bytes.store(size, std::memory_order_relaxed);

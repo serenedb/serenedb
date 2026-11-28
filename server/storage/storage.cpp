@@ -41,13 +41,13 @@
 #include "server/utils/lifecycle.h"
 
 ABSL_FLAG(std::string, server_directory, "serenedb-data",
-          "Path to the database directory. A positional argument, if given, "
+          "Path to the server directory. A positional argument, if given, "
           "takes precedence.");
 
 ABSL_FLAG(std::string, hba_config, "",
           "Path to the host-based authentication config file. Empty (the "
-          "default) uses <datadir>/pg_hba.conf; a relative path is resolved "
-          "against the data directory.");
+          "default) uses <server directory>/pg_hba.conf; a relative path is "
+          "resolved against the server directory.");
 
 ABSL_FLAG(std::string, log_directory, "",
           "Local directory for the log of the commits since the last "
@@ -121,17 +121,15 @@ Storage::~Storage() { Close(); }
 void Storage::Lock(const catalog::ServerDirectory& layout) {
   auto& fs = DataFileSystem();
   const auto& directory = layout.directory;
-  try {
-    if (fs.CreateDirectoryExtended(
-          directory, {.mode = duckdb::CreateDirectoryMode::RECURSIVE})) {
-      SDB_INFO(STARTUP, "Created server directory: ", directory);
+  const auto create = [&](const std::string& path) {
+    try {
+      return fs.CreateDirectoryExtended(
+        path, {.mode = duckdb::CreateDirectoryMode::RECURSIVE});
+    } catch (const std::exception& e) {
+      SDB_FATAL(GENERAL, "Unable to create directory '", path,
+                "': ", duckdb::ErrorData{e}.RawMessage());
     }
-    fs.CreateDirectoryExtended(
-      layout.LogDir(), {.mode = duckdb::CreateDirectoryMode::RECURSIVE});
-  } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "Unable to create server directory '", directory,
-              "': ", duckdb::ErrorData{e}.RawMessage());
-  }
+  };
   const auto take = [](const std::string& path) {
     auto lock = FileLock::Take(path, FileLock::Mode::Exclusive);
     if (!lock.ok()) {
@@ -139,6 +137,9 @@ void Storage::Lock(const catalog::ServerDirectory& layout) {
     }
     return std::move(*lock);
   };
+  if (create(directory)) {
+    SDB_INFO(STARTUP, "Created server directory: ", directory);
+  }
   try {
     _lock = take(backup::OpenPgVersion(directory));
   } catch (const std::exception& e) {
@@ -146,6 +147,7 @@ void Storage::Lock(const catalog::ServerDirectory& layout) {
               fs.JoinPath(directory, backup::kPgVersionFile),
               "': ", duckdb::ErrorData{e}.RawMessage());
   }
+  create(layout.LogDir());
   if (layout.LogDir() != catalog::ServerDirectory::DefaultLog(directory)) {
     _log_lock = take(fs.JoinPath(layout.LogDir(), kLockFile));
   }

@@ -293,16 +293,15 @@ std::string TablespaceDirectory(std::string_view location) {
 
 void CreateTablespaceDirectory(const std::string& location) {
   auto& fs = StorageFileSystem();
-  const auto store = StoreDirOf(TablespaceDirectory(location));
-  if (!duckdb::Path::FromString(location).IsRemote()) {
-    fs.CreateDirectoryExtended(
-      store, {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
-    return;
-  }
-  for (const auto& level : {location, store}) {
-    fs.CreateDirectoryExtended(
-      level, {.mode = duckdb::CreateDirectoryMode::SINGLE, .sync = true});
-  }
+  const bool remote = duckdb::Path::FromString(location).IsRemote();
+  fs.CreateDirectoryExtended(
+    location, {.mode = remote ? duckdb::CreateDirectoryMode::SINGLE
+                              : duckdb::CreateDirectoryMode::RECURSIVE,
+               .sync = true});
+  ClaimLocation(location);
+  fs.CreateDirectoryExtended(
+    StoreDirOf(TablespaceDirectory(location)),
+    {.mode = duckdb::CreateDirectoryMode::SINGLE, .sync = true});
 }
 
 class BuiltinTablespaces final : public duckdb::DefaultGenerator {

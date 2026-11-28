@@ -233,7 +233,7 @@ Store::~Store() {
     catalog::BeginStorageWork();
     _released->Drop(
       [root = _root](std::vector<irs::ReleasedSegment> segments) noexcept {
-        catalog::RemoveStorage([root, segments = std::move(segments)] {
+        catalog::RemoveStorage(root, [root, segments = std::move(segments)] {
           return RemoveSegments(root, segments);
         });
       });

@@ -11,7 +11,7 @@ RESET sdb_faults;
 statement ok
 CREATE MACRO lx_stale() AS (
   (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1))
-   FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+   FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*')
    WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '')
   - (SELECT sum(value) FROM sdb_metrics WHERE metric = 'num_segments'));
 

@@ -21,6 +21,10 @@
 #include "catalog/database_directory.h"
 
 #include <absl/functional/any_invocable.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/strip.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -28,7 +32,9 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -36,6 +42,7 @@
 #include <utility>
 #include <vector>
 
+#include "backup/pg_control.h"
 #include "runtime/runtime.h"
 #include "server/utils/lifecycle.h"
 
@@ -63,6 +70,66 @@ struct StorageWork {
 StorageWork& Work() {
   static StorageWork gWork;
   return gWork;
+}
+
+struct Ownership {
+  absl::Mutex mutex;
+  irs::containers::FlatHashSet<std::string> released ABSL_GUARDED_BY(mutex);
+};
+
+Ownership& Owners() {
+  static Ownership gOwners;
+  return gOwners;
+}
+
+std::string Owner() {
+  return absl::StrCat(backup::PositionSource::Instance().SystemIdentifier(),
+                      "\n");
+}
+
+std::string_view LocationOf(std::string_view store) {
+  absl::ConsumeSuffix(&store, kStoreDir);
+  absl::ConsumeSuffix(&store, "/");
+  return store;
+}
+
+bool HoldsSegments(duckdb::FileSystem& fs, const std::string& store) {
+  bool held = false;
+  if (fs.DirectoryExists(store)) {
+    fs.ListFiles(store,
+                 [&](duckdb::OpenFileInfo& info) {
+                   held =
+                     held || (!duckdb::FileSystem::IsDirectory(info) &&
+                              !info.path.empty() && !info.path.ends_with('/'));
+                 },
+                 nullptr, {.strict = true});
+  }
+  return held;
+}
+
+void ReleaseIfEmpty(std::string_view location) noexcept {
+  auto& owners = Owners();
+  absl::MutexLock lock{&owners.mutex};
+  const auto it = owners.released.find(location);
+  if (it == owners.released.end()) {
+    return;
+  }
+  try {
+    auto& fs = StorageFileSystem();
+    if (HoldsSegments(fs, StoreDirOf(location))) {
+      return;
+    }
+    const auto owner = fs.JoinPath(*it, kOwnerFile);
+    if (fs.FileExists(owner) &&
+        irs::ReadWhole<std::string>(duckdb::QueryContext{}, fs, owner) ==
+          Owner()) {
+      fs.RemoveFile(owner);
+    }
+    owners.released.erase(it);
+  } catch (const std::exception& e) {
+    SDB_WARN(GENERAL, "could not release tablespace location '", location,
+             "': ", duckdb::ErrorData{e}.RawMessage());
+  }
 }
 
 void RunRemoval(Removal&& removal) {
@@ -184,8 +251,52 @@ const std::shared_ptr<std::atomic_uint64_t>& SegmentIds() {
   return gIds;
 }
 
-void RemoveStorage(absl::AnyInvocable<bool()> remove_files) {
-  RunRemoval(std::move(remove_files));
+void RemoveStorage(std::string store, absl::AnyInvocable<bool()> remove_files) {
+  RunRemoval([store = std::move(store),
+              remove_files = std::move(remove_files)]() mutable {
+    const bool tidy = remove_files();
+    ReleaseIfEmpty(LocationOf(store));
+    return tidy;
+  });
+}
+
+void ClaimLocation(const std::string& location) {
+  auto& owners = Owners();
+  absl::MutexLock lock{&owners.mutex};
+  owners.released.erase(location);
+  auto& fs = StorageFileSystem();
+  const auto owner = fs.JoinPath(location, kOwnerFile);
+  const auto self = Owner();
+  if (!fs.FileExists(owner)) {
+    irs::WriteWhole(fs, owner, self, true);
+    return;
+  }
+  const auto named =
+    irs::ReadWhole<std::string>(duckdb::QueryContext{}, fs, owner);
+  if (named != self) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("tablespace location \"", location,
+              "\" belongs to another server"),
+      ERR_DETAIL("Its ", kOwnerFile,
+                 " file names the server with system identifier ",
+                 absl::StripTrailingAsciiWhitespace(named), "."),
+      ERR_HINT(
+        "Use another location, or remove this one once no server uses it."));
+  }
+}
+
+void ReleaseLocation(std::string location) {
+  {
+    auto& owners = Owners();
+    absl::MutexLock lock{&owners.mutex};
+    owners.released.insert(location);
+  }
+  BeginStorageWork();
+  RunRemoval([location = std::move(location)] {
+    ReleaseIfEmpty(location);
+    return true;
+  });
 }
 
 }  // namespace sdb::catalog

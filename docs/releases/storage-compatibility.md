@@ -44,4 +44,10 @@ A server started on a server directory without a snapshot creates a new server t
 
 The `--checkpoint_at_stop` flag ends every clean stop with a snapshot of everything committed and an empty log directory. The snapshot alone then holds the server, so it starts again from its server directory with a new, empty log directory, on another machine for example. A server that stopped cleanly starts without listing `segments/`.
 
+### On an object store
+
+The server directory can be an object store prefix, such as `s3://bucket/prefix`, read and written with [the server's own credentials](../configuration/aws_credentials.md#the-servers-own-credentials). The snapshot, `segments/` and `pg_hba.conf` are objects there; the log and the temporary files stay on a local disk, named by `--log_directory` and `--temp_directory`, which such a server needs. `PG_VERSION`, `global/` and `backups/` are not written, and `pg_backup_start` fails.
+
+Instead of the lock on `PG_VERSION`, the object `LOCK` names the log directory that owns the server, by the id in the log directory's own `LOCK` file. A start creates `LOCK` when it is absent, only if it is still absent when the object is written, continues when `LOCK` names its own log directory, and is refused when it names another one, since that log may hold commits the snapshot does not have. A stop with `--checkpoint_at_stop` removes `LOCK` once its snapshot holds everything, so the next start may use any log directory. The system identifier is kept in the snapshot.
+
 For the meaning of version numbers and release lines, see [Versioning](./versioning.md).

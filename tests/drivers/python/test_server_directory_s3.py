@@ -4,7 +4,9 @@ The snapshot and the segments live in the bucket; the WAL and the temporary
 files stay on a local disk. `OWNER` in the bucket names the WAL directory that
 owns the server until a handover stop removes it, so a server starts from
 another WAL directory only after such a stop. The WAL and temporary
-directories keep an `OWNER` of their own, locked while the server runs. The
+directories keep an `OWNER` of their own, locked while the server runs; the
+copies of evicted segment blocks stay in the temporary directory for the next
+start of the same server, and its spill files go at every start. The
 server signs its requests with the credentials of the AWS default chain, which
 it fetches again before they expire. A backup copies its snapshot inside the
 store, and a copy of the prefix with its label restores in another prefix.
@@ -236,7 +238,7 @@ def test_a_wal_directory_of_another_server_is_refused(tmp_path: Path) -> None:
         assert {p.name: p.read_bytes() for p in wal.iterdir()} == before
 
 
-def test_a_temporary_directory_is_kept_for_its_server_and_emptied_for_another(
+def test_a_temporary_directory_keeps_the_copies_of_its_server_only(
         tmp_path: Path) -> None:
     with FakeS3() as fake:
         env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
@@ -259,23 +261,94 @@ def test_a_temporary_directory_is_kept_for_its_server_and_emptied_for_another(
                 busy.kill()
         finally:
             assert server.stop() == 0, server.output()
-        (temp / "kept").write_text("cached")
+        copy = temp / "external_file_cache" / ("ab" * 16)
+        copy.parent.mkdir(exist_ok=True)
+        copy.write_bytes(b"\0" * 64)
+        spill = temp / f"sdb_temp_{os.getpid()}_0_storage_x.tmp"
+        spill.write_bytes(b"spilled")
+        (temp / "notes").write_text("mine")
 
         again = _Server(url, tmp_path / "a", env)
         try:
             assert again.wait_ready(), again.output()
         finally:
             assert again.stop() == 0, again.output()
-        assert (temp / "kept").read_text() == "cached"
+        assert not spill.exists()
+        assert copy.read_bytes() == b"\0" * 64
+        assert (temp / "notes").read_text() == "mine"
 
+        spill.write_bytes(b"spilled")
         other = _Server(f"s3://bucket/other-{tmp_path.name}", tmp_path / "c",
                         env, f"--temp_directory={temp}")
         try:
             assert other.wait_ready(), other.output()
-            assert not (temp / "kept").exists()
+            assert not spill.exists()
+            assert not copy.parent.exists()
+            assert (temp / "notes").read_text() == "mine"
             assert (temp / "OWNER").read_bytes() == _wal_owner(tmp_path / "c")[0]
         finally:
             assert other.stop() == 0, other.output()
+
+
+def _segment_bytes(fake: FakeS3, prefix: str) -> int:
+    """The bytes of segments the logged GETs read."""
+    total = 0
+    for entry in fake.log or []:
+        if not entry["key"].startswith(f"{prefix}/segments/"):
+            continue
+        ranged = entry["range"]
+        if ranged is None:
+            total += len(fake.objects[("bucket", entry["key"])].data)
+            continue
+        first, last = ranged.removeprefix("bytes=").split("-")
+        total += int(last) - int(first) + 1
+    return total
+
+
+def test_a_restarted_server_reads_evicted_blocks_from_its_temporary_directory(
+        tmp_path: Path) -> None:
+    with FakeS3() as fake:
+        env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
+                                  "AWS_SECRET_ACCESS_KEY": "secret"})
+        prefix = f"copies-{tmp_path.name}"
+        url = f"s3://bucket/{prefix}"
+        scan = "SELECT sum(length(body)) FROM t"
+        first = _Server(url, tmp_path / "a", env)
+        try:
+            assert first.wait_ready(), first.output()
+            with first.connect() as conn:
+                conn.execute("CREATE TABLE t (id INT, body TEXT) "
+                             "WITH (compaction_interval = 0)")
+                conn.execute(
+                    "INSERT INTO t SELECT i, concat_ws(' ', md5(i::VARCHAR), "
+                    "md5((i + 1000000)::VARCHAR)) FROM range(1000000) r(i)")
+                conn.execute("CHECKPOINT")
+                expected = conn.execute(scan).fetchone()[0]
+                # what the lower limit evicts keeps a copy
+                conn.execute("SET GLOBAL memory_limit = '16MiB'")
+                conn.execute("RESET GLOBAL memory_limit")
+        finally:
+            assert first.stop() == 0, first.output()
+        copies = tmp_path / "a" / "temp" / "external_file_cache"
+        assert any(copies.iterdir())
+        stored = sum(len(fake.objects[("bucket", key)].data)
+                     for key in fake.keys("bucket", f"{prefix}/segments/"))
+
+        again = _Server(url, tmp_path / "a", env)
+        try:
+            assert again.wait_ready(), again.output()
+            with again.connect() as conn:
+                fake.log = []
+                assert conn.execute(scan).fetchone()[0] == expected
+                fetched = _segment_bytes(fake, prefix)
+                fake.log = None
+                read_back = conn.execute(
+                    "SELECT value FROM sdb_metrics "
+                    "WHERE metric = 'external_file_cache_spill_reads'").fetchone()[0]
+        finally:
+            assert again.stop() == 0, again.output()
+        assert read_back > 0
+        assert fetched < stored / 2, (fetched, stored)
 
 
 def test_a_backup_on_an_object_store_restores_in_another_prefix(

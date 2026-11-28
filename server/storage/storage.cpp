@@ -58,8 +58,9 @@ ABSL_FLAG(std::string, wal_directory, "",
 
 ABSL_FLAG(std::string, temp_directory, "",
           "Local directory for the temporary files of queries that spill to "
-          "disk. Empty uses <server directory>/temp; a server directory on an "
-          "object store needs it.");
+          "disk and the copies of evicted blocks of object store files, which "
+          "the server reads again after a restart. Empty uses <server "
+          "directory>/temp; a server directory on an object store needs it.");
 
 ABSL_FLAG(bool, require_existing, false,
           "Refuse to start when the server directory holds no server, "

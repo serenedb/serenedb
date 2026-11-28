@@ -60,7 +60,6 @@ struct LockedOwner {
 
 LockedOwner LockOwner(const std::string& directory);
 void WriteOwner(LockedOwner& owner, std::string content);
-void EmptyDirectory(const std::string& directory, std::string_view keep);
 
 class DatabaseDirectory final {
  public:

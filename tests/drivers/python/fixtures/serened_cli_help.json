@@ -239,7 +239,7 @@
           "flag": "--temp_directory",
           "type": "",
           "defaultValue": "",
-          "description": "Local directory for the temporary files of queries that spill to disk. Empty uses <server directory>/temp; a server directory on an object store needs it.",
+          "description": "Local directory for the temporary files of queries that spill to disk and the copies of evicted blocks of object store files, which the server reads again after a restart. Empty uses <server directory>/temp; a server directory on an object store needs it.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

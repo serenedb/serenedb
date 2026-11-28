@@ -33,6 +33,7 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/storage/temporary_file_manager.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/storage.hpp>
@@ -136,15 +137,17 @@ UniqueId ClaimWal(LockedOwner& owner, const ServerDirectory& layout,
 void ClaimTemp(LockedOwner& owner, const ServerDirectory& layout,
                const UniqueId& server_id) {
   const auto self = std::string{server_id.Bytes()};
-  if (owner.content == self) {
-    return;
+  const bool own = owner.content == self;
+  if (!own && !owner.content.empty()) {
+    SDB_INFO(STARTUP, "removing what another server left in the temporary "
+                      "directory '",
+             layout.TempDir(), "'");
   }
-  if (!owner.content.empty()) {
-    SDB_INFO(STARTUP, "emptying the temporary directory '", layout.TempDir(),
-             "', which another server used");
-    EmptyDirectory(layout.TempDir(), kOwnerFile);
+  duckdb::TemporaryDirectoryHandle::RemoveLeftovers(
+    irs::DuckDBEngine::Instance().instance(), layout.TempDir(), own);
+  if (!own) {
+    WriteOwner(owner, self);
   }
-  WriteOwner(owner, self);
 }
 
 Log::Identity NewIdentity() {
@@ -395,6 +398,10 @@ void InitCatalog(const CatalogStart& start) {
       }
       if (start.temp_owner) {
         ClaimTemp(*start.temp_owner, layout, identity.server_id);
+      } else if (!layout.TempDir().empty()) {
+        // inside the server directory, whose lock keeps every other server out
+        duckdb::TemporaryDirectoryHandle::RemoveLeftovers(
+          irs::DuckDBEngine::Instance().instance(), layout.TempDir(), true);
       }
     } catch (const std::exception& e) {
       SDB_FATAL(STARTUP, duckdb::ErrorData{e}.RawMessage());

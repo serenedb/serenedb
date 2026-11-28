@@ -95,7 +95,7 @@ The files of tables and inverted indexes can live in an S3 bucket, an S3-compati
 
 * Run the server in the same region as the bucket or container: a query over uncached data waits for a few round trips to the store.
 * Give the cache memory (`memory_limit`) for the parts of the indexes that queries touch: it uses the memory queries leave free. A query over cached data runs about as fast as over local files.
-* Put the temporary directory (`temp_directory`) on a local SSD or NVMe disk: it keeps blocks evicted from memory, so reading them again costs a disk read instead of a request.
+* Put the temporary directory (`temp_directory`) on a local SSD or NVMe disk: it keeps blocks evicted from memory, also across restarts of the server, so reading them again costs a disk read instead of a request.
 
 ## Operating System
 

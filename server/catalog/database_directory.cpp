@@ -350,27 +350,6 @@ void WriteOwner(LockedOwner& owner, std::string content) {
   owner.content = std::move(content);
 }
 
-void EmptyDirectory(const std::string& directory, std::string_view keep) {
-  auto& fs = StorageFileSystem();
-  std::vector<std::pair<std::string, bool>> entries;
-  fs.ListFiles(directory,
-               [&](duckdb::OpenFileInfo& info) {
-                 if (info.path != keep) {
-                   entries.emplace_back(fs.JoinPath(directory, info.path),
-                                        duckdb::FileSystem::IsDirectory(info));
-                 }
-               },
-               nullptr, {.strict = true});
-  for (const auto& [path, directory_entry] : entries) {
-    if (directory_entry) {
-      RemoveTreeOrThrow(path);
-    } else {
-      fs.RemoveFile(path);
-    }
-  }
-  fs.SyncDirectory(directory);
-}
-
 void ReleaseLocation(std::string location) {
   {
     auto& owners = Owners();

@@ -814,9 +814,6 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItHintedWithoutTheirPages) {
   const auto to = (meta.doc_start + meta.doc_delta) / page * page;
   ASSERT_LT(from + 16 * page, to);
   ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
-  ASSERT_TRUE(absl::c_all_of(std::span{doc_in->Data() + from, to - from},
-                             [](irs::byte_type b) { return b == 0; }));
-  ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
   doc_pages.prefetched.clear();
 
   const irs::doc_id_t targets[]{
@@ -834,6 +831,7 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItHintedWithoutTheirPages) {
   for (const auto target : targets) {
     ASSERT_EQ(target, follower.Seek(target));
   }
+  EXPECT_EQ(0, doc_pages.faults);
   EXPECT_FALSE(follower.HintSpans(spans));
 
   ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
@@ -847,6 +845,7 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItHintedWithoutTheirPages) {
   ASSERT_TRUE(follower.HintSpans(behind_and_ahead));
   EXPECT_FALSE(doc_pages.prefetched.empty());
   ASSERT_EQ(ahead, follower.Seek(ahead));
+  EXPECT_EQ(0, doc_pages.faults);
 }
 
 TEST_P(Format15TestCase, AWholeListReaderHintsPastWhereItLandedOnly) {
@@ -873,11 +872,9 @@ TEST_P(Format15TestCase, AWholeListReaderHintsPastWhereItLandedOnly) {
   ASSERT_LT(from + 16 * page, to);
   const auto drop = [&] {
     ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
-    ASSERT_TRUE(absl::c_all_of(std::span{doc_in->Data() + from, to - from},
-                               [](irs::byte_type b) { return b == 0; }));
-    ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
     duckdb::PageResidency::Invalidate();
     doc_pages.prefetched.clear();
+    doc_pages.faults = 0;
   };
   const auto expected = [&](irs::doc_id_t min) {
     return static_cast<size_t>(absl::c_count_if(docs, [&](const Doc& doc) {
@@ -899,6 +896,7 @@ TEST_P(Format15TestCase, AWholeListReaderHintsPastWhereItLandedOnly) {
     doc_pages.Drop(index_from, doc_in->GetSize() - index_from));
   const auto far = docs[600 * block + 3].first;
   EXPECT_EQ(expected(far), counted(lander, far));
+  EXPECT_EQ(0, doc_pages.faults);
   EXPECT_FALSE(doc_pages.prefetched.empty());
   EXPECT_TRUE(absl::c_any_of(doc_pages.prefetched,
                              [&](const tests::PrefetchRange& range) {
@@ -911,6 +909,7 @@ TEST_P(Format15TestCase, AWholeListReaderHintsPastWhereItLandedOnly) {
   ASSERT_NO_FATAL_FAILURE(drop());
   const auto first = docs.front().first;
   EXPECT_EQ(expected(first), counted(walker, first));
+  EXPECT_EQ(0, doc_pages.faults);
   EXPECT_TRUE(doc_pages.prefetched.empty());
 }
 
@@ -967,6 +966,7 @@ TEST_P(Format15TestCase, APrunedReaderReadsTheCompetitiveBlocksItHinted) {
   for (size_t i = 0; i != hits.size(); ++i) {
     ASSERT_EQ(expected[i].first, hits[i].doc);
   }
+  EXPECT_EQ(0, doc_pages.faults);
   EXPECT_FALSE(doc_pages.prefetched.empty());
 }
 
@@ -1009,11 +1009,9 @@ TEST_P(Format15TestCase, AFillReaderHintsTheBlocksOfTheWindowItLandsIn) {
 
   const auto drop = [&] {
     ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
-    ASSERT_TRUE(absl::c_all_of(std::span{doc_in->Data() + from, to - from},
-                               [](irs::byte_type b) { return b == 0; }));
-    ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
     duckdb::PageResidency::Invalidate();
     doc_pages.prefetched.clear();
+    doc_pages.faults = 0;
   };
   const auto asked_window = [&] {
     return !doc_pages.prefetched.empty() &&
@@ -1030,6 +1028,7 @@ TEST_P(Format15TestCase, AFillReaderHintsTheBlocksOfTheWindowItLandsIn) {
   ASSERT_NO_FATAL_FAILURE(drop());
   const auto far = docs[1200 * block + 3].first;
   EXPECT_EQ(expected(far), filled(fill, far));
+  EXPECT_EQ(0, doc_pages.faults);
   EXPECT_TRUE(asked_window());
 
   ASSERT_NO_FATAL_FAILURE(drop());
@@ -1041,6 +1040,7 @@ TEST_P(Format15TestCase, AFillReaderHintsTheBlocksOfTheWindowItLandsIn) {
   EXPECT_EQ(candidates[0], kept[0]);
   EXPECT_EQ(candidates[2], kept[1]);
   EXPECT_EQ(candidates[3], kept[2]);
+  EXPECT_EQ(0, doc_pages.faults);
   EXPECT_FALSE(doc_pages.prefetched.empty());
 
   irs::detail::PostingFill<duckdb::MemoryReader> fresh{meta, *doc_in, kFreq,
@@ -1048,6 +1048,7 @@ TEST_P(Format15TestCase, AFillReaderHintsTheBlocksOfTheWindowItLandsIn) {
   ASSERT_NO_FATAL_FAILURE(drop());
   const auto farther = docs[1700 * block + 3].first;
   EXPECT_EQ(expected(farther), filled(fresh, farther));
+  EXPECT_EQ(0, doc_pages.faults);
   EXPECT_TRUE(asked_window());
 }
 

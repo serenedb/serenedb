@@ -56,14 +56,14 @@ std::shared_ptr<IndexDir> LocalDirectory(const TestBase* test) {
           }};
 }
 
-std::shared_ptr<IndexDir> FaultingDirectory(const TestBase* test) {
+std::shared_ptr<IndexDir> ScriptedDirectory(const TestBase* test) {
   auto path = test->test_dir() /
-              absl::StrCat("faulting_", gLocalDirectories.fetch_add(
+              absl::StrCat("scripted_", gLocalDirectories.fetch_add(
                                           1, std::memory_order_relaxed));
   std::filesystem::create_directories(path);
   auto& db = irs::DuckDBEngine::Instance().instance();
-  auto fs = std::make_shared<ScriptedFileSystem>(
-    duckdb::FileSystem::GetFileSystem(db), true);
+  auto fs =
+    std::make_shared<ScriptedFileSystem>(duckdb::FileSystem::GetFileSystem(db));
   auto* files = new IndexDir{db, *fs, path.string()};
   return {files, [path = std::move(path), fs = std::move(fs)](IndexDir* p) {
             delete p;

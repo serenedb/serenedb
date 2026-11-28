@@ -295,7 +295,7 @@ class PrunedTopTest : public tests::IndexTestBase {
                                  doc_id_t span, bool prune, bool bounds,
                                  bool reuse, uint64_t& total) {
     const auto queries = Prepare(filter);
-    tests::DropFaultingMappings();
+    tests::DropScriptedMappings();
     duckdb::PageResidency::Invalidate();
     std::vector<irs::ScoreDoc> hits(k);
     std::atomic<irs::score_t> threshold{
@@ -1149,7 +1149,7 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Combine(::testing::Values(
     tests::kMemoryDirParam, tests::DirParam{"local", &tests::LocalDirectory},
     tests::DirParam{"sim", &tests::ObjectStoreDirectory},
-    tests::DirParam{"faulting", &tests::FaultingDirectory})),
+    tests::DirParam{"scripted", &tests::ScriptedDirectory})),
   PrunedTopTest::to_string);
 
 }  // namespace

@@ -29,14 +29,14 @@
 namespace tests {
 namespace {
 
-constexpr size_t kMostFaulting = 1024;
+constexpr size_t kMostScripted = 1024;
 
-constinit std::array<std::atomic<ScriptedMapping*>, kMostFaulting> gFaulting{};
+constinit std::array<std::atomic<ScriptedMapping*>, kMostScripted> gScripted{};
 struct sigaction gPrevious = {};
 absl::once_flag gInstalled;
 
 void OnFault(int /*signal*/, siginfo_t* info, void* /*context*/) {
-  for (auto& slot : gFaulting) {
+  for (auto& slot : gScripted) {
     auto* const mapping = slot.load(std::memory_order_acquire);
     if (mapping && mapping->FaultIn(info->si_addr)) {
       return;
@@ -55,20 +55,20 @@ void Install() {
 
 }  // namespace
 
-void RegisterFaulting(ScriptedMapping& mapping) {
+void RegisterScripted(ScriptedMapping& mapping) {
   absl::call_once(gInstalled, &Install);
-  for (auto& slot : gFaulting) {
+  for (auto& slot : gScripted) {
     ScriptedMapping* empty = nullptr;
     if (slot.compare_exchange_strong(empty, &mapping,
                                      std::memory_order_acq_rel)) {
       return;
     }
   }
-  SDB_ENSURE(false, "ScriptedMapping: too many faulting mappings");
+  SDB_ENSURE(false, "ScriptedMapping: too many scripted mappings");
 }
 
-void UnregisterFaulting(ScriptedMapping& mapping) noexcept {
-  for (auto& slot : gFaulting) {
+void UnregisterScripted(ScriptedMapping& mapping) noexcept {
+  for (auto& slot : gScripted) {
     ScriptedMapping* held = &mapping;
     if (slot.compare_exchange_strong(held, nullptr,
                                      std::memory_order_acq_rel)) {
@@ -77,8 +77,8 @@ void UnregisterFaulting(ScriptedMapping& mapping) noexcept {
   }
 }
 
-void DropFaultingMappings() {
-  for (auto& slot : gFaulting) {
+void DropScriptedMappings() {
+  for (auto& slot : gScripted) {
     if (auto* const mapping = slot.load(std::memory_order_acquire)) {
       mapping->DropAll();
     }

@@ -26,7 +26,13 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <duckdb/common/operator/comparison_operators.hpp>
+#include <duckdb/common/type_util.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <duckdb/storage/statistics/string_stats.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -37,6 +43,108 @@ namespace {
 constexpr auto kByMin = [](const auto& lhs, const auto& rhs) {
   return lhs.min < rhs.min;
 };
+
+enum class Bound : bool {
+  Min,
+  Max,
+};
+
+bool Attains(const duckdb::BaseStatistics& unit,
+             const duckdb::BaseStatistics& table, Bound bound) {
+  using duckdb::NumericStats;
+  using duckdb::StringStats;
+  switch (table.GetStatsType()) {
+    case duckdb::StatisticsType::NUMERIC_STATS:
+      if (bound == Bound::Min) {
+        return NumericStats::HasMin(unit) && NumericStats::HasMin(table) &&
+               duckdb::VisitPhysicalType(
+                 table.GetType().InternalType(), [&]<typename T>() {
+                   return duckdb::LessThanEquals::Operation(
+                     NumericStats::GetMinUnsafe<T>(unit),
+                     NumericStats::GetMinUnsafe<T>(table));
+                 });
+      }
+      return NumericStats::HasMax(unit) && NumericStats::HasMax(table) &&
+             duckdb::VisitPhysicalType(
+               table.GetType().InternalType(), [&]<typename T>() {
+                 return duckdb::GreaterThanEquals::Operation(
+                   NumericStats::GetMaxUnsafe<T>(unit),
+                   NumericStats::GetMaxUnsafe<T>(table));
+               });
+    case duckdb::StatisticsType::STRING_STATS:
+      if (bound == Bound::Min) {
+        return StringStats::HasMin(unit) && StringStats::HasMin(table) &&
+               StringStats::Min(unit) <= StringStats::Min(table);
+      }
+      return StringStats::HasMax(unit) && StringStats::HasMax(table) &&
+             StringStats::Max(unit) >= StringStats::Max(table);
+    default:
+      return false;
+  }
+}
+
+uint64_t HeldRegisters(const duckdb::DistinctStatistics* unit,
+                       const duckdb::DistinctStatistics& table) {
+  static_assert(duckdb::HyperLogLog::M <= 64);
+  uint64_t held = 0;
+  if (!unit) {
+    return held;
+  }
+  for (duckdb::idx_t i = 0; i != duckdb::HyperLogLog::M; ++i) {
+    const auto max = table.log->GetRegister(i);
+    if (max != 0 && unit->log->GetRegister(i) == max) {
+      held |= uint64_t{1} << i;
+    }
+  }
+  return held;
+}
+
+struct Held {
+  bool min = false;
+  bool max = false;
+  uint64_t registers = 0;
+};
+
+bool Any(const Held& held) {
+  return held.min || held.max || held.registers != 0;
+}
+
+Held HeldBy(const ColumnReader& unit, const duckdb::BaseStatistics& merged,
+            const duckdb::DistinctStatistics* distinct) {
+  return {
+    .min = Attains(unit.MergedStatistics(), merged, Bound::Min),
+    .max = Attains(unit.MergedStatistics(), merged, Bound::Max),
+    .registers = distinct ? HeldRegisters(unit.Distinct(), *distinct) : 0,
+  };
+}
+
+void Release(Held& held, const duckdb::BaseStatistics& other,
+             const duckdb::DistinctStatistics* other_distinct,
+             const duckdb::BaseStatistics& merged,
+             const duckdb::DistinctStatistics* distinct) {
+  held.min = held.min && !Attains(other, merged, Bound::Min);
+  held.max = held.max && !Attains(other, merged, Bound::Max);
+  if (held.registers != 0) {
+    held.registers &= ~HeldRegisters(other_distinct, *distinct);
+  }
+}
+
+void MergeColumn(const ColumnReader& column,
+                 duckdb::unique_ptr<duckdb::BaseStatistics>& merged,
+                 duckdb::unique_ptr<duckdb::DistinctStatistics>& distinct) {
+  if (!merged) {
+    merged = column.MergedStatistics().ToUnique();
+  } else {
+    merged->Merge(column.MergedStatistics());
+  }
+  if (const auto* unit = column.Distinct()) {
+    if (!distinct) {
+      distinct = unit->Copy();
+    } else {
+      distinct->Merge(*unit);
+    }
+  }
+}
 
 uint64_t DistinctOfOverlapping(uint64_t terms, uint64_t docs, uint64_t sum) {
   const auto distinct = static_cast<double>(terms);
@@ -86,13 +194,6 @@ CompositeReader::CompositeReader(const CompositeReader& base,
   for (const auto& reader : added) {
     AddTerms(*reader, /*keep_sorted=*/true);
   }
-  if (!removed.empty() && _docs != base._docs) {
-    for (const auto& reader : _readers) {
-      AddColumns(*reader, /*new_docs=*/true);
-    }
-    Publish();
-    return;
-  }
   _columns.reserve(base._columns.size());
   for (const auto& [field, column] : base._columns) {
     _columns.try_emplace(
@@ -111,6 +212,7 @@ CompositeReader::CompositeReader(const CompositeReader& base,
     RemoveColumns(*before);
     AddColumns(*after, /*new_docs=*/true);
   }
+  RecomputeLost(added, removed);
   Publish();
 }
 
@@ -183,18 +285,7 @@ void CompositeReader::AddColumns(const SubReader& reader, bool new_docs) {
   }
   for (const auto& column : col_reader->Columns()) {
     auto& stats = _columns[column->Id()];
-    if (!stats.merged) {
-      stats.merged = column->MergedStatistics().ToUnique();
-    } else {
-      stats.merged->Merge(column->MergedStatistics());
-    }
-    if (const auto* distinct = column->Distinct()) {
-      if (!stats.distinct) {
-        stats.distinct = distinct->Copy();
-      } else {
-        stats.distinct->Merge(*distinct);
-      }
-    }
+    MergeColumn(*column, stats.merged, stats.distinct);
     if (new_docs) {
       stats.docs += reader.docs_count();
     }
@@ -215,6 +306,91 @@ void CompositeReader::RemoveColumns(const SubReader& reader) {
     if (const auto* distinct = column->Distinct()) {
       SDB_ASSERT(stats.distinct);
       stats.distinct->SubtractCounts(*distinct);
+    }
+  }
+}
+
+void CompositeReader::RecomputeLost(std::span<const SegmentReader> added,
+                                    std::span<const SegmentReader> removed) {
+  struct Lost {
+    field_id field;
+    ColumnStats* stats;
+    Held held;
+    ColumnStats exact;
+    uint64_t merged = 0;
+  };
+  std::vector<Lost> lost;
+  containers::FlatHashMap<field_id, size_t> lost_at;
+  for (const auto& reader : removed) {
+    const auto* col_reader = reader->GetColReader();
+    if (!col_reader) {
+      continue;
+    }
+    for (const auto& column : col_reader->Columns()) {
+      const auto field = column->Id();
+      const auto it = _columns.find(field);
+      if (it == _columns.end()) {
+        continue;
+      }
+      auto& stats = it->second;
+      if (stats.docs == 0) {
+        _columns.erase(it);
+        continue;
+      }
+      auto held = HeldBy(*column, *stats.merged, stats.distinct.get());
+      for (const auto& unit : added) {
+        const auto* columns = unit->GetColReader();
+        if (const auto* kept = columns ? columns->Column(field) : nullptr) {
+          Release(held, kept->MergedStatistics(), kept->Distinct(),
+                  *stats.merged, stats.distinct.get());
+        }
+      }
+      if (!Any(held)) {
+        continue;
+      }
+      const auto [at, fresh] = lost_at.try_emplace(field, lost.size());
+      if (fresh) {
+        lost.push_back({.field = field, .stats = &stats, .held = held});
+        continue;
+      }
+      auto& entry = lost[at->second].held;
+      entry.min = entry.min || held.min;
+      entry.max = entry.max || held.max;
+      entry.registers |= held.registers;
+    }
+  }
+  if (lost.empty()) {
+    return;
+  }
+  absl::c_sort(lost, [](const Lost& lhs, const Lost& rhs) {
+    return lhs.field < rhs.field;
+  });
+  auto pending = lost.size();
+  for (const auto& reader : _readers) {
+    const auto* columns = reader->GetColReader();
+    if (!columns) {
+      continue;
+    }
+    for (auto& [field, stats, held, exact, merged] : lost) {
+      const auto* column = Any(held) ? columns->Column(field) : nullptr;
+      if (!column) {
+        continue;
+      }
+      MergeColumn(*column, exact.merged, exact.distinct);
+      if (!std::has_single_bit(++merged)) {
+        continue;
+      }
+      Release(held, *exact.merged, exact.distinct.get(), *stats->merged,
+              stats->distinct.get());
+      if (!Any(held) && --pending == 0) {
+        return;
+      }
+    }
+  }
+  for (auto& [field, stats, held, exact, merged] : lost) {
+    if (Any(held)) {
+      stats->merged = std::move(exact.merged);
+      stats->distinct = std::move(exact.distinct);
     }
   }
 }

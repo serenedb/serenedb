@@ -103,6 +103,8 @@ class CompositeReader final : public IndexReader {
   void RemoveTerms(const SubReader& reader);
   void AddColumns(const SubReader& reader, bool new_docs);
   void RemoveColumns(const SubReader& reader);
+  void RecomputeLost(std::span<const SegmentReader> added,
+                     std::span<const SegmentReader> removed);
   void Publish();
 
   std::vector<SegmentReader> _readers;

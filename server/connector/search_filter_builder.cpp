@@ -1936,7 +1936,7 @@ bool HasScorableLeaf(const irs::Filter& filter) {
 
 void ApplyScoreOverride(const FilterContext& ctx, irs::BooleanFilter& scope,
                         const irs::Scorer* scorer) {
-  if (ctx.negated) {
+  if (ctx.negated || ctx.unscored) {
     return;
   }
   const auto scored_clauses =
@@ -2408,6 +2408,18 @@ absl::Status FromOperatorExpression(
 
 absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& expr) {
+  if (!ctx.unscored &&
+      expr.GetRewriteGuard() == duckdb::RewriteGuard::UNSCORED) {
+    auto sub_ctx = ctx;
+    sub_ctx.unscored = true;
+    auto scope = OpenScope();
+    if (auto s = FromExpression(ScopeTarget(scope), sub_ctx, expr); !s.ok()) {
+      return s;
+    }
+    scope->SetScorer(&irs::Unscored::Instance());
+    CloseScope(filter, std::move(scope));
+    return absl::OkStatus();
+  }
   // Peel the TSQUERY_MODIFIER -> BOOLEAN coercion that the WHERE-binder
   // inserts around `(predicate)::boost(K)` at the predicate root.
   if (TryDispatchSqlBoostCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {

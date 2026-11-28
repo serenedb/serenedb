@@ -214,6 +214,15 @@ void KeepBranches(duckdb::Expression& operand) {
   }
 }
 
+void MarkUnscored(duckdb::Expression& expr) {
+  if (expr.GetRewriteGuard() == duckdb::RewriteGuard::NONE &&
+      expr.GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN) {
+    expr.SetRewriteGuard(duckdb::RewriteGuard::UNSCORED);
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [](duckdb::Expression& child) { MarkUnscored(child); });
+}
+
 [[noreturn]] bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&,
                                     duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(
@@ -543,7 +552,10 @@ class ScoredPredicateGuard final : public duckdb::LogicalOperatorVisitor {
   explicit ScoredPredicateGuard(
     duckdb::LogicalOperator& plan, duckdb::ClientContext& context,
     std::span<const duckdb::ColumnBinding> score_anchors)
-    : _claims{plan, context, score_anchors} {}
+    : _claims{plan, context, score_anchors} {
+    VisitOperator(plan);
+    _claims.MarkAnswered();
+  }
 
   void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
     Guard(**slot, false);
@@ -571,14 +583,16 @@ class ScoredPredicateGuard final : public duckdb::LogicalOperatorVisitor {
       Guard(*operand, true);
       return;
     }
-    if (expr.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
+    if (expr.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN ||
+        !_claims.Scored(expr)) {
       return;
     }
-    if (_claims.Scored(expr) &&
-        (modified ||
-         (expr.GetExpressionType() != duckdb::ExpressionType::OPERATOR_NOT &&
-          (ContainsIndexOnlyPredicate(expr) || _claims.Answers(expr))))) {
+    if (expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_NOT) {
+      MarkUnscored(expr);
+    } else if (modified || ContainsIndexOnlyPredicate(expr)) {
       expr.SetRewriteGuard(duckdb::RewriteGuard::SCORED);
+    } else {
+      _claims.Ask(expr);
     }
   }
 
@@ -591,7 +605,7 @@ void PrepareSearchRewrites(duckdb::OptimizerExtensionInput& input,
     TSQueryFoldVisitor fold{input.context};
     fold.VisitOperator(*plan);
     if (const auto anchors = fold.ScoreAnchors(); !anchors.empty()) {
-      ScoredPredicateGuard{*plan, input.context, anchors}.VisitOperator(*plan);
+      ScoredPredicateGuard{*plan, input.context, anchors};
     }
   }
 }

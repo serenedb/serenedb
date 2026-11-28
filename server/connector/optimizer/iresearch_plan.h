@@ -60,15 +60,14 @@ class SearchClaims {
                         std::span<const duckdb::ColumnBinding> score_anchors);
 
   bool Scored(const duckdb::Expression& predicate);
-  bool Answers(const duckdb::Expression& predicate);
+  void Ask(duckdb::Expression& predicate);
+  void MarkAnswered();
 
  private:
-  bool Claims(const duckdb::Expression& predicate);
-
   PlanIndex _index;
   duckdb::ClientContext& _context;
   irs::containers::FlatHashSet<const PlannedScan*> _scored;
-  duckdb::expression_map_t<bool> _answers;
+  duckdb::expression_map_t<std::vector<duckdb::Expression*>> _asked;
 };
 
 duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(

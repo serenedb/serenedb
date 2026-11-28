@@ -233,8 +233,8 @@ WHERE ((NOT body @@ 'fig')::score('constant(2)') AND body @@ 'dot'::tsquery::sco
 ORDER BY id;
 ----
 id	score
-1	6
-3	3
+1	2
+3	1
 
 
 query

@@ -331,6 +331,11 @@ inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
 // itself: TO STDOUT through the wire collector (parallel, zero-copy), FROM
 // STDIN through the batch queue. The other formats (json/parquet/...) go
 // through DuckDB's own CopyFunction instead.
+inline bool IsNativeCopyFormat(CopyFormat format) {
+  return format == CopyFormat::Binary || format == CopyFormat::Text ||
+         format == CopyFormat::Csv;
+}
+
 inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
   if (info.format != "csv" && info.format != "text" && info.format != "json" &&
       info.format != "avro") {
@@ -350,11 +355,6 @@ inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
     }
   }
   return true;
-}
-
-inline bool IsNativeCopyFormat(CopyFormat format) {
-  return format == CopyFormat::Binary || format == CopyFormat::Text ||
-         format == CopyFormat::Csv;
 }
 
 duckdb::CopyFormat NativeCopyFormat(CopyFormat format) {

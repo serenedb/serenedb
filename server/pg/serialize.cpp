@@ -2255,8 +2255,8 @@ bool CsvScanNeeded(const SerializationContext& context) {
 }
 
 bool CsvNeedsQuotes(const SerializationContext& ctx, std::string_view field) {
-  return field == ctx.copy_null || (ctx.csv_single_column && field == "\\.") ||
-         ctx.csv_specials.In(field);
+  return ctx.csv_specials.Quote(field, ctx.copy_null) ||
+         (ctx.csv_single_column && field == "\\.");
 }
 
 void WriteCsvQuoted(message::Writer& writer, std::string_view field, char quote,

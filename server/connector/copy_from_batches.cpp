@@ -37,7 +37,6 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -486,64 +485,58 @@ class CopyFileReader {
 };
 
 using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
-using Lock = duckdb::annotated_unique_lock<duckdb::annotated_mutex>;
 
-void Wake(const duckdb::vector<duckdb::InterruptState>& waiters) {
-  for (const auto& waiter : waiters) {
-    waiter.Callback();
-  }
-}
-
-class CopyLines {
+class CopyErrors {
  public:
+  explicit CopyErrors(const pg::CopyInTarget& target) : _target{target} {}
+
   void Finish(uint64_t seq, uint64_t lines) {
-    duckdb::vector<duckdb::InterruptState> waiters;
-    {
-      Guard guard{_waiters.lock};
-      if (!_lines.Add(seq, lines)) {
-        return;
-      }
-      waiters = _waiters.TakeBlockedTasks();
-    }
-    Wake(waiters);
+    Guard guard{_lock};
+    _lines.Add(seq, lines);
+    ThrowIfLocated();
   }
 
-  std::optional<uint64_t> Locate(duckdb::TableFunctionInput& input,
-                                 uint64_t seq, uint64_t line) {
-    Lock lock{_waiters.lock};
-    if (seq < _failed) {
-      _failed = seq;
-      auto waiters = _waiters.TakeBlockedTasks();
-      lock.unlock();
-      Wake(waiters);
-      lock.lock();
+  void FailRow(uint64_t seq, const formats::CopyRowError& error) {
+    Guard guard{_lock};
+    if (_failure.Fail(seq, error.record)) {
+      _error = error;
+      _row = true;
     }
-    for (;;) {
-      if (_failed < seq) {
-        return 0;
-      }
-      if (_lines.Known(seq)) {
-        return _lines.Before(seq) + line;
-      }
-      if (pg::CopyInBatches::CanPark(input) &&
-          _waiters.BlockTask(*input.interrupt_state)) {
-        input.async_result = duckdb::AsyncResultType::BLOCKED;
-        return std::nullopt;
-      }
-      auto signal = duckdb::make_shared_ptr<duckdb::InterruptDoneSignalState>();
-      _waiters.BlockTask(duckdb::InterruptState{
-        duckdb::weak_ptr<duckdb::InterruptDoneSignalState>{signal}});
-      lock.unlock();
-      signal->Await();
-      lock.lock();
+    ThrowIfLocated();
+  }
+
+  void FailStream(uint64_t seq, std::exception_ptr error) {
+    Guard guard{_lock};
+    if (_failure.Fail(seq, 0)) {
+      _error = formats::CopyRowError{.error = std::move(error)};
+      _row = false;
     }
+    ThrowIfLocated();
+  }
+
+  bool Failed() const {
+    Guard guard{_lock};
+    return _failure.Failed();
   }
 
  private:
-  duckdb::StateWithBlockableTasks _waiters;
-  duckdb::RangeLines _lines DUCKDB_GUARDED_BY(_waiters.lock);
-  uint64_t _failed DUCKDB_GUARDED_BY(_waiters.lock) =
-    std::numeric_limits<uint64_t>::max();
+  void ThrowIfLocated() const DUCKDB_REQUIRES(_lock) {
+    const auto line = _failure.Line(_lines);
+    if (!line.IsValid()) {
+      return;
+    }
+    if (!_row) {
+      std::rethrow_exception(_error.error);
+    }
+    formats::ThrowCopyRowError(_target, _error, line.GetIndex());
+  }
+
+  const pg::CopyInTarget& _target;
+  mutable duckdb::annotated_mutex _lock;
+  duckdb::RangeLines _lines DUCKDB_GUARDED_BY(_lock);
+  duckdb::RangeFailure _failure DUCKDB_GUARDED_BY(_lock);
+  formats::CopyRowError _error DUCKDB_GUARDED_BY(_lock);
+  bool _row DUCKDB_GUARDED_BY(_lock) = false;
 };
 
 struct CopyFromGlobalState final : public duckdb::GlobalTableFunctionState {
@@ -573,7 +566,7 @@ struct CopyFromGlobalState final : public duckdb::GlobalTableFunctionState {
   pg::CopyInTarget target;
   bool ordered;
   duckdb::idx_t max_threads;
-  CopyLines lines;
+  CopyErrors errors{target};
   CopyFileReader reader;
   pg::CopyInBatches& queue;
 };
@@ -595,25 +588,15 @@ duckdb::OperatorPartitionData CopyFromPartitionData(
     input.local_state->Cast<CopyFromLocalState>().batch_index};
 }
 
-void LocateError(CopyFromGlobalState& g, duckdb::TableFunctionInput& input,
-                 const formats::BinaryCopyDecoder& parser) {
-  if (const auto line =
-        g.lines.Locate(input, parser.Seq(), parser.FailedLine());
-      line && *line != 0) {
-    parser.ThrowError(*line);
-  }
-}
-
 bool TakeBatch(CopyFromGlobalState& g, duckdb::TableFunctionInput& input,
                CopyFromLocalState& l) {
+  if (g.errors.Failed()) {
+    return false;
+  }
   try {
     return g.queue.Take(input, 1, l.run) == pg::CopyTake::Batches;
   } catch (...) {
-    const auto error = std::current_exception();
-    if (const auto line = g.lines.Locate(input, g.queue.FailedAt(), 1);
-        line && *line != 0) {
-      std::rethrow_exception(error);
-    }
+    g.errors.FailStream(g.queue.FailedAt(), std::current_exception());
     return false;
   }
 }
@@ -663,11 +646,6 @@ void ScanCopyFrom(duckdb::ClientContext& context,
     l.parser.emplace(context, g.target);
   }
   auto& parser = *l.parser;
-  if (parser.Failed()) {
-    output.SetChildCardinality(0);
-    LocateError(g, input, parser);
-    return;
-  }
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
     if (!parser.Active()) {
@@ -688,11 +666,11 @@ void ScanCopyFrom(duckdb::ClientContext& context,
     row = parser.Parse(output, row);
     if (parser.Failed()) {
       output.SetChildCardinality(0);
-      LocateError(g, input, parser);
+      g.errors.FailRow(parser.Seq(), parser.Error());
       return;
     }
     if (parser.Exhausted()) {
-      g.lines.Finish(parser.Seq(), parser.Lines());
+      g.errors.Finish(parser.Seq(), parser.Lines());
       parser.Stop();
       l.run[l.next - 1].Reset();
       g.reader.Resume();

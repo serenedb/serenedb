@@ -40,9 +40,12 @@ inline constexpr size_t kNoColumn = std::numeric_limits<size_t>::max();
 
 struct CopyRowError {
   std::exception_ptr error;
-  uint64_t line = 0;
+  uint64_t record = 0;
   size_t column = kNoColumn;
 };
+
+[[noreturn]] void ThrowCopyRowError(const pg::CopyInTarget& target,
+                                    const CopyRowError& error, uint64_t line);
 
 // Decodes the tuples of COPY FROM in PostgreSQL's binary format: a walk over
 // their length-prefixed fields, then PostgreSQL's binary input functions one
@@ -61,8 +64,7 @@ class BinaryCopyDecoder {
   duckdb::idx_t Parse(duckdb::DataChunk& output, duckdb::idx_t row);
 
   bool Failed() const noexcept { return static_cast<bool>(_error.error); }
-  uint64_t FailedLine() const noexcept { return _error.line; }
-  [[noreturn]] void ThrowError(uint64_t line) const;
+  const CopyRowError& Error() const noexcept { return _error; }
   uint64_t Lines() const noexcept { return _lines; }
 
  private:
@@ -72,7 +74,7 @@ class BinaryCopyDecoder {
   size_t Walk(std::string_view data, size_t max_rows);
   duckdb::idx_t Decode(duckdb::DataChunk& output, duckdb::idx_t row,
                        size_t rows);
-  void FailRow(uint64_t line, std::exception_ptr error, size_t column);
+  void FailRow(uint64_t record, std::exception_ptr error, size_t column);
 
   pg::CopyInTarget _target;
   std::vector<pg::DeserializationFunction<pg::ColumnSink>> _decoders;

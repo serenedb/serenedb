@@ -22,11 +22,9 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
-#include <simdutf.h>
 
 #include <algorithm>
 #include <bit>
-#include <cstring>
 #include <duckdb/formats/copy_fields.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -81,21 +79,22 @@ void BinaryCopyDecoder::Start(const pg::CopyBatch& batch) {
   _lines = 0;
 }
 
-void BinaryCopyDecoder::FailRow(uint64_t line, std::exception_ptr error,
+void BinaryCopyDecoder::FailRow(uint64_t record, std::exception_ptr error,
                                 size_t column) {
   if (Failed()) {
     return;
   }
   _error =
-    CopyRowError{.error = std::move(error), .line = line, .column = column};
+    CopyRowError{.error = std::move(error), .record = record, .column = column};
 }
 
-void BinaryCopyDecoder::ThrowError(uint64_t line) const {
-  auto context = absl::StrCat("COPY ", _target.table, ", line ", line);
-  if (_error.column != kNoColumn) {
-    absl::StrAppend(&context, ", column ", _target.names[_error.column]);
+void ThrowCopyRowError(const pg::CopyInTarget& target,
+                       const CopyRowError& error, uint64_t line) {
+  auto context = absl::StrCat("COPY ", target.table, ", line ", line);
+  if (error.column != kNoColumn) {
+    absl::StrAppend(&context, ", column ", target.names[error.column]);
   }
-  pg::ThrowInContext(_error.error, std::move(context));
+  pg::ThrowInContext(error.error, std::move(context));
 }
 
 size_t BinaryCopyDecoder::Walk(std::string_view data, size_t max_rows) {
@@ -151,7 +150,7 @@ duckdb::idx_t BinaryCopyDecoder::Decode(duckdb::DataChunk& output,
   if (first_row == rows) {
     return rows;
   }
-  FailRow(_lines + first_row + 1,
+  FailRow(_lines + first_row,
           first_error ? std::move(first_error)
                       : CopyError(ERRCODE_INVALID_BINARY_REPRESENTATION,
                                   "incorrect binary data format"),
@@ -180,9 +179,7 @@ duckdb::idx_t BinaryCopyDecoder::Parse(duckdb::DataChunk& output,
       }
       const auto fields = Column(column, rows);
       for (size_t r = 0; r < rows; ++r) {
-        if (fields[r].data() &&
-            (!simdutf::validate_utf8(fields[r].data(), fields[r].size()) ||
-             std::memchr(fields[r].data(), '\0', fields[r].size()))) {
+        if (fields[r].data() && !duckdb::CopyValidText(fields[r])) {
           rows = r;
           bad_column = column;
           bad_field = fields[r];
@@ -199,14 +196,14 @@ duckdb::idx_t BinaryCopyDecoder::Parse(duckdb::DataChunk& output,
       _lines += rows;
     }
     if (bad_column != kNoColumn) {
-      FailRow(_lines + 1,
+      FailRow(_lines,
               CopyError(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE,
                         duckdb::CopyInvalidUtf8(bad_field)),
               bad_column);
       break;
     }
     if (_bad_fields != -1) {
-      FailRow(_lines + 1,
+      FailRow(_lines,
               CopyError(ERRCODE_BAD_COPY_FILE_FORMAT, "row field count is ",
                         _bad_fields, ", expected ", _decoders.size()),
               kNoColumn);

@@ -295,7 +295,7 @@ query
 SELECT replace(content, chr(10), '|') AS content FROM read_text('${__TEST_DIR__}/copy_text_tz_max.txt');
 ----
 content
-294247-01-10 04:00:54.775806+00|
+294247-01-10 09:30:54.775806+05:30|
 
 
 statement ok

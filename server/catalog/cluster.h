@@ -41,7 +41,7 @@ namespace sdb::catalog {
 
 class ClusterCatalog final : public BaseCatalog {
  public:
-  ClusterCatalog(duckdb::AttachedDatabase& db, DataDirectory layout)
+  ClusterCatalog(duckdb::AttachedDatabase& db, ServerDirectory layout)
     : BaseCatalog{db, false},
       _layout{std::move(layout)},
       _roles{true, _oids},
@@ -65,7 +65,7 @@ class ClusterCatalog final : public BaseCatalog {
   bool Durable() const final { return true; }
   duckdb::idx_t RecordId() const final { return kRecordId; }
 
-  const DataDirectory& Layout() const noexcept { return _layout; }
+  const ServerDirectory& Layout() const noexcept { return _layout; }
 
   EntrySet& Set(duckdb::CatalogType type) final;
 
@@ -122,7 +122,7 @@ class ClusterCatalog final : public BaseCatalog {
   std::shared_ptr<DatabaseDirectory> DatabaseDirectoryOf(
     duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace);
 
-  DataDirectory _layout;
+  ServerDirectory _layout;
   EntrySet _roles;
   EntrySet _databases;
   EntrySet _origins;

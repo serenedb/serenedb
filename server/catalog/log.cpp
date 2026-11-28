@@ -30,7 +30,9 @@
 #include <cstring>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/path.hpp>
 #include <duckdb/common/query_context.hpp>
+#include <duckdb_versions/storage_version.hpp>
 #include <filesystem>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
@@ -51,9 +53,11 @@ struct Header {
 };
 
 struct SnapshotHeader {
+  uint64_t version = 0;
   Lsn covered = 0;
   uint64_t number = 0;
   Lsn begin = 0;
+  uint64_t clean = 0;
 };
 
 struct LinkedChunk {
@@ -67,10 +71,10 @@ constexpr size_t kRecordMinGrowth = size_t{4} << 10;
 constexpr size_t kRecordMaxGrowth = size_t{64} << 20;
 
 constexpr std::string_view kChunkSuffix = ".log";
-constexpr std::string_view kSnapshotSuffix = ".snapshot";
-constexpr std::string_view kCurrentSnapshot = "current_snapshot";
-constexpr std::string_view kEarlierSnapshot = "snapshot";
+constexpr std::string_view kReplacingSuffix = ".tmp";
 constexpr size_t kIoBytes = size_t{1} << 20;
+constexpr auto kSnapshotVersion =
+  static_cast<uint64_t>(duckdb::StorageVersion::SDB_LATEST);
 constexpr uint64_t kMaxRecordBytes = std::numeric_limits<uint32_t>::max();
 
 std::string_view View(const void* data, size_t size) {
@@ -136,73 +140,20 @@ size_t ParseRecords(std::span<uint8_t> bytes, Lsn base, Apply&& apply) {
   return end;
 }
 
-std::string SnapshotName(uint64_t sequence) {
-  return absl::StrFormat("%016x%s", sequence, kSnapshotSuffix);
-}
-
-std::array<uint8_t, sizeof(Header) + sizeof(uint64_t)> PointerRecord(
-  uint64_t sequence) {
-  std::array<uint8_t, sizeof(Header) + sizeof(uint64_t)> record{};
-  Header header{.size = sizeof(sequence)};
-  header.crc = static_cast<uint32_t>(
-    absl::MemcpyCrc32c(record.data() + sizeof(Header), &sequence,
-                       sizeof(sequence), RecordSeed(0, header.size)));
-  std::memcpy(record.data(), &header, sizeof(Header));
-  return record;
-}
-
-void WritePointer(duckdb::FileSystem& fs, const std::string& dir,
-                  uint64_t sequence, bool create) {
-  auto record = PointerRecord(sequence);
-  const auto file = fs.OpenFile(fs.JoinPath(dir, kCurrentSnapshot),
-                                duckdb::FileFlags::FILE_FLAGS_WRITE |
-                                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
-  file->Write(duckdb::QueryContext{}, record.data(), record.size(), 0);
-  file->Sync();
-  if (create) {
-    fs.SyncDirectory(dir);
-  }
-}
-
-uint64_t ReadPointer(duckdb::FileSystem& fs, const std::string& dir) {
-  const auto path = fs.JoinPath(dir, kCurrentSnapshot);
-  auto bytes = ReadFile(fs, path);
-  if (!bytes) {
-    return 0;
-  }
-  uint64_t sequence = 0;
-  if (ParseRecords(*bytes, 0,
-                   [&](size_t, size_t, std::span<uint8_t> payload) {
-                     if (payload.size() == sizeof(sequence)) {
-                       sequence = Load<uint64_t>(payload, 0);
-                     }
-                   }) != bytes->size() ||
-      sequence == 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("log snapshot pointer '", path, "' is damaged"));
-  }
-  return sequence;
-}
-
 struct SnapshotFile {
-  uint64_t sequence = 0;
+  bool exists = false;
   SnapshotHeader header;
   std::vector<uint8_t> bytes;
   std::vector<std::span<uint8_t>> records;
 };
 
-SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& dir) {
+SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& path) {
   SnapshotFile snapshot;
-  snapshot.sequence = ReadPointer(fs, dir);
-  if (snapshot.sequence == 0) {
-    return snapshot;
-  }
-  const auto path = fs.JoinPath(dir, SnapshotName(snapshot.sequence));
   auto bytes = ReadFile(fs, path);
   if (!bytes) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("log snapshot '", path, "' is missing"));
+    return snapshot;
   }
+  snapshot.exists = true;
   snapshot.bytes = std::move(*bytes);
   const auto parsed = ParseRecords(
     snapshot.bytes, 0, [&](size_t, size_t, std::span<uint8_t> payload) {
@@ -211,11 +162,41 @@ SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& dir) {
   if (parsed != snapshot.bytes.size() || snapshot.records.empty() ||
       snapshot.records.front().size() != sizeof(SnapshotHeader)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("log snapshot '", path, "' is damaged"));
+                    ERR_MSG("snapshot '", path, "' is damaged"));
   }
   snapshot.header = Load<SnapshotHeader>(snapshot.records.front(), 0);
+  if (snapshot.header.version != kSnapshotVersion) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("snapshot '", path, "' was written in storage version ",
+              snapshot.header.version, ", and this build reads only version ",
+              kSnapshotVersion));
+  }
   snapshot.records.erase(snapshot.records.begin());
   return snapshot;
+}
+
+void ReplaceWhole(duckdb::FileSystem& fs, const std::string& path,
+                  absl::FunctionRef<uint64_t(duckdb::FileHandle&)> write) {
+  if (duckdb::Path::IsRemote(path)) {
+    const auto file =
+      fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                          duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+    write(*file);
+    file->Close();
+    return;
+  }
+  const auto replacing = absl::StrCat(path, kReplacingSuffix);
+  fs.TryRemoveFile(replacing);
+  {
+    const auto file =
+      fs.OpenFile(replacing, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                               duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+    write(*file);
+    file->Sync();
+  }
+  fs.MoveFile(replacing, path);
+  fs.SyncDirectory(fs.JoinPath(path, ".."));
 }
 
 class SnapshotWriter {
@@ -300,14 +281,6 @@ class SnapshotWriter {
                   ERR_MSG("log '", dir, "' is damaged: ", why));
 }
 
-[[noreturn]] void ThrowIncomplete(const std::string& dir, Lsn reached,
-                                  Lsn end) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                  ERR_MSG("the copy is incomplete: the log in '", dir,
-                          "' is shorter than the backup: it ends at LSN ",
-                          reached, ", before the cut at LSN ", end));
-}
-
 uint64_t TotalBytes(std::span<const std::vector<uint8_t>> payloads) {
   uint64_t bytes = 0;
   for (const auto& payload : payloads) {
@@ -322,8 +295,7 @@ std::vector<std::string> LogFiles(duckdb::FileSystem& fs,
   fs.ListFiles(dir,
                [&](duckdb::OpenFileInfo& info) {
                  if (!duckdb::FileSystem::IsDirectory(info) &&
-                     (absl::EndsWith(info.path, kChunkSuffix) ||
-                      absl::EndsWith(info.path, kSnapshotSuffix))) {
+                     absl::EndsWith(info.path, kChunkSuffix)) {
                    files.push_back(std::move(info.path));
                  }
                },
@@ -346,10 +318,12 @@ void RemoveFrom(duckdb::FileSystem& fs, const std::string& dir,
 struct Scanned {
   std::vector<LinkedChunk> chain;
   uint64_t first = 0;
+  Lsn first_begin = 0;
   uint64_t next = 0;
   Lsn end = 0;
   Lsn covered = 0;
-  uint64_t snapshot = 0;
+  bool snapshot = false;
+  bool clean = false;
   uint64_t snapshot_bytes = 0;
   size_t torn_from = 0;
   size_t torn_to = 0;
@@ -358,17 +332,19 @@ struct Scanned {
 using ApplyAt = absl::FunctionRef<void(Lsn, Lsn, std::span<uint8_t>)>;
 
 Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
-                Log::Apply snapshot_record, ApplyAt log_record) {
-  auto past = ReadSnapshot(fs, dir);
+                const std::string& snapshot_path, Log::Apply snapshot_record,
+                ApplyAt log_record) {
+  auto past = ReadSnapshot(fs, snapshot_path);
   for (const auto record : past.records) {
     snapshot_record(record);
   }
   const auto& snapshot = past.header;
   Scanned scanned{
     .first = snapshot.number,
+    .first_begin = snapshot.begin,
     .end = snapshot.covered,
     .covered = snapshot.covered,
-    .snapshot = past.sequence,
+    .snapshot = past.exists,
     .snapshot_bytes = past.bytes.size(),
   };
   std::vector<uint8_t> last;
@@ -378,10 +354,17 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
     const auto begin = first ? snapshot.begin : scanned.end;
     const auto from = static_cast<size_t>(scanned.end - begin);
     auto bytes = ReadFile(fs, fs.JoinPath(dir, Log::ChunkName(number)));
-    if (first && (bytes ? bytes->size() < from : from != 0)) {
-      ThrowDamaged(dir, absl::StrCat("the snapshot continues in chunk ", number,
-                                     ", which is missing or ends before LSN ",
-                                     snapshot.covered));
+    if (first && !bytes && snapshot.clean == 0 && from != 0) {
+      ThrowDamaged(dir, absl::StrCat("the snapshot continues in log file ",
+                                     number,
+                                     ", which is missing: the commits after "
+                                     "LSN ",
+                                     snapshot.covered, " are not here"));
+    }
+    if (first && bytes && bytes->size() < from) {
+      ThrowDamaged(dir, absl::StrCat("log file ", number, " ends before LSN ",
+                                     snapshot.covered,
+                                     ", which the snapshot covers"));
     }
     if (!bytes) {
       scanned.next = number;
@@ -410,6 +393,7 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
   }
   scanned.torn_from = last_parsed;
   scanned.torn_to = std::max(dirty, last_parsed);
+  scanned.clean = snapshot.clean != 0 && scanned.end == snapshot.covered;
   return scanned;
 }
 
@@ -419,93 +403,41 @@ std::string Log::ChunkName(uint64_t number) {
   return absl::StrFormat("%016x%s", number, kChunkSuffix);
 }
 
-bool Log::Exists(duckdb::FileSystem& fs, const std::string& dir) {
-  return fs.FileExists(fs.JoinPath(dir, kCurrentSnapshot)) ||
-         fs.FileExists(fs.JoinPath(dir, ChunkName(0)));
+bool Log::HasSnapshot(duckdb::FileSystem& fs, const std::string& snapshot) {
+  return fs.FileExists(snapshot);
 }
 
-bool Log::IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir) {
-  return fs.FileExists(fs.JoinPath(dir, kEarlierSnapshot));
-}
-
-void Log::Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply) {
-  ScanLog(fs, dir, apply,
+void Log::Read(duckdb::FileSystem& fs, const std::string& dir,
+               const std::string& snapshot, Apply apply) {
+  ScanLog(fs, dir, snapshot, apply,
           [&](Lsn, Lsn, std::span<uint8_t> payload) { apply(payload); });
 }
 
-void Log::Move(duckdb::FileSystem& fs, const std::string& from,
+void Log::Copy(duckdb::FileSystem& fs, const std::string& from,
                const std::string& to) {
-  for (const auto& name : LogFiles(fs, from)) {
-    fs.MoveFile(fs.JoinPath(from, name), fs.JoinPath(to, name));
+  if (!duckdb::Path::IsRemote(from)) {
+    std::error_code ec;
+    std::filesystem::create_hard_link(from, to, ec);
+    if (ec) {
+      THROW_SQL_ERROR(ERR_CODE(irs::pg::ErrcodeForFileAccess(ec.value())),
+                      ERR_MSG("could not link \"", to, "\": ", ec.message()));
+    }
+    fs.SyncDirectory(fs.JoinPath(to, ".."));
+    return;
   }
-  if (const auto pointer = fs.JoinPath(from, kCurrentSnapshot);
-      fs.FileExists(pointer)) {
-    fs.MoveFile(pointer, fs.JoinPath(to, kCurrentSnapshot));
+  auto bytes = ReadFile(fs, from);
+  if (!bytes) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("could not copy \"", from, "\": it does not exist"));
   }
-  fs.SyncDirectory(to);
+  ReplaceWhole(fs, to, [&](duckdb::FileHandle& file) {
+    file.Write(duckdb::QueryContext{}, bytes->data(), bytes->size(), 0);
+    return bytes->size();
+  });
 }
 
-bool Log::Remove(duckdb::FileSystem& fs, const std::string& dir) {
-  try {
-    if (!fs.DirectoryExists(dir)) {
-      return true;
-    }
-    for (const auto& name : LogFiles(fs, dir)) {
-      fs.TryRemoveFile(fs.JoinPath(dir, name));
-    }
-    fs.TryRemoveFile(fs.JoinPath(dir, kCurrentSnapshot));
-    if (fs.RemoveDirectoryExtended(dir, {})) {
-      fs.SyncDirectory(fs.JoinPath(dir, ".."));
-      return true;
-    }
-    SDB_WARN(GENERAL, "could not remove '", dir, "': it is not empty");
-  } catch (const std::exception& e) {
-    SDB_WARN(GENERAL, "could not remove '", dir,
-             "': ", duckdb::ErrorData{e}.RawMessage());
-  }
-  return false;
-}
-
-void Log::Cut(duckdb::FileSystem& fs, const std::string& dir, Lsn end) {
-  const auto snapshot = ReadSnapshot(fs, dir).header;
-  if (snapshot.covered > end) {
-    ThrowDamaged(dir, absl::StrCat("its snapshot covers LSN ", snapshot.covered,
-                                   ", past the cut at LSN ", end));
-  }
-  auto begin = snapshot.begin;
-  auto reached = snapshot.covered;
-  for (auto number = snapshot.number;; ++number) {
-    const auto path = fs.JoinPath(dir, ChunkName(number));
-    auto bytes = ReadFile(fs, path);
-    const auto from = static_cast<size_t>(reached - begin);
-    if (!bytes && reached == end) {
-      RemoveFrom(fs, dir, number);
-      return;
-    }
-    if (!bytes || bytes->size() < from) {
-      ThrowIncomplete(dir, reached, end);
-    }
-    const auto limit = std::min<size_t>(bytes->size(), end - begin);
-    reached =
-      begin + from +
-      ParseRecords(std::span{*bytes}.subspan(from, limit - from), begin + from,
-                   [](size_t, size_t, std::span<uint8_t>) {});
-    if (reached == end) {
-      const auto file = fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE);
-      file->Truncate(static_cast<int64_t>(end - begin));
-      file->Sync();
-      RemoveFrom(fs, dir, number + 1);
-      return;
-    }
-    if (reached == begin && number != snapshot.number) {
-      ThrowIncomplete(dir, reached, end);
-    }
-    begin = reached;
-  }
-}
-
-Log::Log(duckdb::FileSystem& fs, std::string dir)
-  : _fs{fs}, _dir{std::move(dir)} {
+Log::Log(duckdb::FileSystem& fs, std::string dir, std::string snapshot)
+  : _fs{fs}, _dir{std::move(dir)}, _snapshot_path{std::move(snapshot)} {
   _fs.CreateDirectoryExtended(
     _dir, {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
 }
@@ -525,11 +457,16 @@ duckdb::unique_ptr<duckdb::FileHandle> Log::OpenChunk(uint64_t number,
 
 void Log::SyncDirectory() const { _fs.SyncDirectory(_dir); }
 
-void Log::Replay(Apply apply, CatalogPart part) {
+Log::Replayed Log::Replay(Apply apply, CatalogPart part) {
   absl::MutexLock files{&_files_mutex};
+  if (!HasSnapshot(_fs, _snapshot_path)) {
+    for (const auto& name : LogFiles(_fs, _dir)) {
+      _fs.TryRemoveFile(_fs.JoinPath(_dir, name));
+    }
+  }
   std::vector<std::vector<uint8_t>> history;
   const auto scanned = ScanLog(
-    _fs, _dir,
+    _fs, _dir, _snapshot_path,
     [&](std::span<uint8_t> payload) {
       apply(payload);
       if (!part(payload).empty()) {
@@ -561,11 +498,11 @@ void Log::Replay(Apply apply, CatalogPart part) {
   const auto end = scanned.end;
   auto next = scanned.next;
   if (chunks.empty()) {
-    chunks.emplace(end, std::make_shared<Chunk>(Chunk{
-                          .number = next,
-                          .begin = end,
-                          .file = OpenChunk(next, true),
-                        }));
+    chunks.emplace(scanned.first_begin, std::make_shared<Chunk>(Chunk{
+                                          .number = next,
+                                          .begin = scanned.first_begin,
+                                          .file = OpenChunk(next, true),
+                                        }));
     ++next;
     removed = true;
   }
@@ -580,15 +517,9 @@ void Log::Replay(Apply apply, CatalogPart part) {
   if (scanned.torn_to > scanned.torn_from || size < kChunkBytes) {
     last.Sync();
   }
-  removed =
-    _fs.TryRemoveFile(_fs.JoinPath(_dir, SnapshotName(scanned.snapshot + 1))) ||
-    removed;
-  if (scanned.snapshot > 1) {
-    removed = _fs.TryRemoveFile(
-                _fs.JoinPath(_dir, SnapshotName(scanned.snapshot - 1))) ||
-              removed;
+  if (!duckdb::Path::IsRemote(_snapshot_path)) {
+    _fs.TryRemoveFile(absl::StrCat(_snapshot_path, kReplacingSuffix));
   }
-  _snapshot = scanned.snapshot;
   _covered.store(scanned.covered, std::memory_order_release);
   _covered_number.store(scanned.first, std::memory_order_relaxed);
   _snapshot_bytes.store(scanned.snapshot_bytes, std::memory_order_relaxed);
@@ -606,6 +537,7 @@ void Log::Replay(Apply apply, CatalogPart part) {
   _reserved = end;
   _written.store(end, std::memory_order_release);
   _durable.store(end, std::memory_order_release);
+  return {.snapshot = scanned.snapshot, .clean = scanned.clean};
 }
 
 Log::Range Log::Reserve(size_t payload_size) {
@@ -876,9 +808,11 @@ void Log::FoldTail(Lsn bound, CatalogPart part, Compact compact) {
 }
 
 void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
-                        CatalogPart part, Compact compact) {
+                        CatalogPart part, Compact compact, bool clean) {
   absl::MutexLock files{&_files_mutex};
-  SnapshotHeader header{.covered = covered};
+  SnapshotHeader header{.version = kSnapshotVersion,
+                        .covered = covered,
+                        .clean = clean ? uint64_t{1} : uint64_t{0}};
   {
     absl::MutexLock lock{&_mutex};
     SDB_ASSERT(covered <= _durable.load(std::memory_order_acquire));
@@ -898,15 +832,9 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
     parts.emplace_back(catalog);
   }
   auto history = compact(parts);
-  const auto sequence = _snapshot + 1;
-  const auto path = _fs.JoinPath(_dir, SnapshotName(sequence));
-  _fs.TryRemoveFile(path);
   uint64_t size = 0;
-  {
-    const auto file =
-      _fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                           duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    SnapshotWriter out{*file};
+  ReplaceWhole(_fs, _snapshot_path, [&](duckdb::FileHandle& file) {
+    SnapshotWriter out{file};
     out.Record({reinterpret_cast<const uint8_t*>(&header), sizeof(header)});
     for (const auto& payload : history) {
       out.Record(payload);
@@ -915,14 +843,8 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
       out.Record(record);
     }
     size = out.Finish();
-    file->Sync();
-  }
-  SyncDirectory();
-  WritePointer(_fs, _dir, sequence, _snapshot == 0);
-  if (_snapshot != 0) {
-    _fs.TryRemoveFile(_fs.JoinPath(_dir, SnapshotName(_snapshot)));
-  }
-  _snapshot = sequence;
+    return size;
+  });
   _history_bytes.store(TotalBytes(history), std::memory_order_relaxed);
   _history = std::move(history);
   _snapshot_bytes.store(size, std::memory_order_relaxed);
@@ -956,39 +878,23 @@ void Log::DropCovered() {
   SyncDirectory();
 }
 
-Lsn Log::Link(const std::string& dir) {
+void Log::Pin(const std::string& to) {
   absl::MutexLock files{&_files_mutex};
-  Lsn durable = 0;
-  std::vector<std::string> names;
-  if (_snapshot != 0) {
-    names.push_back(SnapshotName(_snapshot));
-  }
+  Copy(_fs, _snapshot_path, to);
+}
+
+void Log::Clear() {
+  absl::MutexLock files{&_files_mutex};
   {
     absl::MutexLock lock{&_mutex};
-    durable = _durable.load(std::memory_order_acquire);
-    const auto first = _covered_number.load(std::memory_order_relaxed);
-    for (const auto& [_, chunk] : _chunks) {
-      if (chunk->number >= first) {
-        names.push_back(ChunkName(chunk->number));
-      }
-    }
+    _chunks.clear();
+    _next.reset();
+    _has_next.store(false, std::memory_order_relaxed);
   }
-  _fs.CreateDirectoryExtended(dir,
-                              {.mode = duckdb::CreateDirectoryMode::RECURSIVE});
-  for (const auto& name : names) {
-    const auto link = _fs.JoinPath(dir, name);
-    std::error_code ec;
-    std::filesystem::create_hard_link(_fs.JoinPath(_dir, name), link, ec);
-    if (ec) {
-      THROW_SQL_ERROR(ERR_CODE(irs::pg::ErrcodeForFileAccess(ec.value())),
-                      ERR_MSG("could not link \"", link, "\": ", ec.message()));
-    }
+  for (const auto& name : LogFiles(_fs, _dir)) {
+    _fs.TryRemoveFile(_fs.JoinPath(_dir, name));
   }
-  if (_snapshot != 0) {
-    WritePointer(_fs, dir, _snapshot, false);
-  }
-  _fs.SyncDirectory(dir);
-  return durable;
+  SyncDirectory();
 }
 
 }  // namespace sdb::catalog

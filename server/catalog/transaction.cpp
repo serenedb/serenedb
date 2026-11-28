@@ -781,10 +781,40 @@ absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort,
     return absl::AbortedError(
       "Checkpoint aborted before truncate because of debug_checkpoint_abort");
   }
-  _log->WriteSnapshot(covered, records, &CatalogPart, &CompactHistory);
+  _log->WriteSnapshot(covered, records, &CatalogPart, &CompactHistory, false);
   SDB_IF_FAILURE("crash_before_log_truncate") { SDB_IMMEDIATE_ABORT(); }
   _log->DropCovered();
   return absl::OkStatus();
+}
+
+std::optional<Transactions::FinalCheckpoint>
+Transactions::CaptureFinalCheckpoint() {
+  if (!_log || _replaying) {
+    return std::nullopt;
+  }
+  absl::MutexLock round{&_truncate_mutex};
+  FinalCheckpoint final;
+  std::vector<search::TableSnapshot> tables;
+  {
+    const CommittedView view;
+    final.covered = CommitEnd(view.Snapshot()).value_or(_log->Covered());
+    tables = search::CaptureSnapshot(view);
+  }
+  final.records = search::SnapshotRecords(tables, nullptr);
+  _log->Sync(final.covered);
+  return final;
+}
+
+void Transactions::WriteFinalCheckpoint(FinalCheckpoint final, bool tidy) {
+  absl::MutexLock round{&_truncate_mutex};
+  const bool clean = tidy && _log->End() == final.covered;
+  _log->WriteSnapshot(final.covered, final.records, &CatalogPart,
+                      &CompactHistory, clean);
+  if (clean) {
+    _log->Clear();
+  } else {
+    _log->DropCovered();
+  }
 }
 
 Lsn Transactions::ReservedEnd() const {

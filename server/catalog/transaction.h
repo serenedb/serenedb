@@ -226,6 +226,14 @@ class Transactions final {
     duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT,
     duckdb::ClientContext* context = nullptr);
   void SettleLog();
+
+  struct FinalCheckpoint {
+    Lsn covered = 0;
+    std::vector<RecordBuffer> records;
+  };
+
+  std::optional<FinalCheckpoint> CaptureFinalCheckpoint();
+  void WriteFinalCheckpoint(FinalCheckpoint final, bool tidy);
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {
     return _checkpoints.Close(context);

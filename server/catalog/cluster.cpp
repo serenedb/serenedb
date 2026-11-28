@@ -279,7 +279,7 @@ std::string NormalizeLocation(std::string_view location) {
   if (result.size() > 1 && result.back() == '/') {
     result.pop_back();
   }
-  if (absl::c_linear_search(parsed.GetPathSegments(), kEngineDir)) {
+  if (absl::c_linear_search(parsed.GetPathSegments(), kStoreDir)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
                     ERR_MSG("tablespace location \"", result,
                             "\" is inside the files of a tablespace"));
@@ -287,14 +287,8 @@ std::string NormalizeLocation(std::string_view location) {
   return result;
 }
 
-std::string SystemDirectory(std::string_view location) {
-  return duckdb::FileSystem::JoinPath(
-    location,
-    absl::StrCat(backup::PositionSource::Instance().SystemIdentifier()));
-}
-
 std::string TablespaceDirectory(std::string_view location) {
-  return duckdb::FileSystem::JoinPath(SystemDirectory(location), kEngineDir);
+  return std::string{location};
 }
 
 void CreateTablespaceDirectory(const std::string& location) {
@@ -305,8 +299,7 @@ void CreateTablespaceDirectory(const std::string& location) {
       store, {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
     return;
   }
-  for (const auto& level : {location, SystemDirectory(location),
-                            TablespaceDirectory(location), store}) {
+  for (const auto& level : {location, store}) {
     fs.CreateDirectoryExtended(
       level, {.mode = duckdb::CreateDirectoryMode::SINGLE, .sync = true});
   }
@@ -354,7 +347,7 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
 
 void ClusterCatalog::Initialize(bool load_builtin) {
   _tablespaces.SetDefaults(
-    duckdb::make_uniq<BuiltinTablespaces>(*this, _layout.engine));
+    duckdb::make_uniq<BuiltinTablespaces>(*this, _layout.directory));
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
   _tablespaces.CreateDefaults(data);
   for (const auto* name : {"information_schema", "pg_catalog"}) {
@@ -733,7 +726,7 @@ TablespaceCatalogEntry& ClusterCatalog::Tablespace(
 std::string ClusterCatalog::TablespaceDirectoryOf(
   duckdb::CatalogTransaction transaction, duckdb::idx_t oid) {
   if (oid == 0 || oid == pg::kPgDefaultTablespace) {
-    return _layout.engine;
+    return _layout.directory;
   }
   return Tablespace(transaction, oid).Directory();
 }

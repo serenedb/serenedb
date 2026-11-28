@@ -132,20 +132,23 @@ class Log {
   using Compact = absl::FunctionRef<std::vector<std::vector<uint8_t>>(
     std::span<const std::span<uint8_t>>)>;
 
+  struct Replayed {
+    bool snapshot = false;
+    bool clean = false;
+  };
+
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
 
   static std::string ChunkName(uint64_t number);
-  static bool Exists(duckdb::FileSystem& fs, const std::string& dir);
-  static bool IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir);
-  static void Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply);
-  static void Move(duckdb::FileSystem& fs, const std::string& from,
+  static bool HasSnapshot(duckdb::FileSystem& fs, const std::string& snapshot);
+  static void Read(duckdb::FileSystem& fs, const std::string& dir,
+                   const std::string& snapshot, Apply apply);
+  static void Copy(duckdb::FileSystem& fs, const std::string& from,
                    const std::string& to);
-  static void Cut(duckdb::FileSystem& fs, const std::string& dir, Lsn end);
-  static bool Remove(duckdb::FileSystem& fs, const std::string& dir);
 
-  Log(duckdb::FileSystem& fs, std::string dir);
+  Log(duckdb::FileSystem& fs, std::string dir, std::string snapshot);
 
-  void Replay(Apply apply, CatalogPart part);
+  Replayed Replay(Apply apply, CatalogPart part);
 
   Range Reserve(size_t payload_size);
   void Write(const Range& range, RecordBuffer& record);
@@ -154,8 +157,10 @@ class Log {
   Lsn Append(RecordBuffer record);
 
   void WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
-                     CatalogPart part, Compact compact);
+                     CatalogPart part, Compact compact, bool clean);
   void DropCovered();
+  void Pin(const std::string& to);
+  void Clear();
 
   static constexpr uint64_t kTailBytes = uint64_t{16} << 20;
 
@@ -163,8 +168,6 @@ class Log {
     return _tail_bytes.load(std::memory_order_relaxed);
   }
   void FoldTail(Lsn bound, CatalogPart part, Compact compact);
-
-  Lsn Link(const std::string& dir);
 
   Lsn Covered() const noexcept {
     return _covered.load(std::memory_order_acquire);
@@ -237,6 +240,7 @@ class Log {
 
   duckdb::FileSystem& _fs;
   std::string _dir;
+  std::string _snapshot_path;
   mutable absl::Mutex _mutex;
   absl::btree_map<Lsn, std::shared_ptr<Chunk>> _chunks ABSL_GUARDED_BY(_mutex);
   uint64_t _next_number ABSL_GUARDED_BY(_mutex) = 0;
@@ -261,7 +265,6 @@ class Log {
   std::atomic<uint64_t> _snapshot_bytes{0};
   std::atomic<uint64_t> _history_bytes{0};
   absl::Mutex _files_mutex;
-  uint64_t _snapshot ABSL_GUARDED_BY(_files_mutex) = 0;
   std::vector<std::vector<uint8_t>> _history ABSL_GUARDED_BY(_files_mutex);
   absl::Mutex _tail_mutex;
   absl::btree_map<Lsn, TailPart> _tail ABSL_GUARDED_BY(_tail_mutex);

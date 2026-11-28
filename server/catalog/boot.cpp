@@ -65,7 +65,9 @@
 namespace sdb::catalog {
 namespace {
 
-constexpr std::string_view kLogDir = "wal";
+constexpr std::string_view kLogDir = "logs";
+constexpr std::string_view kSnapshotFile = "snapshot";
+constexpr std::string_view kBackupsDir = "backups";
 
 struct LiveStorage {
   search::Store* storage;
@@ -136,6 +138,18 @@ bool RemoveOrphans(std::span<const StoreListing> listings,
   return removed;
 }
 
+bool HoldsFiles(const std::string& directory) {
+  auto& fs = StorageFileSystem();
+  if (!fs.DirectoryExists(directory)) {
+    return false;
+  }
+  bool found = false;
+  fs.ListFiles(
+    directory, [&](duckdb::OpenFileInfo&) { found = true; }, nullptr,
+    {.strict = true});
+  return found;
+}
+
 void OpenStorages(SereneDBCatalog& catalog, std::vector<LiveStorage>& live) {
   const auto open = [&](search::Store& storage,
                         const duckdb::CatalogEntry& entry) {
@@ -174,17 +188,22 @@ void RequirePresent(std::span<const LiveStorage> live) {
 
 }  // namespace
 
-DataDirectory::DataDirectory(std::string directory_p)
-  : directory{std::move(directory_p)},
-    engine{directory.empty()
-             ? std::string{}
-             : duckdb::FileSystem::JoinPath(directory, kEngineDir)} {}
+ServerDirectory::ServerDirectory(std::string directory_p, std::string log_p)
+  : directory{std::move(directory_p)}, log{std::move(log_p)} {}
 
-std::string DataDirectory::LogDir() const {
-  return duckdb::FileSystem::JoinPath(engine, kLogDir);
+std::string ServerDirectory::DefaultLog(std::string_view directory) {
+  return duckdb::FileSystem::JoinPath(std::string{directory}, kLogDir);
 }
 
-std::string DataDirectory::StoreDir() const { return StoreDirOf(engine); }
+std::string ServerDirectory::SnapshotPath() const {
+  return duckdb::FileSystem::JoinPath(directory, kSnapshotFile);
+}
+
+std::string ServerDirectory::StoreDir() const { return StoreDirOf(directory); }
+
+std::string ServerDirectory::BackupsDir() const {
+  return duckdb::FileSystem::JoinPath(directory, kBackupsDir);
+}
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AccessMode access_mode,
@@ -202,7 +221,7 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 }
 
 duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
-                                              const DataDirectory& layout) {
+                                              const ServerDirectory& layout) {
   duckdb::unique_ptr<duckdb::Catalog> catalog;
   if (db.IsSystem()) {
     catalog = duckdb::make_uniq<ClusterCatalog>(db, layout);
@@ -214,45 +233,51 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
           .transaction_manager = duckdb::make_uniq<TransactionManager>(db)};
 }
 
-void InitCatalog(bool default_database, bool initialized) {
+void InitCatalog(bool default_database, bool require_existing) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
+  auto& fs = StorageFileSystem();
   if (!layout.InMemory()) {
-    if (Log::IsEarlierFormat(StorageFileSystem(), layout.LogDir())) {
-      SDB_FATAL(STARTUP, "'", layout.directory,
-                "' was written with an earlier layout of the data directory, "
-                "which this build cannot read");
-    }
     BeginStorageWork();
-    StorageFileSystem().CreateDirectoryExtended(
+    backup::PrepareServerDirectory(layout);
+    if (!Log::HasSnapshot(fs, layout.SnapshotPath())) {
+      if (require_existing) {
+        SDB_FATAL(STARTUP, "'", layout.directory,
+                  "' holds no server, and --require_existing refuses to "
+                  "create one");
+      }
+      if (HoldsFiles(layout.StoreDir())) {
+        SDB_FATAL(STARTUP, "'", layout.directory,
+                  "' holds segments but no snapshot: refusing to start an "
+                  "empty server over them");
+      }
+    }
+    fs.CreateDirectoryExtended(
       layout.StoreDir(),
       {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
-    backup::PrepareDataDirectory(layout);
-    if (initialized && !Log::Exists(StorageFileSystem(), layout.LogDir())) {
-      SDB_FATAL(STARTUP, "'", layout.directory, "' holds ",
-                backup::kPgVersionFile, " but '", layout.LogDir(),
-                "' holds no catalog log: refusing to start an empty catalog "
-                "in it");
-    }
   }
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
   auto& transactions = Transactions::Get();
   bool clean = false;
+  bool initialized = true;
   if (!layout.InMemory()) {
-    auto log = std::make_unique<Log>(StorageFileSystem(), layout.LogDir());
+    auto log =
+      std::make_unique<Log>(fs, layout.LogDir(), layout.SnapshotPath());
     const auto target = [&](duckdb::idx_t id) {
       return InstanceCatalog(context, id);
     };
     transactions.SetReplaying(true);
-    log->Replay(
+    const auto replayed = log->Replay(
       [&](std::span<uint8_t> payload) {
         context.RunFunctionInTransaction(
           [&] { clean = ReplayRecord(context, target, payload); });
       },
       &CatalogPart);
     transactions.SetReplaying(false);
+    initialized = replayed.snapshot;
+    clean = clean || replayed.clean;
     if (clean) {
       log->Append(StartupRecord());
     }
@@ -265,7 +290,10 @@ void InitCatalog(bool default_database, bool initialized) {
     return;
   }
   if (!initialized) {
-    backup::PublishPgVersion(layout.directory);
+    if (const auto status = transactions.TruncateLog(); !status.ok()) {
+      SDB_FATAL(STARTUP, "cannot write the first snapshot of '",
+                layout.directory, "': ", status.message());
+    }
   }
   const auto attached =
     SereneDBDatabases(duckdb::DatabaseManager::Get(instance));

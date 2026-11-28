@@ -21,6 +21,7 @@
 #include "backup/pg_control.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/crc/crc32c.h>
 #include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
@@ -161,34 +162,32 @@ void WritePgControl(const std::string& data_dir, const ControlState& state) {
   irs::WriteWhole(fs, path, buffer, true);
 }
 
-std::string PendingPgVersion(const std::string& data_dir) {
-  auto path = duckdb::FileSystem::JoinPath(data_dir, kPendingPgVersionFile);
+std::string OpenPgVersion(const std::string& data_dir) {
+  auto path = duckdb::FileSystem::JoinPath(data_dir, kPgVersionFile);
   const int fd =
-    ::open(path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+           S_IRUSR | S_IWUSR);
   if (fd < 0) {
     const int error = errno;
+    if (error == EEXIST) {
+      return path;
+    }
     THROW_SQL_ERROR(
       ERR_CODE(irs::pg::ErrcodeForFileAccess(error)),
       ERR_MSG("could not create file \"", path, "\": ", std::strerror(error)));
   }
-  ::close(fd);
-  return path;
-}
-
-void PublishPgVersion(const std::string& data_dir) {
-  auto& fs = catalog::StorageFileSystem();
-  const auto pending = fs.JoinPath(data_dir, kPendingPgVersionFile);
-  {
-    const auto version = absl::StrCat(pg::kPgMajorVersion, "\n");
-    const auto handle =
-      fs.OpenFile(pending, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    handle->Write(duckdb::QueryContext{}, const_cast<char*>(version.data()),
-                  version.size(), 0);
-    handle->Sync();
+  absl::Cleanup close = [fd] { ::close(fd); };
+  const auto version = absl::StrCat(pg::kPgMajorVersion, "\n");
+  if (::write(fd, version.data(), version.size()) !=
+        static_cast<ssize_t>(version.size()) ||
+      ::fsync(fd) != 0) {
+    const int error = errno;
+    THROW_SQL_ERROR(
+      ERR_CODE(irs::pg::ErrcodeForFileAccess(error)),
+      ERR_MSG("could not write file \"", path, "\": ", std::strerror(error)));
   }
-  fs.MoveFile(pending, fs.JoinPath(data_dir, kPgVersionFile));
-  fs.SyncDirectory(data_dir);
+  catalog::StorageFileSystem().SyncDirectory(data_dir);
+  return path;
 }
 
 PositionSource& PositionSource::Instance() {

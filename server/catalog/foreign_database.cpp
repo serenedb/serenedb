@@ -90,13 +90,14 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
                             "\": ", ec.message()));
   }
   auto& fs = duckdb::FileSystem::GetFileSystem(context);
-  const DataDirectory layout{root};
+  const ServerDirectory layout{root, ServerDirectory::DefaultLog(root)};
   auto lock = FileLock::Take(fs.JoinPath(root, backup::kPgVersionFile),
                              FileLock::Mode::Shared);
-  if (!fs.DirectoryExists(layout.LogDir()) || absl::IsNotFound(lock.status())) {
+  if (!Log::HasSnapshot(fs, layout.SnapshotPath()) ||
+      absl::IsNotFound(lock.status())) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FILE),
-      ERR_MSG("\"", info.path, "\" is not a SereneDB data directory"));
+      ERR_MSG("\"", info.path, "\" is not a SereneDB server directory"));
   }
   if (!lock.ok()) {
     THROW_SQL_ERROR(
@@ -105,21 +106,16 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
       ERR_MSG("could not attach \"", info.path,
               "\": ", lock.status().message()));
   }
-  if (Log::IsEarlierFormat(fs, layout.LogDir())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("\"", info.path,
-              "\" was written with an earlier layout of the data directory, "
-              "which this build cannot read"));
-  }
   ForeignLog foreign{
     .dir = layout.LogDir(),
+    .snapshot = layout.SnapshotPath(),
     .lock = std::move(*lock),
   };
   LoggedDatabases databases;
-  Log::Read(fs, foreign.dir, [&](std::span<uint8_t> payload) {
-    ReadDatabases(context, CatalogPart(payload), databases);
-  });
+  Log::Read(fs, foreign.dir, foreign.snapshot,
+            [&](std::span<uint8_t> payload) {
+              ReadDatabases(context, CatalogPart(payload), databases);
+            });
   const auto it = absl::c_find_if(databases, [&](const auto& database) {
     return database.second.GetIdentifierName() == name;
   });
@@ -141,7 +137,7 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
     return id == foreign.database ? &catalog : nullptr;
   };
   Log::Read(duckdb::FileSystem::GetFileSystem(context), foreign.dir,
-            [&](std::span<uint8_t> payload) {
+            foreign.snapshot, [&](std::span<uint8_t> payload) {
               ReplayRecord(context, target, payload);
             });
   const auto transaction = catalog.GetCatalogTransaction(context);

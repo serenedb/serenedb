@@ -41,15 +41,20 @@ struct DBConfig;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-struct DataDirectory {
-  explicit DataDirectory(std::string directory);
+struct ServerDirectory {
+  ServerDirectory() = default;
+  ServerDirectory(std::string directory, std::string log);
+
+  static std::string DefaultLog(std::string_view directory);
 
   bool InMemory() const noexcept { return directory.empty(); }
-  std::string LogDir() const;
+  const std::string& LogDir() const noexcept { return log; }
+  std::string SnapshotPath() const;
   std::string StoreDir() const;
+  std::string BackupsDir() const;
 
   std::string directory;
-  std::string engine;
+  std::string log;
 };
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
@@ -61,9 +66,9 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   duckdb::AttachedDatabase& db, duckdb::Catalog& catalog);
 
 duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
-                                              const DataDirectory& layout);
+                                              const ServerDirectory& layout);
 
-void InitCatalog(bool default_database, bool initialized);
+void InitCatalog(bool default_database, bool require_existing);
 
 void CloseLog();
 

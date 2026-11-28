@@ -28,6 +28,8 @@ namespace sdb::lifecycle {
 bool IsStopping() noexcept;
 
 void BeginShutdown() noexcept;
+void FailShutdown() noexcept;
+bool ShutdownFailed() noexcept;
 
 void WaitForShutdown() noexcept;
 

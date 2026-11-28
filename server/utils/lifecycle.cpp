@@ -39,6 +39,7 @@ namespace sdb::lifecycle {
 namespace {
 
 std::atomic_bool gIsStopping = false;
+std::atomic_bool gShutdownFailed = false;
 std::string gDataDirArg;
 
 // eventfd-backed wakeup channel. Created at static-init time so that
@@ -101,6 +102,14 @@ void BeginShutdown() noexcept {
   const uint64_t v = 1;
   while (::write(gShutdownWriteFd, &v, sizeof(v)) < 0 && errno == EINTR) {
   }
+}
+
+void FailShutdown() noexcept {
+  gShutdownFailed.store(true, std::memory_order_release);
+}
+
+bool ShutdownFailed() noexcept {
+  return gShutdownFailed.load(std::memory_order_acquire);
 }
 
 void WaitForShutdown() noexcept {

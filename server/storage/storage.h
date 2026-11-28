@@ -23,6 +23,7 @@
 
 #include <string>
 
+#include "catalog/boot.h"
 #include "search/engine.h"
 #include "server/utils/lockfile.h"
 
@@ -31,11 +32,13 @@ namespace sdb {
 class Runtime;
 
 struct StorageConfig {
-  std::string directory;
+  catalog::ServerDirectory layout;
   std::string hba_config;
   bool default_database = true;
+  bool require_existing = false;
 };
 
+catalog::ServerDirectory ReadServerDirectory(std::string directory);
 StorageConfig ReadStorageConfig();
 
 class Storage final {
@@ -44,11 +47,12 @@ class Storage final {
   ~Storage();
 
  private:
-  bool Lock(const std::string& directory);
+  void Lock(const catalog::ServerDirectory& layout);
   void Close() noexcept;
 
   Runtime& _runtime;
   FileLock _lock;
+  FileLock _log_lock;
   search::SearchEngine _search;
 };
 

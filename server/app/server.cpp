@@ -44,6 +44,7 @@
 #include "runtime/runtime.h"
 #include "server/utils/build.h"
 #include "server/utils/init.h"
+#include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 #include "server/utils/signals.h"
 #include "storage/storage.h"
@@ -115,7 +116,7 @@ int RunWithEngine(int argc, char* argv[], absl::FunctionRef<int()> body) {
   }
   SDB_INFO(GENERAL, "SereneDB is shut down");
   engine.Shutdown();
-  return rc;
+  return lifecycle::ShutdownFailed() ? EXIT_FAILURE : rc;
 }
 
 }  // namespace sdb::app

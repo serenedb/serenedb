@@ -31,7 +31,7 @@
 
 namespace sdb::backup {
 
-inline constexpr uint32_t kBackupLabelFormat = 2;
+inline constexpr uint32_t kBackupLabelFormat = 3;
 inline constexpr std::string_view kBackupLabelFile = "backup_label";
 
 struct BackupLabel {

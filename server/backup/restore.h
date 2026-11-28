@@ -24,7 +24,7 @@
 
 namespace sdb::backup {
 
-void PrepareDataDirectory(const catalog::DataDirectory& layout);
+void PrepareServerDirectory(const catalog::ServerDirectory& layout);
 
 bool SubscriptionsHeld();
 void ReleaseSubscriptionHold();

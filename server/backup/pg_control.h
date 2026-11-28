@@ -32,7 +32,6 @@ namespace sdb::backup {
 
 inline constexpr std::string_view kPgControlFile = "global/pg_control";
 inline constexpr std::string_view kPgVersionFile = "PG_VERSION";
-inline constexpr std::string_view kPendingPgVersionFile = "PG_VERSION.new";
 inline constexpr uint32_t kTimeline = 1;
 inline constexpr uint32_t kWalSegmentSize = uint32_t{16} << 20;
 inline constexpr size_t kMockNonceLen = 32;
@@ -45,8 +44,7 @@ struct ControlState {
 
 std::optional<ControlState> ReadPgControl(const std::string& data_dir);
 void WritePgControl(const std::string& data_dir, const ControlState& state);
-std::string PendingPgVersion(const std::string& data_dir);
-void PublishPgVersion(const std::string& data_dir);
+std::string OpenPgVersion(const std::string& data_dir);
 
 class PositionSource final {
  public:

@@ -42,7 +42,7 @@ namespace {
 constexpr std::string_view kStartLocation = "START WAL LOCATION: ";
 constexpr std::string_view kFormatKey = "SERENEDB BACKUP FORMAT: ";
 constexpr std::string_view kSystemKey = "SERENEDB SYSTEM IDENTIFIER: ";
-constexpr std::string_view kLogKey = "SERENEDB LOG: ";
+constexpr std::string_view kSnapshotKey = "SERENEDB SNAPSHOT: ";
 constexpr std::string_view kChecksumKey = "SERENEDB CHECKSUM: ";
 constexpr std::string_view kSereneDBPrefix = "SERENEDB ";
 
@@ -88,7 +88,7 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
     absl::FormatTime("%Y-%m-%d %H:%M:%S UTC", start_time, absl::UTCTimeZone()),
     "\n", "LABEL: ", one_line, "\n", "START TIMELINE: ", kTimeline, "\n",
     kFormatKey, kBackupLabelFormat, "\n", kSystemKey, system_identifier, "\n",
-    kLogKey, cut.log_size, "\n");
+    kSnapshotKey, cut.snapshot, "\n");
   absl::StrAppend(&out, kChecksumKey, Checksum(out), "\n");
   return out;
 }
@@ -109,7 +109,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
   bool has_start = false;
   bool has_format = false;
   bool has_system = false;
-  bool has_log = false;
+  bool has_snapshot = false;
   for (auto line :
        absl::StrSplit(text.substr(0, checksum_at), '\n', absl::SkipEmpty())) {
     std::string_view value;
@@ -138,17 +138,19 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
         return Malformed(line);
       }
       has_system = true;
-    } else if (absl::ConsumePrefix(&value, kLogKey)) {
-      if (!ParseFields(value, label.cut.log_size)) {
+    } else if (absl::ConsumePrefix(&value, kSnapshotKey)) {
+      label.cut.snapshot = absl::StripAsciiWhitespace(value);
+      if (label.cut.snapshot.empty() ||
+          label.cut.snapshot.find('/') != std::string::npos) {
         return Malformed(line);
       }
-      has_log = true;
+      has_snapshot = true;
     } else {
       return absl::InvalidArgumentError(
         absl::StrCat("unknown backup_label line: \"", line, "\""));
     }
   }
-  if (!has_start || !has_format || !has_system || !has_log) {
+  if (!has_start || !has_format || !has_system || !has_snapshot) {
     return absl::InvalidArgumentError(
       "backup_label is missing a required line");
   }

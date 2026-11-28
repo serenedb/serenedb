@@ -33,6 +33,7 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "backup/backup_label.h"
 #include "backup/backup_session.h"
@@ -48,7 +49,9 @@ namespace {
 constexpr std::string_view kRetiredLabelFile = "backup_label.old";
 constexpr std::string_view kSubscriptionHoldFile = "subscriptions.hold";
 
-const std::string& EngineDir() { return catalog::ClusterOf().Layout().engine; }
+const std::string& ServerDir() {
+  return catalog::ClusterOf().Layout().directory;
+}
 
 [[noreturn]] void Fail(std::string_view what, std::string_view path,
                        std::string_view why) {
@@ -62,14 +65,26 @@ void RequireDirectory(duckdb::FileSystem& fs, const std::string& path) {
   }
 }
 
-void RemoveLogCopy(duckdb::FileSystem& fs, const std::string& dir) {
-  if (!catalog::Log::Remove(fs, dir)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not remove \"", dir, "\""));
+void RemoveFiles(duckdb::FileSystem& fs, const std::string& dir) {
+  if (!fs.DirectoryExists(dir)) {
+    return;
   }
+  std::vector<std::string> names;
+  fs.ListFiles(
+    dir,
+    [&](duckdb::OpenFileInfo& info) {
+      if (!duckdb::FileSystem::IsDirectory(info)) {
+        names.push_back(std::move(info.path));
+      }
+    },
+    nullptr, {.strict = true});
+  for (const auto& name : names) {
+    fs.RemoveFile(fs.JoinPath(dir, name));
+  }
+  fs.SyncDirectory(dir);
 }
 
-void Restore(const catalog::DataDirectory& layout,
+void Restore(const catalog::ServerDirectory& layout,
              const std::string& label_path) {
   auto& fs = catalog::StorageFileSystem();
   const auto& data_dir = layout.directory;
@@ -88,31 +103,27 @@ void Restore(const catalog::DataDirectory& layout,
          absl::StrCat("its system identifier is ", label->system_identifier,
                       ", the copy's is ", control->system_identifier));
   }
-  const auto& cut = label->cut;
   RequireDirectory(fs, layout.StoreDir());
-
-  const auto log = layout.LogDir();
-  if (const auto link = fs.JoinPath(layout.engine, kBackupDir);
-      fs.DirectoryExists(link)) {
-    fs.CreateDirectoryExtended(
-      log, {.mode = duckdb::CreateDirectoryMode::RECURSIVE});
-    catalog::Log::Move(fs, link, log);
-    RemoveLogCopy(fs, link);
+  const auto pin = fs.JoinPath(layout.BackupsDir(), label->cut.snapshot);
+  if (!fs.FileExists(pin)) {
+    Fail("the copy has no snapshot of the backup", pin,
+         "copy the whole server directory");
   }
-  catalog::Log::Cut(fs, log, cut.log_size);
+  fs.MoveFile(pin, layout.SnapshotPath());
+  fs.SyncDirectory(data_dir);
+  RemoveFiles(fs, layout.LogDir());
+  RemoveFiles(fs, layout.BackupsDir());
   SDB_IF_FAILURE("crash_in_restore_after_log") { SDB_IMMEDIATE_ABORT(); }
 
   fs.TryRemoveFile(fs.JoinPath(data_dir, "recovery.signal"));
   fs.TryRemoveFile(fs.JoinPath(data_dir, "standby.signal"));
   SDB_IF_FAILURE("crash_in_restore_after_cleanup") { SDB_IMMEDIATE_ABORT(); }
-  irs::WriteWhole(fs, fs.JoinPath(layout.engine, kSubscriptionHoldFile), {},
-                  true);
+  irs::WriteWhole(fs, fs.JoinPath(data_dir, kSubscriptionHoldFile), {}, true);
   WritePgControl(data_dir, {.system_identifier = control->system_identifier,
                             .checkpoint = label->start_lsn});
   SDB_IF_FAILURE("crash_in_restore_after_control") { SDB_IMMEDIATE_ABORT(); }
 
   fs.SyncDirectory(layout.StoreDir());
-  fs.SyncDirectory(layout.engine);
   SDB_IF_FAILURE("crash_in_restore_before_retire") { SDB_IMMEDIATE_ABORT(); }
   fs.MoveFile(label_path, fs.JoinPath(data_dir, kRetiredLabelFile));
   fs.SyncDirectory(data_dir);
@@ -121,33 +132,31 @@ void Restore(const catalog::DataDirectory& layout,
 
 }  // namespace
 
-void PrepareDataDirectory(const catalog::DataDirectory& layout) {
+void PrepareServerDirectory(const catalog::ServerDirectory& layout) {
   const auto& data_dir = layout.directory;
   auto& fs = catalog::StorageFileSystem();
   try {
     if (const auto label_path = fs.JoinPath(data_dir, kBackupLabelFile);
         fs.FileExists(label_path)) {
       Restore(layout, label_path);
-    } else {
-      RemoveLogCopy(fs, fs.JoinPath(layout.engine, kBackupDir));
     }
     PositionSource::Instance().Open(data_dir);
   } catch (const std::exception& e) {
-    SDB_FATAL(STARTUP, "cannot prepare data directory '", data_dir,
+    SDB_FATAL(STARTUP, "cannot prepare server directory '", data_dir,
               "': ", duckdb::ErrorData{e}.RawMessage());
   }
 }
 
 bool SubscriptionsHeld() {
   auto& fs = catalog::StorageFileSystem();
-  return fs.FileExists(fs.JoinPath(EngineDir(), kSubscriptionHoldFile));
+  return fs.FileExists(fs.JoinPath(ServerDir(), kSubscriptionHoldFile));
 }
 
 void ReleaseSubscriptionHold() {
   auto& fs = catalog::StorageFileSystem();
-  const auto& engine = EngineDir();
-  fs.TryRemoveFile(fs.JoinPath(engine, kSubscriptionHoldFile));
-  fs.SyncDirectory(engine);
+  const auto& dir = ServerDir();
+  fs.TryRemoveFile(fs.JoinPath(dir, kSubscriptionHoldFile));
+  fs.SyncDirectory(dir);
 }
 
 }  // namespace sdb::backup

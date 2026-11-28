@@ -34,6 +34,8 @@
 
 #include "backup/pg_control.h"
 #include "catalog/boot.h"
+#include "catalog/database_directory.h"
+#include "catalog/transaction.h"
 #include "network/pg/hba.h"
 #include "runtime/runtime.h"
 #include "server/utils/lifecycle.h"
@@ -47,8 +49,22 @@ ABSL_FLAG(std::string, hba_config, "",
           "default) uses <datadir>/pg_hba.conf; a relative path is resolved "
           "against the data directory.");
 
+ABSL_FLAG(std::string, log_directory, "",
+          "Local directory for the log of the commits since the last "
+          "snapshot. Empty uses <server directory>/logs.");
+
+ABSL_FLAG(bool, require_existing, false,
+          "Refuse to start when the server directory holds no server, "
+          "instead of creating a new one.");
+
+ABSL_FLAG(bool, checkpoint_at_stop, false,
+          "End every clean stop with a checkpoint and an empty log directory, "
+          "so the server can start anywhere from its server directory alone.");
+
 namespace sdb {
 namespace {
+
+constexpr std::string_view kLockFile = "LOCK";
 
 duckdb::FileSystem& DataFileSystem() {
   return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
@@ -56,29 +72,43 @@ duckdb::FileSystem& DataFileSystem() {
 
 }  // namespace
 
+catalog::ServerDirectory ReadServerDirectory(std::string directory) {
+  if (directory.empty()) {
+    return {};
+  }
+  auto log = absl::GetFlag(FLAGS_log_directory);
+  if (log.empty()) {
+    log = catalog::ServerDirectory::DefaultLog(directory);
+  }
+  return {std::move(directory), std::move(log)};
+}
+
 StorageConfig ReadStorageConfig() {
   auto& fs = DataFileSystem();
-  StorageConfig config{.directory = lifecycle::ResolveDataDir(
-                         absl::GetFlag(FLAGS_server_directory))};
+  StorageConfig config{
+    .layout = ReadServerDirectory(
+      lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory))),
+    .require_existing = absl::GetFlag(FLAGS_require_existing),
+  };
+  const auto& directory = config.layout.directory;
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
-    config.hba_config = fs.JoinPath(config.directory, "pg_hba.conf");
+    config.hba_config = fs.JoinPath(directory, "pg_hba.conf");
   } else if (fs.IsPathAbsolute(hba)) {
     config.hba_config = hba;
   } else {
-    config.hba_config = fs.JoinPath(config.directory, hba);
+    config.hba_config = fs.JoinPath(directory, hba);
   }
   return config;
 }
 
 Storage::Storage(Runtime& runtime, const StorageConfig& config)
   : _runtime{runtime}, _search{runtime} {
-  bool initialized = false;
-  if (!config.directory.empty()) {
-    initialized = Lock(config.directory);
+  if (!config.layout.InMemory()) {
+    Lock(config.layout);
     network::pg::hba::SetHbaConfig(config.hba_config);
   }
   try {
-    catalog::InitCatalog(config.default_database, initialized);
+    catalog::InitCatalog(config.default_database, config.require_existing);
     _search.Start();
   } catch (...) {
     Close();
@@ -88,45 +118,68 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
 
 Storage::~Storage() { Close(); }
 
-bool Storage::Lock(const std::string& directory) {
+void Storage::Lock(const catalog::ServerDirectory& layout) {
   auto& fs = DataFileSystem();
+  const auto& directory = layout.directory;
   try {
     if (fs.CreateDirectoryExtended(
           directory, {.mode = duckdb::CreateDirectoryMode::RECURSIVE})) {
-      SDB_INFO(STARTUP, "Created database directory: ", directory);
+      SDB_INFO(STARTUP, "Created server directory: ", directory);
     }
+    fs.CreateDirectoryExtended(
+      layout.LogDir(), {.mode = duckdb::CreateDirectoryMode::RECURSIVE});
   } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "Unable to create database directory '", directory,
+    SDB_FATAL(GENERAL, "Unable to create server directory '", directory,
               "': ", duckdb::ErrorData{e}.RawMessage());
   }
-  const auto version = fs.JoinPath(directory, backup::kPgVersionFile);
-  bool initialized = false;
-  std::string locked;
+  const auto take = [](const std::string& path) {
+    auto lock = FileLock::Take(path, FileLock::Mode::Exclusive);
+    if (!lock.ok()) {
+      SDB_FATAL(GENERAL, lock.status().message());
+    }
+    return std::move(*lock);
+  };
   try {
-    initialized = fs.FileExists(version);
-    locked = initialized ? version : backup::PendingPgVersion(directory);
+    _lock = take(backup::OpenPgVersion(directory));
   } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "Unable to check '", version,
+    SDB_FATAL(GENERAL, "Unable to open '",
+              fs.JoinPath(directory, backup::kPgVersionFile),
               "': ", duckdb::ErrorData{e}.RawMessage());
   }
-  auto lock = FileLock::Take(locked, FileLock::Mode::Exclusive);
-  if (!lock.ok()) {
-    SDB_FATAL(GENERAL, lock.status().message());
+  if (layout.LogDir() != catalog::ServerDirectory::DefaultLog(directory)) {
+    _log_lock = take(fs.JoinPath(layout.LogDir(), kLockFile));
   }
-  _lock = std::move(*lock);
-  return initialized;
 }
 
 void Storage::Close() noexcept {
   _runtime.RequestStop();
   _search.Stop();
   _runtime.Background().Drain();
+  auto& transactions = catalog::Transactions::Get();
+  std::optional<catalog::Transactions::FinalCheckpoint> final;
+  if (absl::GetFlag(FLAGS_checkpoint_at_stop)) {
+    try {
+      final = transactions.CaptureFinalCheckpoint();
+    } catch (const std::exception& ex) {
+      SDB_ERROR(GENERAL, "the checkpoint of the stop failed: ",
+                duckdb::ErrorData{ex}.RawMessage());
+      lifecycle::FailShutdown();
+    }
+  }
   try {
     irs::DuckDBEngine::Instance().CloseDatabases();
-    catalog::CloseLog();
+    if (final) {
+      transactions.WriteFinalCheckpoint(std::move(*final),
+                                        catalog::StorageTidy());
+      transactions.Close();
+    } else {
+      catalog::CloseLog();
+    }
   } catch (const std::exception& ex) {
     SDB_ERROR(GENERAL, "closing the databases failed: ",
               duckdb::ErrorData{ex}.RawMessage());
+    lifecycle::FailShutdown();
+    transactions.Close();
   }
 }
 

@@ -172,6 +172,14 @@ pinned	unchanged
 1	1
 
 
+connection default
+query
+SELECT value < 4096 AS compacted FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
+----
+compacted
+t
+
+
 connection holder
 query
 SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();

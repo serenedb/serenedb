@@ -52,25 +52,14 @@
 #include <vector>
 
 #include "backup/pg_control.h"
-#include "server/utils/unique_id.h"
 #include "runtime/runtime.h"
 #include "server/utils/lifecycle.h"
+#include "server/utils/unique_id.h"
 
 namespace sdb::catalog {
 namespace {
 
 using Removal = absl::AnyInvocable<bool()>;
-
-struct RemovalGate {
-  std::atomic_bool deferring{false};
-  absl::Mutex mutex;
-  std::vector<Removal> deferred ABSL_GUARDED_BY(mutex);
-};
-
-RemovalGate& Gate() {
-  static RemovalGate gGate;
-  return gGate;
-}
 
 struct StorageWork {
   std::atomic<uint64_t> open{0};
@@ -180,13 +169,6 @@ void ReleaseIfEmpty(std::string_view location) noexcept {
 }
 
 void RunRemoval(Removal&& removal) {
-  if (auto& gate = Gate(); gate.deferring.load()) {
-    absl::MutexLock lock{&gate.mutex};
-    if (gate.deferring.load()) {
-      gate.deferred.push_back(std::move(removal));
-      return;
-    }
-  }
   auto& runtime = Runtime::Get();
   if (lifecycle::IsStopping() || runtime.IsStopping()) {
     EndStorageWork(removal());
@@ -218,24 +200,6 @@ bool StorageTidy() noexcept {
   auto& work = Work();
   return work.open.load(std::memory_order_acquire) == 0 &&
          !work.untidy.load(std::memory_order_relaxed);
-}
-
-void DeferRemovals() noexcept {
-  [[maybe_unused]] const bool was_deferring = Gate().deferring.exchange(true);
-  SDB_ASSERT(!was_deferring);
-}
-
-void ResumeRemovals() {
-  std::vector<Removal> deferred;
-  {
-    auto& gate = Gate();
-    absl::MutexLock lock{&gate.mutex};
-    gate.deferring.store(false);
-    deferred.swap(gate.deferred);
-  }
-  for (auto& removal : deferred) {
-    RunRemoval(std::move(removal));
-  }
 }
 
 void CreateDirectory(const std::string& path) {
@@ -334,11 +298,10 @@ void ClaimLocation(const std::string& location) {
   }
   auto locked = FileLock::Take(owner, FileLock::Mode::Exclusive);
   if (!locked.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("tablespace location \"", location,
-              "\" is in use by another running server"),
-      ERR_DETAIL(locked.status().message()));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("tablespace location \"", location,
+                            "\" is in use by another running server"),
+                    ERR_DETAIL(locked.status().message()));
   }
   owners.locked.emplace(location, std::move(*locked));
 }
@@ -390,15 +353,14 @@ void WriteOwner(LockedOwner& owner, std::string content) {
 void EmptyDirectory(const std::string& directory, std::string_view keep) {
   auto& fs = StorageFileSystem();
   std::vector<std::pair<std::string, bool>> entries;
-  fs.ListFiles(
-    directory,
-    [&](duckdb::OpenFileInfo& info) {
-      if (info.path != keep) {
-        entries.emplace_back(fs.JoinPath(directory, info.path),
-                             duckdb::FileSystem::IsDirectory(info));
-      }
-    },
-    nullptr, {.strict = true});
+  fs.ListFiles(directory,
+               [&](duckdb::OpenFileInfo& info) {
+                 if (info.path != keep) {
+                   entries.emplace_back(fs.JoinPath(directory, info.path),
+                                        duckdb::FileSystem::IsDirectory(info));
+                 }
+               },
+               nullptr, {.strict = true});
   for (const auto& [path, directory_entry] : entries) {
     if (directory_entry) {
       RemoveTreeOrThrow(path);

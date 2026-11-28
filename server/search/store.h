@@ -202,8 +202,7 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   // `field_options` (nullable) is the per-merge per-column encoding config,
   // pinned by the caller for the whole merge.
-  auto CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
-                          const irs::CompactionPolicy& policy,
+  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,

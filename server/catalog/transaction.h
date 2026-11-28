@@ -222,14 +222,18 @@ class Transactions final {
     _max_log_bytes.store(bytes, std::memory_order_relaxed);
   }
 
+  using Pinned = absl::FunctionRef<void(std::span<const uint64_t> segments)>;
+
   absl::Status TruncateLog(
     duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT,
     duckdb::ClientContext* context = nullptr);
-  absl::Status TruncateLog(const utils::DrainGate::Closed& checkpoints);
+  absl::Status TruncateLog(const utils::DrainGate::Closed& checkpoints,
+                           Pinned pinned);
   void SettleLog();
 
   struct FinalCheckpoint {
     Lsn covered = 0;
+    std::vector<uint64_t> segments;
     std::vector<RecordBuffer> records;
   };
 
@@ -295,7 +299,7 @@ class Transactions final {
 
   Lsn ReservedEnd() const;
   absl::Status Truncate(duckdb::CheckpointAbort abort,
-                        duckdb::ClientContext* context);
+                        duckdb::ClientContext* context, const Pinned* pinned);
   void Publish(duckdb::transaction_t commit, bool catalog, bool wait);
   void MaintainLog(Lsn end);
   void MaintainInBackground(bool snapshot_due);

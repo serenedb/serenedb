@@ -57,6 +57,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/log.h"
+#include "catalog/pins.h"
 #include "catalog/record.h"
 #include "catalog/transaction.h"
 #include "pg/catalog/oids.h"
@@ -111,16 +112,16 @@ UniqueId ClaimWal(LockedOwner& owner, const ServerDirectory& layout,
                   const UniqueId& server_id) {
   if (owner.content.empty()) {
     const auto wal_id = UniqueId::New();
-    WriteOwner(owner,
-               absl::StrCat(server_id.Bytes(), wal_id.Bytes()));
+    WriteOwner(owner, absl::StrCat(server_id.Bytes(), wal_id.Bytes()));
     return wal_id;
   }
   const auto server = UniqueId::FromBytes(
     std::string_view{owner.content}.substr(0, UniqueId::kBytes));
-  const auto wal = owner.content.size() == 2 * UniqueId::kBytes
-                     ? UniqueId::FromBytes(std::string_view{owner.content}.substr(
-                         UniqueId::kBytes))
-                     : std::nullopt;
+  const auto wal =
+    owner.content.size() == 2 * UniqueId::kBytes
+      ? UniqueId::FromBytes(
+          std::string_view{owner.content}.substr(UniqueId::kBytes))
+      : std::nullopt;
   if (!server || !wal) {
     SDB_FATAL(STARTUP, "'", owner.path, "' is damaged");
   }
@@ -214,14 +215,19 @@ bool RemoveOrphans(std::span<const StoreListing> listings,
   for (const auto& one : live) {
     one.storage->CollectFiles(owned[one.storage->Path()]);
   }
+  auto& pins = Pins::Get();
   bool removed = true;
   for (const auto& listing : listings) {
     const auto& keep = owned[listing.directory];
     std::vector<std::string> orphans;
     for (const auto& file : listing.files) {
-      if (!keep.contains(file)) {
-        orphans.push_back(file);
+      uint64_t id = 0;
+      if (keep.contains(file) ||
+          (irs::ParseSegmentId(file, id) &&
+           pins.ParkIfHeld(listing.directory, id, std::span{&file, 1}))) {
+        continue;
       }
+      orphans.push_back(file);
     }
     removed =
       irs::RemoveIndexFiles(StorageFileSystem(), listing.directory, orphans) &&
@@ -357,12 +363,15 @@ void InitCatalog(const CatalogStart& start) {
   bool abandoned = false;
   if (!layout.InMemory()) {
     BeginStorageWork();
+    auto restore = backup::FindRestore(layout);
     if (!remote) {
-      backup::PrepareServerDirectory(layout);
+      backup::PrepareServerDirectory(layout, restore);
+      restore.reset();
     }
     std::optional<Log::Identity> stored;
     try {
-      stored = Log::ReadIdentity(fs, layout.SnapshotPath());
+      stored = restore ? restore->identity
+                       : Log::ReadIdentity(fs, layout.SnapshotPath());
     } catch (const std::exception& e) {
       SDB_FATAL(STARTUP, duckdb::ErrorData{e}.RawMessage());
     }
@@ -392,9 +401,9 @@ void InitCatalog(const CatalogStart& start) {
     }
     if (remote) {
       owner = ReadServerOwner(fs, layout);
-      abandoned =
-        owner && *owner != wal_id && owner->Hex() == start.abandon_wal;
-      if (owner && *owner != wal_id && !abandoned) {
+      const bool foreign = owner && *owner != wal_id;
+      abandoned = foreign && (restore || owner->Hex() == start.abandon_wal);
+      if (foreign && !abandoned) {
         SDB_FATAL(STARTUP, "the server directory '", layout.directory,
                   "' belongs to the WAL directory ", owner->Hex(),
                   ", which may hold commits its snapshot does not have: "
@@ -402,11 +411,12 @@ void InitCatalog(const CatalogStart& start) {
                   "lost, start with --abandon_wal=",
                   owner->Hex(), " and lose those commits");
       }
-      if (abandoned) {
+      if (abandoned && !restore) {
         SDB_WARN(STARTUP, "starting '", layout.directory,
-                 "' from its snapshot without the WAL directory ",
-                 owner->Hex(), ": the commits only that WAL holds are lost");
+                 "' from its snapshot without the WAL directory ", owner->Hex(),
+                 ": the commits only that WAL holds are lost");
       }
+      backup::PrepareServerDirectory(layout, restore);
     }
   }
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
@@ -437,6 +447,12 @@ void InitCatalog(const CatalogStart& start) {
     initialized = replayed.snapshot;
     clean = !abandoned && (clean || replayed.clean);
     AdoptIdentity(identity, layout, created);
+    try {
+      Pins::Get().Load(fs, layout.BackupsDir());
+    } catch (const std::exception& e) {
+      SDB_FATAL(STARTUP, "cannot read the backups of '", layout.directory,
+                "': ", duckdb::ErrorData{e}.RawMessage());
+    }
     log->SetIdentity(identity);
     if (takeover) {
       TakeServerOwner(fs, layout, wal_id, abandoned);

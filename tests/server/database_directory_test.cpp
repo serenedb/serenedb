@@ -135,19 +135,6 @@ TEST_F(DatabaseDirectoryTest, AStorageWhoseFilesStayIsKept) {
     std::filesystem::exists(_root / kStoreDir / "0000000000000007.col"));
 }
 
-TEST_F(DatabaseDirectoryTest, RemovalsWaitWhileTheyAreDeferred) {
-  const auto file = _root / "0000000000000007.col";
-  std::ofstream{file} << "rows";
-  DeferRemovals();
-  BeginStorageWork();
-  RemoveStorage(StoreDirOf(_root.string()),
-                [&] { return std::filesystem::remove(file); });
-  std::this_thread::sleep_for(std::chrono::milliseconds{50});
-  EXPECT_TRUE(std::filesystem::exists(file));
-  ResumeRemovals();
-  EXPECT_TRUE(Gone(file));
-}
-
 TEST_F(DatabaseDirectoryTest, AStoreDirectoryOnAnObjectStore) {
   ObjectStore();
   const auto store =
@@ -238,10 +225,8 @@ TEST_F(DatabaseDirectoryTest, AClaimAfterAReleaseKeepsTheOwner) {
   const auto location = Path("reclaimed");
   std::filesystem::create_directories(StoreDirOf(location));
   ClaimLocation(location);
-  DeferRemovals();
   ReleaseLocation(location);
   ClaimLocation(location);
-  ResumeRemovals();
   _runtime.Background().Drain();
   EXPECT_TRUE(std::filesystem::exists(_root / "reclaimed" / kOwnerFile));
 }

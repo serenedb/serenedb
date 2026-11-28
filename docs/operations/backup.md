@@ -11,9 +11,9 @@ SereneDB provides PostgreSQL compatible low level backup functions `pg_backup_st
 Differences from PostgreSQL:
 
 - One backup at a time, owned by the session that started it.
-- A backup copies only the server directory: `pg_backup_start` fails while a [tablespace](../sql/statements/create_tablespace/index.md) other than `pg_default` and `pg_global` exists, and on a server whose server directory is on an object store.
-- `pg_backup_start` writes a snapshot of everything committed and keeps it in `backups/` until `pg_backup_stop`; a restore starts from that snapshot. The write-ahead log (WAL) is not part of a backup, so a WAL directory outside the server directory (`--wal_directory`) need not be copied.
-- `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
+- A backup copies only the server directory: `pg_backup_start` fails while a [tablespace](../sql/statements/create_tablespace/index.md) other than `pg_default` and `pg_global` exists.
+- `pg_backup_start` writes a snapshot of everything committed and keeps it in `backups/` until `pg_backup_stop`, together with the segment files it uses; a restore starts from that snapshot. The write-ahead log (WAL) is not part of a backup, so a WAL directory outside the server directory (`--wal_directory`) need not be copied.
+- `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` always writes its snapshot at once, and there is no WAL archiving.
 - Without WAL archiving, the backup tool must be able to take a backup without it; most tools have a flag for this.
 - `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.
 - Both functions require a superuser.
@@ -26,7 +26,7 @@ Differences from PostgreSQL:
 
    <SqlLogicTest id="operations/backup/start" />
 
-2. Copy the entire server directory, every file and subdirectory, while that session stays open. Files can be copied in any order, and files that change during the copy are fine.
+2. Copy the entire server directory, every file and subdirectory, while that session stays open. Files can be copied in any order, and files that change or disappear during the copy are fine: the copy tool has to skip a file that is gone by the time it reads it, as pgBackRest does.
 
 3. In the same session, stop the backup:
 
@@ -66,18 +66,13 @@ Arguments can be passed by position or by name:
 
 ## During a backup
 
-Queries and writes run as usual. These commands behave differently until `pg_backup_stop`:
+Queries, writes, checkpoints, compactions and drops run as usual. A `pg_backup_start` issued while a checkpoint runs waits for it, and a `CHECKPOINT` issued while `pg_backup_start` records its position waits for that.
 
-| Command | During a backup |
-|---|---|
-| `CHECKPOINT`, `FORCE CHECKPOINT` | Fail with `cannot checkpoint while a backup is in progress`. Run them again after `pg_backup_stop`. A `pg_backup_start` issued while a checkpoint runs waits for it. |
-| Automatic checkpoints | Skipped. |
-| `VACUUM (COMPACT_*)` | Waits until the backup ends, then compacts. It can be canceled while it waits. |
-| `VACUUM (FLUSH_*)` | Runs. |
-| `DROP TABLE`, `DROP INDEX`, `DROP DATABASE` | Commit at once. The files of the dropped objects are removed after `pg_backup_stop`. |
-| Background compaction of tables and indexes | Paused. |
+The segment files the backup's snapshot uses stay until `pg_backup_stop`: the files a compaction replaces and the files of dropped tables, indexes and databases are removed then, instead of at once. Plan disk space for the length of the backup.
 
-Because nothing is checkpointed, the write-ahead log keeps growing, and dropped objects and the segment files tables stop using keep their disk space until `pg_backup_stop`. Plan disk space for the length of the backup.
+## A server directory on an object store
+
+When the server directory is on S3 or another object store, `pg_backup_start` copies its snapshot inside the store, without downloading it. Between `pg_backup_start` and `pg_backup_stop`, copy every object under the server directory's prefix to a new prefix with any S3 tool, then store the `labelfile` text as the object `backup_label` under the new prefix. A server started on the new prefix, with its own WAL directory, restores the backup as in [Restoring](#restoring).
 
 ## Monitoring
 
@@ -91,7 +86,6 @@ Because nothing is checkpointed, the write-ahead log keeps growing, and dropped 
 |---|---|
 | `initializing` | Starting. |
 | `waiting for checkpoint to finish` | A checkpoint is running; the backup starts when it finishes. |
-| `waiting for search maintenance to stop` | Compactions of tables and indexes are being paused. |
 | `waiting for in-flight commits` | Transactions that are committing are finishing; the backup position is recorded next. |
 
 `backup_total`, `backup_streamed`, `tablespaces_total` and `tablespaces_streamed` are always 0. Once `pg_backup_start` has returned, the view no longer shows the backup.
@@ -114,7 +108,7 @@ Storage arrays and filesystems with point-in-time snapshots (LVM, ZFS, btrfs) wo
 
 Keep the whole server directory, with its WAL directory, on one volume. If they span several, snapshot all of them in one crash-consistent operation, such as the provider's multi-volume snapshot; snapshots of the volumes taken one after another do not form a consistent backup.
 
-Taking the snapshot between `pg_backup_start` and `pg_backup_stop` is still advised: while a backup runs, the server checkpoints nothing and removes no files, so the snapshot catches the server directory with fewer changes in progress. Such a snapshot can also be restored to the moment `pg_backup_start` returned, by writing the `labelfile` from `pg_backup_stop` as `backup_label` before starting the server, as in [Restoring](#restoring).
+A snapshot taken between `pg_backup_start` and `pg_backup_stop` can also be restored to the moment `pg_backup_start` returned, by writing the `labelfile` from `pg_backup_stop` as `backup_label` before starting the server, as in [Restoring](#restoring).
 
 ## pgBackRest
 

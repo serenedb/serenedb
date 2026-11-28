@@ -23,9 +23,11 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <filesystem>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -35,6 +37,7 @@
 #include <system_error>
 #include <utility>
 
+#include "backup/backup_label.h"
 #include "backup/pg_control.h"
 #include "catalog/boot.h"
 #include "catalog/database_directory.h"
@@ -93,8 +96,29 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
   const ServerDirectory layout{root, ServerDirectory::DefaultWal(root)};
   auto lock = FileLock::Take(fs.JoinPath(root, backup::kPgVersionFile),
                              FileLock::Mode::Shared);
-  if (!Log::HasSnapshot(fs, layout.SnapshotPath()) ||
-      absl::IsNotFound(lock.status())) {
+  auto snapshot = layout.SnapshotPath();
+  auto wal = layout.WalDir();
+  if (const auto label_path = fs.JoinPath(root, backup::kBackupLabelFile);
+      fs.FileExists(label_path)) {
+    const auto label = backup::ParseBackupLabel(irs::ReadWhole<std::string>(
+      duckdb::QueryContext{context}, fs, label_path));
+    if (!label.ok()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("cannot use \"", label_path, "\": ", label.status().message()));
+    }
+    snapshot = fs.JoinPath(layout.BackupsDir(), label->cut.snapshot);
+    wal.clear();
+    const auto identity = Log::ReadIdentity(fs, snapshot);
+    if (identity && identity->server_id != label->server_id) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("the backup belongs to another server: \"", label_path,
+                "\": it names the server ", label->server_id.Hex(),
+                ", its snapshot the server ", identity->server_id.Hex()));
+    }
+  }
+  if (!Log::HasSnapshot(fs, snapshot) || absl::IsNotFound(lock.status())) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FILE),
       ERR_MSG("\"", info.path, "\" is not a SereneDB server directory"));
@@ -107,8 +131,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
               "\": ", lock.status().message()));
   }
   ForeignLog foreign{
-    .dir = layout.WalDir(),
-    .snapshot = layout.SnapshotPath(),
+    .dir = std::move(wal),
+    .snapshot = std::move(snapshot),
     .lock = std::move(*lock),
   };
   LoggedDatabases databases;

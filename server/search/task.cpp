@@ -118,14 +118,10 @@ auto DoCompaction(std::shared_ptr<Store> idx, irs::CompactionPolicy policy,
 
   bool empty_compaction = false;
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
-    ClaimMaintenance(), policy, progress, empty_compaction, options.get(),
-    &AnnBuildEnv());
+    policy, progress, empty_compaction, options.get(), &AnnBuildEnv());
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");
-  } else if (absl::IsUnavailable(res)) {
-    SDB_TRACE(SEARCH, "compaction of Search index '", idx->GetId(),
-              "' stopped by a backup");
   } else {
     SDB_WARN(SEARCH, "error after running for ", time_ms,
              "ms while compacting Search index '", idx->GetId(),
@@ -146,13 +142,11 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   bool idle) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
   for (auto free = engine.FreeCompactionSlots();
-       free > 0 && !ShouldStop() && !engine.IsBackupActive() &&
-       engine.TryAcquireCompaction();
-       --free) {
+       free > 0 && !ShouldStop() && engine.TryAcquireCompaction(); --free) {
     const bool small = engine.FreeCompactionSlots() == 0;
     runs.push_back(
       s.Run([&engine, weak, small, idle]() -> yaclib::Future<bool> {
-        if (ShouldStop() || engine.IsBackupActive()) {
+        if (ShouldStop()) {
           engine.ReleaseCompaction();
           return yaclib::MakeFuture(false);
         }
@@ -234,7 +228,7 @@ yaclib::Future<> Compact(std::shared_ptr<Target> target) {
     SDB_WARN(SEARCH, "background compaction failed: ",
              duckdb::ErrorData{e}.RawMessage());
   }
-  if (produced && !engine.IsBackupActive()) {
+  if (produced) {
     if (const auto live = target->store.lock()) {
       live->RequestCleanup();
     }

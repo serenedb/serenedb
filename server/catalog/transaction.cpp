@@ -670,7 +670,7 @@ void Transactions::MaintainLog(Lsn end) {
   bool rewrite = false;
   SDB_IF_FAILURE("compact_inside_ddl") { rewrite = true; }
   SDB_IF_FAILURE("compact_inside_drop") { rewrite = true; }
-  if (rewrite && !search::IsBackupActive()) {
+  if (rewrite) {
     if (const auto status = TruncateLog(); !status.ok()) {
       SDB_WARN(GENERAL, "rewriting the WAL failed: ", status.message());
     }
@@ -711,7 +711,7 @@ void Transactions::SettleLog() {
 }
 
 void Transactions::MaintainInBackground(bool snapshot_due) {
-  const bool snapshot = snapshot_due && !search::IsBackupActive();
+  const bool snapshot = snapshot_due;
   auto tail_limit = std::max(Log::kTailBytes, _log->HistoryBytes());
   SDB_IF_FAILURE("fold_log_tail") { tail_limit = 0; }
   if ((!snapshot && _log->TailBytes() <= tail_limit) ||
@@ -746,25 +746,24 @@ absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort,
   if (!_log || _replaying) {
     return absl::OkStatus();
   }
-  const auto pass = _checkpoints.TryEnter();
+  const auto pass =
+    context ? _checkpoints.Enter(*context) : _checkpoints.TryEnter();
   if (!pass) {
-    return absl::FailedPreconditionError(
-      "cannot checkpoint while a backup is in progress");
+    return absl::OkStatus();
   }
-  return Truncate(abort, context);
+  return Truncate(abort, context, nullptr);
 }
 
 absl::Status Transactions::TruncateLog(
-  [[maybe_unused]] const utils::DrainGate::Closed& checkpoints) {
+  [[maybe_unused]] const utils::DrainGate::Closed& checkpoints, Pinned pinned) {
   SDB_ASSERT(checkpoints.get() == &_checkpoints);
-  if (!_log || _replaying) {
-    return absl::OkStatus();
-  }
-  return Truncate(duckdb::CheckpointAbort::NO_ABORT, nullptr);
+  SDB_ASSERT(_log && !_replaying);
+  return Truncate(duckdb::CheckpointAbort::NO_ABORT, nullptr, &pinned);
 }
 
 absl::Status Transactions::Truncate(duckdb::CheckpointAbort abort,
-                                    duckdb::ClientContext* context) {
+                                    duckdb::ClientContext* context,
+                                    const Pinned* pinned) {
   absl::MutexLock round{&_truncate_mutex};
   SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint");
   if (abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_HEADER ||
@@ -779,23 +778,28 @@ absl::Status Transactions::Truncate(duckdb::CheckpointAbort abort,
   {
     const CommittedView view;
     const auto end = CommitEnd(view.Snapshot());
-    if (!end || *end <= _log->Covered()) {
+    if (!pinned && (!end || *end <= _log->Covered())) {
       return absl::OkStatus();
     }
-    covered = *end;
+    covered = std::max(end.value_or(0), _log->Covered());
     SDB_PARK_ONCE_ON_FAILURE("pause_cover_before_collect");
     tables = search::CaptureSnapshot(view);
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
   const auto records = search::SnapshotRecords(tables, context);
-  tables.clear();
+  const auto segments = search::SnapshotSegments(tables);
   _log->Sync(covered);
   if (abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_TRUNCATE ||
       abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FINISH) {
     return absl::AbortedError(
       "Checkpoint aborted before truncate because of debug_checkpoint_abort");
   }
-  _log->WriteSnapshot(covered, records, &CatalogPart, &CompactHistory, false);
+  _log->WriteSnapshot(covered, segments, records, &CatalogPart, &CompactHistory,
+                      false);
+  if (pinned) {
+    (*pinned)(segments);
+  }
+  tables.clear();
   SDB_IF_FAILURE("crash_before_log_truncate") { SDB_IMMEDIATE_ABORT(); }
   _log->DropCovered();
   return absl::OkStatus();
@@ -815,6 +819,7 @@ Transactions::CaptureFinalCheckpoint() {
     tables = search::CaptureSnapshot(view);
   }
   final.records = search::SnapshotRecords(tables, nullptr);
+  final.segments = search::SnapshotSegments(tables);
   _log->Sync(final.covered);
   return final;
 }
@@ -822,8 +827,8 @@ Transactions::CaptureFinalCheckpoint() {
 bool Transactions::WriteFinalCheckpoint(FinalCheckpoint final, bool tidy) {
   absl::MutexLock round{&_truncate_mutex};
   const bool clean = tidy && _log->End() == final.covered;
-  _log->WriteSnapshot(final.covered, final.records, &CatalogPart,
-                      &CompactHistory, clean);
+  _log->WriteSnapshot(final.covered, final.segments, final.records,
+                      &CatalogPart, &CompactHistory, clean);
   if (clean) {
     _log->Clear();
   } else {
@@ -1056,11 +1061,6 @@ void TransactionManager::RefreshStartTime(duckdb::Transaction& transaction) {
 void TransactionManager::Checkpoint(duckdb::ClientContext& context, bool) {
   if (db.IsReadOnly()) {
     return;
-  }
-  if (search::IsBackupActive()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    ERR_MSG("cannot checkpoint while a backup is in progress"),
-                    ERR_HINT("Retry after pg_backup_stop()."));
   }
   if (const auto status = Transactions::Get().TruncateLog(
         duckdb::Settings::Get<duckdb::DebugCheckpointAbortSetting>(context),

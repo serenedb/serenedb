@@ -48,7 +48,10 @@
 namespace sdb::backup {
 namespace {
 
-constexpr uint64_t kSystemIdentifier = 4242;
+const UniqueId kServerId =
+  *UniqueId::FromHex("0123456789abcdef0123456789abcdef");
+const UniqueId kOtherServerId =
+  *UniqueId::FromHex("fedcba9876543210fedcba9876543210");
 constexpr uint64_t kStartLsn = 1000;
 constexpr std::string_view kSegmentFile = "0000000000000001.doc";
 constexpr size_t kPayload = 100;
@@ -90,20 +93,21 @@ class RestoreTest : public ::testing::Test {
     std::filesystem::remove_all(_root);
     std::filesystem::create_directory(_root);
     _layout = std::make_unique<catalog::ServerDirectory>(Layout(_root));
-    WritePgControl(_root.string(), {.system_identifier = kSystemIdentifier});
+    WritePgControl(_root.string(), {.system_identifier = kServerId.High()});
     std::filesystem::create_directories(_layout->BackupsDir());
     _cut.snapshot = absl::StrCat(kSessionPinPrefix, kStartLsn);
     {
       const auto fs = duckdb::FileSystem::CreateLocal();
       catalog::Log log{*fs, _layout->WalDir(), _layout->SnapshotPath()};
       log.Replay([](std::span<uint8_t>) {}, &Whole);
+      log.SetIdentity({.server_id = kServerId});
       log.Append(Bytes(Payload('A')));
       const auto b = log.Append(Bytes(Half('B')));
-      log.WriteSnapshot(b, {}, &Whole, &Keep, false);
+      log.WriteSnapshot(b, {}, {}, &Whole, &Keep, false);
       log.Pin(Pin().string());
       log.Append(Bytes(Half('C')));
       const auto d = log.Append(Bytes(Payload('D')));
-      log.WriteSnapshot(d, {}, &Whole, &Keep, false);
+      log.WriteSnapshot(d, {}, {}, &Whole, &Keep, false);
       log.Append(Bytes(Payload('E')));
     }
     std::filesystem::create_directories(StoreDir());
@@ -141,13 +145,16 @@ class RestoreTest : public ::testing::Test {
 
   std::filesystem::path StoreDir() const { return _layout->StoreDir(); }
 
-  void WriteLabel(uint64_t system_identifier = kSystemIdentifier) const {
+  void WriteLabel(const UniqueId& server_id = kServerId) const {
     std::ofstream out{_root / kBackupLabelFile, std::ios::trunc};
-    out << BuildBackupLabel("test", kStartLsn, system_identifier, absl::Now(),
-                            _cut);
+    out << BuildBackupLabel("test", kStartLsn, server_id, absl::Now(), _cut);
   }
 
-  void Prepare() const { PrepareServerDirectory(*_layout); }
+  static void Prepare(const catalog::ServerDirectory& layout) {
+    PrepareServerDirectory(layout, FindRestore(layout));
+  }
+
+  void Prepare() const { Prepare(*_layout); }
 
   void ExpectRefused(std::string_view message) const {
     EXPECT_EXIT(
@@ -181,7 +188,7 @@ class RestoreTest : public ::testing::Test {
     std::filesystem::copy(_root, reference,
                           std::filesystem::copy_options::recursive);
     absl::Cleanup drop = [&] { std::filesystem::remove_all(reference); };
-    PrepareServerDirectory(Layout(reference));
+    Prepare(Layout(reference));
 
     if (!arm()) {
       GTEST_SKIP() << "this build has no fault injection";
@@ -217,10 +224,39 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   EXPECT_TRUE(Exists(_root / "subscriptions.hold"));
   const auto control = ReadPgControl(_root.string());
   ASSERT_TRUE(control);
-  EXPECT_EQ(control->system_identifier, kSystemIdentifier);
+  EXPECT_EQ(control->system_identifier, kServerId.High());
   EXPECT_EQ(control->checkpoint, kStartLsn);
   EXPECT_FALSE(Exists(_root / kBackupLabelFile));
   EXPECT_TRUE(Exists(_root / "backup_label.old"));
+}
+
+TEST_F(RestoreTest, ACopyWithoutAControlFileGetsOne) {
+  std::filesystem::remove(_root / kPgControlFile);
+  WriteLabel();
+  Prepare();
+  const auto control = ReadPgControl(_root.string());
+  ASSERT_TRUE(control);
+  EXPECT_EQ(control->system_identifier, kServerId.High());
+  EXPECT_EQ(control->checkpoint, kStartLsn);
+}
+
+TEST_F(RestoreTest, TheRestoredNamedBackupIsConsumed) {
+  _cut.snapshot = "nightly";
+  {
+    const auto fs = duckdb::FileSystem::CreateLocal();
+    catalog::Log::Copy(*fs,
+                       (std::filesystem::path{_layout->BackupsDir()} /
+                        absl::StrCat(kSessionPinPrefix, kStartLsn))
+                         .string(),
+                       Pin().string());
+  }
+  const auto kept = std::filesystem::path{_layout->BackupsDir()} / "weekly";
+  WriteFile(kept, 4, 'W');
+  WriteLabel();
+  Prepare();
+  EXPECT_FALSE(Exists(Pin()));
+  EXPECT_TRUE(Exists(kept));
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B')}));
 }
 
 TEST_F(RestoreTest, TheCommitsAfterTheBackupStartAreDiscarded) {
@@ -276,15 +312,9 @@ TEST_F(RestoreTest, RefusesATamperedLabel) {
   ExpectRefused("backup_label checksum does not match");
 }
 
-TEST_F(RestoreTest, RefusesALabelOfAnotherCluster) {
-  WriteLabel(kSystemIdentifier + 1);
-  ExpectRefused("the backup belongs to another cluster");
-}
-
-TEST_F(RestoreTest, RefusesACopyWithoutAControlFile) {
-  WriteLabel();
-  std::filesystem::remove(_root / kPgControlFile);
-  ExpectRefused("the copy has no control file");
+TEST_F(RestoreTest, RefusesALabelOfAnotherServer) {
+  WriteLabel(kOtherServerId);
+  ExpectRefused("the backup belongs to another server");
 }
 
 TEST_F(RestoreTest, RefusesAMissingStoreDirectory) {

@@ -244,10 +244,11 @@ uint64_t PositionSource::SystemIdentifier() {
 uint64_t PositionSource::Issue() {
   absl::MutexLock lock{&_mutex};
   SDB_ASSERT(_state);
-  SDB_ASSERT(!_data_dir.empty());
   auto next = *_state;
   next.checkpoint = std::max(ClockPosition(), _state->checkpoint + 1);
-  WritePgControl(_data_dir, next);
+  if (!_data_dir.empty()) {
+    WritePgControl(_data_dir, next);
+  }
   _state = next;
   return next.checkpoint;
 }

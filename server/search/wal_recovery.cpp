@@ -174,6 +174,18 @@ std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view) {
   return tables;
 }
 
+std::vector<uint64_t> SnapshotSegments(std::span<const TableSnapshot> tables) {
+  std::vector<uint64_t> segments;
+  for (const auto& [store, state] : tables) {
+    for (const auto& unit : state->units) {
+      if (!unit->piece) {
+        segments.push_back(unit->id);
+      }
+    }
+  }
+  return segments;
+}
+
 std::vector<catalog::RecordBuffer> SnapshotRecords(
   std::span<const TableSnapshot> tables, duckdb::ClientContext* context) {
   const auto records = [&](irs::ParallelFor parallel) {

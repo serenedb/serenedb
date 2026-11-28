@@ -6,7 +6,8 @@ owns the server until a handover stop removes it, so a server starts from
 another WAL directory only after such a stop. The WAL and temporary
 directories keep an `OWNER` of their own, locked while the server runs. The
 server signs its requests with the credentials of the AWS default chain, which
-it fetches again before they expire.
+it fetches again before they expire. A backup copies its snapshot inside the
+store, and a copy of the prefix with its label restores in another prefix.
 """
 
 from __future__ import annotations
@@ -275,6 +276,55 @@ def test_a_temporary_directory_is_kept_for_its_server_and_emptied_for_another(
             assert (temp / "OWNER").read_bytes() == _wal_owner(tmp_path / "c")[0]
         finally:
             assert other.stop() == 0, other.output()
+
+
+def test_a_backup_on_an_object_store_restores_in_another_prefix(
+        tmp_path: Path) -> None:
+    with FakeS3() as fake:
+        source_prefix = f"source-{tmp_path.name}"
+        copy_prefix = f"copy-{tmp_path.name}"
+        env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
+                                  "AWS_SECRET_ACCESS_KEY": "secret"})
+        source = _Server(f"s3://bucket/{source_prefix}", tmp_path / "a", env)
+        try:
+            assert source.wait_ready(), source.output()
+            with source.connect() as conn:
+                conn.execute("CREATE TABLE t (a INT)")
+                conn.execute("INSERT INTO t SELECT i FROM range(1000) r(i)")
+                conn.execute("VACUUM (FLUSH_ALL)")
+            with source.connect() as backup:
+                copies = fake.requests["COPY"]
+                backup.execute("SELECT pg_backup_start('s3')")
+                assert fake.requests["COPY"] == copies + 1
+                assert len(fake.keys("bucket", f"{source_prefix}/backups/p")) == 1
+                with source.connect() as conn:
+                    conn.execute("INSERT INTO t VALUES (-1)")
+                    conn.execute("VACUUM (FLUSH_ALL)")
+                    conn.execute("CHECKPOINT")
+                for key in fake.keys("bucket", f"{source_prefix}/"):
+                    fake.replace("bucket", copy_prefix + key[len(source_prefix):],
+                                 fake.objects[("bucket", key)].data)
+                (label,) = backup.execute(
+                    "SELECT labelfile FROM pg_backup_stop()").fetchone()
+            assert not fake.keys("bucket", f"{source_prefix}/backups/p")
+            assert _count(source) == 1001
+        finally:
+            assert source.stop() == 0, source.output()
+        fake.replace("bucket", f"{copy_prefix}/backup_label", label.encode())
+
+        restored = _Server(f"s3://bucket/{copy_prefix}", tmp_path / "b", env,
+                           "--require_existing")
+        try:
+            assert restored.wait_ready(), restored.output()
+            assert _count(restored) == 1000
+        finally:
+            assert restored.stop() == 0, restored.output()
+        keys = fake.keys("bucket", f"{copy_prefix}/")
+        assert f"{copy_prefix}/backup_label" not in keys
+        assert f"{copy_prefix}/backup_label.old" in keys
+        assert not fake.keys("bucket", f"{copy_prefix}/backups/p")
+        assert fake.objects[("bucket", f"{copy_prefix}/OWNER")].data == \
+            _wal_owner(tmp_path / "b")[1]
 
 
 def test_an_object_store_server_directory_needs_local_directories(

@@ -34,6 +34,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "catalog/log.h"
@@ -121,10 +122,11 @@ class LogTest : public ::testing::Test {
     return log;
   }
 
-  static void Snapshot(Log& log, Lsn covered, bool clean = false) {
+  static void Snapshot(Log& log, Lsn covered, bool clean = false,
+                       std::span<const uint64_t> segments = {}) {
     log.WriteSnapshot(
-      covered, {}, [](std::span<uint8_t> payload) { return payload; }, &Keep,
-      clean);
+      covered, segments, {}, [](std::span<uint8_t> payload) { return payload; },
+      &Keep, clean);
   }
 
   struct Written {
@@ -377,6 +379,21 @@ TEST_F(LogTest, ASnapshotKeepsTheIdentityOfItsServer) {
   EXPECT_EQ(_replayed.identity, identity);
   std::filesystem::resize_file(SnapshotPath(), 4);
   EXPECT_THROW(Log::ReadIdentity(*_fs, path), irs::SqlException);
+}
+
+TEST_F(LogTest, ASnapshotListsTheSegmentsItHolds) {
+  const std::vector<uint64_t> segments{7, 3, 11};
+  const auto path = SnapshotPath().string();
+  {
+    auto log = Open();
+    Snapshot(*log, log->Append(Bytes(Payload('A'))), false, segments);
+    log->Append(Bytes(Payload('B')));
+  }
+  EXPECT_EQ(Log::ReadSegments(*_fs, path), segments);
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+  std::filesystem::resize_file(SnapshotPath(), 4);
+  EXPECT_THROW(std::ignore = Log::ReadSegments(*_fs, path), irs::SqlException);
 }
 
 TEST_F(LogTest, ACleanSnapshotStartsWithoutTheLog) {

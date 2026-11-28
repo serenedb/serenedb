@@ -256,14 +256,10 @@ void CompactInvertedStorage(search::Store& inverted,
       };
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
-    absl::Status res;
-    do {
-      res = irs::GetBlocking(
-              inverted.CompactUnsafeAsync(
-                search::GetSearchEngine().Maintenance().Enter(context), policy,
-                tick, empty_compaction, &field_options, env_ptr))
-              .res;
-    } while (absl::IsUnavailable(res));
+    const auto res = irs::GetBlocking(inverted.CompactUnsafeAsync(
+                                        policy, tick, empty_compaction,
+                                        &field_options, env_ptr))
+                       .res;
     context.InterruptCheck();
     if (!res.ok()) {
       THROW_SQL_ERROR(

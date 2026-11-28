@@ -152,8 +152,9 @@ struct SnapshotFile {
 };
 
 Log::Identity IdentityOf(const SnapshotHeader& header) {
-  const std::string_view id{reinterpret_cast<const char*>(header.server_id.data()),
-                            header.server_id.size()};
+  const std::string_view id{
+    reinterpret_cast<const char*>(header.server_id.data()),
+    header.server_id.size()};
   return {.server_id = *UniqueId::FromBytes(id),
           .mock_nonce = header.mock_nonce};
 }
@@ -177,6 +178,55 @@ SnapshotHeader CheckHeader(const std::string& path,
   return Load<SnapshotHeader>(record, 0);
 }
 
+[[noreturn]] void ThrowDamagedSnapshot(const std::string& path) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG("snapshot '", path, "' is damaged"));
+}
+
+std::vector<uint64_t> ParseSegments(const std::string& path,
+                                    std::span<const uint8_t> record) {
+  if (record.size() < sizeof(uint64_t) ||
+      (record.size() - sizeof(uint64_t)) % sizeof(uint64_t) != 0 ||
+      Load<uint64_t>(record, 0) !=
+        (record.size() - sizeof(uint64_t)) / sizeof(uint64_t)) {
+    ThrowDamagedSnapshot(path);
+  }
+  std::vector<uint64_t> segments(Load<uint64_t>(record, 0));
+  std::memcpy(segments.data(), record.data() + sizeof(uint64_t),
+              segments.size() * sizeof(uint64_t));
+  return segments;
+}
+
+std::vector<uint8_t> SegmentsRecord(std::span<const uint64_t> segments) {
+  std::vector<uint8_t> record(sizeof(uint64_t) * (1 + segments.size()));
+  const uint64_t count = segments.size();
+  std::memcpy(record.data(), &count, sizeof(count));
+  std::memcpy(record.data() + sizeof(count), segments.data(),
+              segments.size() * sizeof(uint64_t));
+  return record;
+}
+
+std::vector<uint8_t> ReadRecordAt(duckdb::FileHandle& file,
+                                  const std::string& path, uint64_t at,
+                                  uint64_t file_size) {
+  Header frame;
+  if (file_size < at + sizeof(frame)) {
+    ThrowDamagedSnapshot(path);
+  }
+  file.Read(&frame, sizeof(frame), at);
+  if (frame.size == 0 || file_size - at - sizeof(frame) < frame.size) {
+    ThrowDamagedSnapshot(path);
+  }
+  std::vector<uint8_t> payload(frame.size);
+  file.Read(payload.data(), payload.size(), at + sizeof(frame));
+  if (static_cast<uint32_t>(absl::ExtendCrc32c(
+        RecordSeed(at, frame.size), View(payload.data(), payload.size()))) !=
+      frame.crc) {
+    ThrowDamagedSnapshot(path);
+  }
+  return payload;
+}
+
 SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& path) {
   SnapshotFile snapshot;
   auto bytes = ReadFile(fs, path);
@@ -190,11 +240,15 @@ SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& path) {
       snapshot.records.push_back(payload);
     });
   if (parsed != snapshot.bytes.size() || snapshot.records.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("snapshot '", path, "' is damaged"));
+    ThrowDamagedSnapshot(path);
   }
   snapshot.header = CheckHeader(path, snapshot.records.front());
-  snapshot.records.erase(snapshot.records.begin());
+  if (snapshot.records.size() < 2) {
+    ThrowDamagedSnapshot(path);
+  }
+  ParseSegments(path, snapshot.records[1]);
+  snapshot.records.erase(snapshot.records.begin(),
+                         snapshot.records.begin() + 2);
   return snapshot;
 }
 
@@ -417,23 +471,29 @@ std::optional<Log::Identity> Log::ReadIdentity(duckdb::FileSystem& fs,
   if (!file) {
     return std::nullopt;
   }
-  std::vector<uint8_t> bytes(sizeof(Header) + sizeof(SnapshotHeader));
-  std::optional<SnapshotHeader> header;
-  if (file->GetFileSize() >= bytes.size()) {
-    file->Read(bytes.data(), bytes.size(), 0);
-    ParseRecords(bytes, 0, [&](size_t, size_t, std::span<uint8_t> payload) {
-      header = CheckHeader(snapshot, payload);
-    });
-  }
-  if (!header) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("snapshot '", snapshot, "' is damaged"));
-  }
-  return IdentityOf(*header);
+  return IdentityOf(CheckHeader(
+    snapshot, ReadRecordAt(*file, snapshot, 0, file->GetFileSize())));
+}
+
+std::vector<uint64_t> Log::ReadSegments(duckdb::FileSystem& fs,
+                                        const std::string& snapshot) {
+  const auto file = fs.OpenFile(snapshot, duckdb::FileFlags::FILE_FLAGS_READ);
+  const auto size = file->GetFileSize();
+  const auto header = ReadRecordAt(*file, snapshot, 0, size);
+  CheckHeader(snapshot, header);
+  return ParseSegments(
+    snapshot,
+    ReadRecordAt(*file, snapshot, sizeof(Header) + header.size(), size));
 }
 
 void Log::Read(duckdb::FileSystem& fs, const std::string& dir,
                const std::string& snapshot, Apply apply) {
+  if (dir.empty()) {
+    for (const auto record : ReadSnapshot(fs, snapshot).records) {
+      apply(record);
+    }
+    return;
+  }
   ScanLog(fs, dir, snapshot, apply,
           [&](Lsn, Lsn, std::span<uint8_t> payload) { apply(payload); });
 }
@@ -457,16 +517,7 @@ void Log::Copy(duckdb::FileSystem& fs, const std::string& from,
     fs.SyncDirectory(fs.JoinPath(to, ".."));
     return;
   }
-  auto bytes = ReadFile(fs, from);
-  if (!bytes) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_FILE),
-      ERR_MSG("could not copy \"", from, "\": it does not exist"));
-  }
-  irs::WriteWhole(fs, to,
-                  std::string_view{reinterpret_cast<const char*>(bytes->data()),
-                                   bytes->size()},
-                  true);
+  fs.CopyFile(from, to);
 }
 
 void Log::Discard(duckdb::FileSystem& fs, const std::string& dir,
@@ -861,8 +912,9 @@ void Log::FoldTail(Lsn bound, CatalogPart part, Compact compact) {
   _history_bytes.store(TotalBytes(_history), std::memory_order_relaxed);
 }
 
-void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
-                        CatalogPart part, Compact compact, bool clean) {
+void Log::WriteSnapshot(Lsn covered, std::span<const uint64_t> segments,
+                        std::span<const RecordBuffer> records, CatalogPart part,
+                        Compact compact, bool clean) {
   absl::MutexLock files{&_files_mutex};
   SnapshotHeader header{.version = kSnapshotVersion,
                         .covered = covered,
@@ -888,12 +940,14 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
     parts.emplace_back(catalog);
   }
   auto history = compact(parts);
+  const auto index = SegmentsRecord(segments);
   uint64_t size = 0;
   irs::WriteWhole(
     _fs, _snapshot_path,
     [&](duckdb::FileHandle& file) {
       SnapshotWriter out{file};
       out.Record({reinterpret_cast<const uint8_t*>(&header), sizeof(header)});
+      out.Record(index);
       for (const auto& payload : history) {
         out.Record(payload);
       }

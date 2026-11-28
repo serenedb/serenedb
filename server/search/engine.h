@@ -134,15 +134,11 @@ class SearchEngine final {
     return std::max(0, MaxConcurrentCompactions() - cur);
   }
 
-  bool IsBackupActive() const noexcept { return _maintenance.IsClosed(); }
-  utils::DrainGate& Maintenance() noexcept { return _maintenance; }
-
  private:
   Runtime& _runtime;
   irs::AnnBuildEnv _ann_env;
   irs::AnnBuildEnv _manual_ann_env;
   irs::AnnBuildEnv _snapshot_env;
-  utils::DrainGate _maintenance;
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
   // Live loop futures plus one baseline token held for the engine's lifetime:
@@ -152,18 +148,6 @@ class SearchEngine final {
 };
 
 inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
-
-inline bool IsBackupActive() noexcept {
-  return GetSearchEngine().IsBackupActive();
-}
-
-inline utils::DrainGate::Pass ClaimMaintenance() noexcept {
-  return GetSearchEngine().Maintenance().TryEnter();
-}
-
-inline absl::Status BackupInProgressError() {
-  return absl::UnavailableError("a backup is in progress");
-}
 
 inline uint32_t AnnAcquireWorkers(uint32_t want, uint32_t held) noexcept {
   return GetSearchEngine().AcquireAnnWorkers(want, held);

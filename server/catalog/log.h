@@ -157,6 +157,8 @@ class Log {
   static bool HasSnapshot(duckdb::FileSystem& fs, const std::string& snapshot);
   static std::optional<Identity> ReadIdentity(duckdb::FileSystem& fs,
                                               const std::string& snapshot);
+  static std::vector<uint64_t> ReadSegments(duckdb::FileSystem& fs,
+                                            const std::string& snapshot);
   static void Read(duckdb::FileSystem& fs, const std::string& dir,
                    const std::string& snapshot, Apply apply);
   static void Copy(duckdb::FileSystem& fs, const std::string& from,
@@ -175,8 +177,9 @@ class Log {
 
   Lsn Append(RecordBuffer record);
 
-  void WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
-                     CatalogPart part, Compact compact, bool clean);
+  void WriteSnapshot(Lsn covered, std::span<const uint64_t> segments,
+                     std::span<const RecordBuffer> records, CatalogPart part,
+                     Compact compact, bool clean);
   void DropCovered();
   void Pin(const std::string& to);
   void Clear();

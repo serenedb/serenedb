@@ -41,7 +41,7 @@ namespace {
 
 constexpr std::string_view kStartLocation = "START WAL LOCATION: ";
 constexpr std::string_view kFormatKey = "SERENEDB BACKUP FORMAT: ";
-constexpr std::string_view kSystemKey = "SERENEDB SYSTEM IDENTIFIER: ";
+constexpr std::string_view kServerKey = "SERENEDB SERVER: ";
 constexpr std::string_view kSnapshotKey = "SERENEDB SNAPSHOT: ";
 constexpr std::string_view kChecksumKey = "SERENEDB CHECKSUM: ";
 constexpr std::string_view kSereneDBPrefix = "SERENEDB ";
@@ -77,7 +77,7 @@ std::string WalFileName(uint64_t lsn) {
 }
 
 std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
-                             uint64_t system_identifier, absl::Time start_time,
+                             const UniqueId& server_id, absl::Time start_time,
                              const Cut& cut) {
   const auto one_line = absl::StrReplaceAll(label, {{"\n", " "}, {"\r", " "}});
   const auto lsn = pg::FormatLsn(start_lsn);
@@ -87,7 +87,7 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
     "BACKUP FROM: primary\n", "START TIME: ",
     absl::FormatTime("%Y-%m-%d %H:%M:%S UTC", start_time, absl::UTCTimeZone()),
     "\n", "LABEL: ", one_line, "\n", "START TIMELINE: ", kTimeline, "\n",
-    kFormatKey, kBackupLabelFormat, "\n", kSystemKey, system_identifier, "\n",
+    kFormatKey, kBackupLabelFormat, "\n", kServerKey, server_id.Hex(), "\n",
     kSnapshotKey, cut.snapshot, "\n");
   absl::StrAppend(&out, kChecksumKey, Checksum(out), "\n");
   return out;
@@ -108,7 +108,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
   BackupLabel label;
   bool has_start = false;
   bool has_format = false;
-  bool has_system = false;
+  bool has_server = false;
   bool has_snapshot = false;
   for (auto line :
        absl::StrSplit(text.substr(0, checksum_at), '\n', absl::SkipEmpty())) {
@@ -133,11 +133,14 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
           absl::StrCat("unsupported backup_label format ", format));
       }
       has_format = true;
-    } else if (absl::ConsumePrefix(&value, kSystemKey)) {
-      if (!ParseFields(value, label.system_identifier)) {
+    } else if (absl::ConsumePrefix(&value, kServerKey)) {
+      const auto server_id =
+        UniqueId::FromHex(absl::StripAsciiWhitespace(value));
+      if (!server_id || !*server_id) {
         return Malformed(line);
       }
-      has_system = true;
+      label.server_id = *server_id;
+      has_server = true;
     } else if (absl::ConsumePrefix(&value, kSnapshotKey)) {
       label.cut.snapshot = absl::StripAsciiWhitespace(value);
       if (label.cut.snapshot.empty() || label.cut.snapshot == "." ||
@@ -151,7 +154,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
         absl::StrCat("unknown backup_label line: \"", line, "\""));
     }
   }
-  if (!has_start || !has_format || !has_system || !has_snapshot) {
+  if (!has_start || !has_format || !has_server || !has_snapshot) {
     return absl::InvalidArgumentError(
       "backup_label is missing a required line");
   }

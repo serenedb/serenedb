@@ -240,11 +240,11 @@ statement ok
 ROLLBACK;
 
 
-query
-SELECT count(*) > 0 AS kept FROM glob(getvariable('rrs_bk_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_bk_files);
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left_over FROM glob(getvariable('rrs_bk_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_bk_files);
 ----
-kept
-t
+left_over
+0
 
 
 connection backup

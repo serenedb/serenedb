@@ -80,6 +80,42 @@ TEST(DrainGateTest, EnterWaitsWhileClosed) {
   EXPECT_TRUE(enter.get());
 }
 
+TEST(DrainGateTest, CloseWaitsForAnotherCloser) {
+  DrainGate gate;
+  auto first = irs::DuckDBEngine::Instance().CreateConnection();
+  auto closed = gate.Close(*first->context);
+
+  auto second = irs::DuckDBEngine::Instance().CreateConnection();
+  auto close = std::async(std::launch::async,
+                          [&] { return gate.Close(*second->context); });
+  EXPECT_NE(close.wait_for(kBlocked), std::future_status::ready);
+
+  closed.reset();
+  ASSERT_EQ(close.wait_for(kJoin), std::future_status::ready);
+  auto reclosed = close.get();
+  ASSERT_TRUE(reclosed);
+  EXPECT_FALSE(gate.TryEnter());
+  reclosed.reset();
+  EXPECT_TRUE(gate.TryEnter());
+}
+
+TEST(DrainGateTest, InterruptEndsAWaitForAnotherCloser) {
+  DrainGate gate;
+  auto first = irs::DuckDBEngine::Instance().CreateConnection();
+  const auto closed = gate.Close(*first->context);
+
+  auto second = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *second->context;
+  auto close =
+    std::async(std::launch::async, [&] { return gate.Close(context); });
+  EXPECT_NE(close.wait_for(kBlocked), std::future_status::ready);
+
+  context.Interrupt();
+  ASSERT_EQ(close.wait_for(kJoin), std::future_status::ready);
+  EXPECT_THROW(std::ignore = close.get(), duckdb::InterruptException);
+  EXPECT_TRUE(gate.IsClosed());
+}
+
 TEST(DrainGateTest, InterruptEndsEnter) {
   DrainGate gate;
   auto closer = irs::DuckDBEngine::Instance().CreateConnection();

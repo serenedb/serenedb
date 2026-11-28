@@ -51,7 +51,7 @@ The server's databases share one write-ahead log, so a checkpoint of any of them
 
 In an attached DuckDB database file, the default `CHECKPOINT` command fails if other write transactions are running on the file. `FORCE CHECKPOINT` stops new transactions on it from starting, waits for the running write transactions to finish, and then checkpoints.
 
-While a [backup](../../../operations/backup.md) is in progress, between `pg_backup_start` and `pg_backup_stop`, both `CHECKPOINT` and `FORCE CHECKPOINT` fail with `cannot checkpoint while a backup is in progress`. Run the checkpoint again after `pg_backup_stop`. A `pg_backup_start` issued while a checkpoint is running waits for it to finish.
+Checkpoints run during a [backup](../../../operations/backup.md) too. A `pg_backup_start` issued while a checkpoint is running waits for it to finish, and a checkpoint issued while `pg_backup_start` records its position waits for that.
 
 Also see the related [`PRAGMA` option](../../../configuration/pragmas.md#force-checkpoint) for further behavior modification.
 

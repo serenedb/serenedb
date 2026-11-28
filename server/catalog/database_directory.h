@@ -39,8 +39,6 @@ duckdb::FileSystem& StorageFileSystem();
 void CreateDirectory(const std::string& path);
 void RemoveTreeOrThrow(const std::string& path);
 bool RemoveTree(const std::string& path) noexcept;
-void DeferRemovals() noexcept;
-void ResumeRemovals();
 void BeginStorageWork() noexcept;
 void EndStorageWork(bool tidy) noexcept;
 bool StorageTidy() noexcept;

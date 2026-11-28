@@ -83,8 +83,7 @@ enum class Reindex : int64_t {
 enum class BaseBackup : int64_t {
   Initializing = 1,
   WaitingForCheckpoint = 2,
-  WaitingForMaintenance = 3,
-  WaitingForCommits = 4,
+  WaitingForCommits = 3,
 };
 
 }  // namespace progress_phase

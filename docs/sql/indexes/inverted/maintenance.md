@@ -121,11 +121,11 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 ## Durability {#durability}
 
-A commit is durable once the server's write-ahead log holds it; one log serves every database. Once the log written since the last snapshot reaches [`max_wal_size`](../../../configuration/overview.md) (1 GB by default), or the size of the last snapshot if that is larger, the server writes a new snapshot of the catalog and of every table, with the rows, deletes and updates they hold in memory, and removes the log files the snapshot covers, while writes go on. `CHECKPOINT` takes a snapshot at once. After a crash, the server reads the snapshot and replays the log written after it. It also lists every table's directory and removes the files that no committed transaction refers to, such as those of writes the crash cut short; after a clean shutdown it starts without listing them.
+A commit is durable once the server's write-ahead log (WAL) holds it; one WAL serves every database. Once the WAL written since the last snapshot reaches [`max_wal_size`](../../../configuration/overview.md) (1 GB by default), or the size of the last snapshot if that is larger, the server writes a new snapshot of the catalog and of every table, with the rows, deletes and updates they hold in memory, and removes the WAL files the snapshot covers, while writes go on. `CHECKPOINT` takes a snapshot at once. After a crash, the server reads the snapshot and replays the WAL written after it. It also lists every table's directory and removes the files that no committed transaction refers to, such as those of writes the crash cut short; after a clean shutdown it starts without listing them.
 
-A server left idle settles on its own: once every table has written the rows it held in memory to segments (see [Background compaction](#background-compaction)) and nothing commits, the server removes the log files it no longer needs, so the log stays small and a restart replays little.
+A server left idle settles on its own: once every table has written the rows it held in memory to segments (see [Background compaction](#background-compaction)) and nothing commits, the server removes the WAL files it no longer needs, so the WAL stays small and a restart replays little.
 
-A query sees every row its snapshot sees, including the rows a table still holds in memory, and reads them there, searches included: a query never writes. After a crash, the server replays those rows from the log.
+A query sees every row its snapshot sees, including the rows a table still holds in memory, and reads them there, searches included: a query never writes. After a crash, the server replays those rows from the WAL.
 
 ## Session settings {#session-settings}
 

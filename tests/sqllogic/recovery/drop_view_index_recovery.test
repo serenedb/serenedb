@@ -68,7 +68,7 @@ count
 
 connection after_drop
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*'))
        - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files') AS leftover;
 ----
 leftover

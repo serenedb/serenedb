@@ -21,8 +21,11 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
+#include "catalog/boot.h"
+#include "catalog/database_directory.h"
 #include "search/engine.h"
 #include "server/utils/lockfile.h"
 
@@ -31,11 +34,15 @@ namespace sdb {
 class Runtime;
 
 struct StorageConfig {
-  std::string directory;
+  catalog::ServerDirectory layout;
   std::string hba_config;
   bool default_database = true;
+  bool require_existing = false;
+  std::string abandon_wal;
 };
 
+catalog::ServerDirectory ReadServerDirectory(std::string directory);
+std::string ReadTempDirectory(const std::string& directory);
 StorageConfig ReadStorageConfig();
 
 class Storage final {
@@ -44,12 +51,17 @@ class Storage final {
   ~Storage();
 
  private:
-  bool Lock(const std::string& directory);
+  void Lock(const catalog::ServerDirectory& layout);
   void Close() noexcept;
 
   Runtime& _runtime;
   FileLock _lock;
+  std::optional<catalog::LockedOwner> _wal_owner;
+  std::optional<catalog::LockedOwner> _temp_owner;
   search::SearchEngine _search;
+  std::string _directory;
+  bool _remote = false;
+  bool _started = false;
 };
 
 }  // namespace sdb

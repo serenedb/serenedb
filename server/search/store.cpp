@@ -65,6 +65,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
+#include "catalog/pins.h"
 #include "catalog/record.h"
 #include "catalog/transaction.h"
 #include "connector/column_id.h"
@@ -144,14 +145,35 @@ void VisitSegmentFiles(const TableState& state, Visit&& visit) {
   }
 }
 
-bool RemoveSegments(const std::string& root,
-                    std::span<const irs::ReleasedSegment> segments) {
-  auto& fs = catalog::StorageFileSystem();
+std::vector<std::string> UnpinnedFiles(
+  const std::string& root, std::vector<irs::ReleasedSegment>& segments) {
+  auto& pins = catalog::Pins::Get();
   std::vector<std::string> files;
-  for (const auto& segment : segments) {
-    absl::c_move(irs::SegmentFiles(segment.name, segment.kinds),
-                 std::back_inserter(files));
+  std::erase_if(segments, [&](const irs::ReleasedSegment& segment) {
+    auto names = irs::SegmentFiles(segment.name, segment.kinds);
+    uint64_t id = 0;
+    if (irs::ParseSegmentId(segment.name, id) &&
+        pins.ParkIfHeld(root, id, names)) {
+      return true;
+    }
+    absl::c_move(names, std::back_inserter(files));
+    return false;
+  });
+  return files;
+}
+
+void RemoveUnpinned(const std::string& root, irs::ReleasedSegments& released) {
+  auto segments = released.Take();
+  const auto files = UnpinnedFiles(root, segments);
+  if (!irs::RemoveIndexFiles(catalog::StorageFileSystem(), root, files)) {
+    released.Return(std::move(segments));
   }
+}
+
+bool RemoveSegments(const std::string& root,
+                    std::vector<irs::ReleasedSegment> segments) {
+  auto& fs = catalog::StorageFileSystem();
+  const auto files = UnpinnedFiles(root, segments);
   SDB_IF_FAILURE("pause_removal_midway") {
     if (!files.empty()) {
       fs.RemoveFile(fs.JoinPath(root, *absl::c_min_element(files)));
@@ -233,9 +255,10 @@ Store::~Store() {
     catalog::BeginStorageWork();
     _released->Drop(
       [root = _root](std::vector<irs::ReleasedSegment> segments) noexcept {
-        catalog::RemoveStorage([root, segments = std::move(segments)] {
-          return RemoveSegments(root, segments);
-        });
+        catalog::RemoveStorage(
+          root, [root, segments = std::move(segments)] mutable {
+            return RemoveSegments(root, std::move(segments));
+          });
       });
   } else {
     _released->Close();
@@ -255,7 +278,7 @@ bool Store::CloseFiles() {
   const auto head = _table->HeadState();
   _table.reset();
   _writer.reset();
-  irs::RemoveReleased(catalog::StorageFileSystem(), _root, *_released);
+  RemoveUnpinned(_root, *_released);
   _released->Close();
   return _released->Empty();
 }
@@ -526,8 +549,7 @@ bool Store::RewriteDirtiest() {
     };
   bool empty = false;
   const auto folded = irs::GetBlocking(CompactUnsafeAsync(
-    ClaimMaintenance(), fold, [] { return true; }, empty, options.get(),
-    &AnnBuildEnv()));
+    fold, [] { return true; }, empty, options.get(), &AnnBuildEnv()));
   return folded.res.ok() && !empty;
 }
 
@@ -641,7 +663,7 @@ bool Store::WriteOutLocked() {
     _table->PieceView(pieces, /*keep_deleted=*/false), _writer->NextSegmentId(),
     field_options.get(), [] { return true; }, &AnnBuildEnv()));
   SDB_IF_FAILURE("search_cleanup_during_write_out") {
-    irs::RemoveReleased(catalog::StorageFileSystem(), _root, *_released);
+    RemoveUnpinned(_root, *_released);
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_write_out");
   std::vector<uint64_t> ids;
@@ -799,10 +821,6 @@ void Store::ReindexReleaser::operator()(Store* store) const noexcept {
 }
 
 ResultWithTime Store::CleanupUnsafe() {
-  const auto maintenance = ClaimMaintenance();
-  if (!maintenance) {
-    return {absl::OkStatus(), 0};
-  }
   const auto begin = std::chrono::steady_clock::now();
   if (_table) {
     auto& transactions = catalog::Transactions::Get();
@@ -833,7 +851,7 @@ absl::Status Store::RemoveReleased() {
       return absl::OkStatus();
     }
     duckdb::TaskScheduler::BlockingScope blocking;
-    irs::RemoveReleased(catalog::StorageFileSystem(), _root, *_released);
+    RemoveUnpinned(_root, *_released);
   } catch (const std::exception& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", _id, ": ",
@@ -846,27 +864,17 @@ void Store::RequestCleanup() noexcept {
   RunCoalesced(&Store::_cleanup_requests, &DoCleanup, "cleaning up its files");
 }
 
-auto Store::CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
-                               const irs::CompactionPolicy& policy,
+auto Store::CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options,
                                const irs::AnnBuildEnv* env)
   -> yaclib::Future<ResultWithTime> {
   empty_compaction = false;
-  if (!maintenance) {
-    co_return ResultWithTime{BackupInProgressError(), 0};
-  }
-  const irs::MergeWriter::FlushProgress interruptible = [&progress] {
-    return !IsBackupActive() && progress();
-  };
   const auto begin = std::chrono::steady_clock::now();
-  auto result = co_await CompactUnsafeImpl(
-    policy, interruptible, empty_compaction, field_options, env);
+  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
+                                           field_options, env);
   const auto time_ms = MillisSince(begin);
-  if (result.ok() && empty_compaction && IsBackupActive()) {
-    co_return ResultWithTime{BackupInProgressError(), time_ms};
-  }
   _maintenance.RecordCompaction(result, empty_compaction, time_ms);
   co_return ResultWithTime{std::move(result), time_ms};
 }
@@ -955,7 +963,6 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     return !context.InterruptPending();
   };
   const auto target = std::max<uint32_t>(1, target_segments);
-  GetSearchEngine().Maintenance().Enter(context).reset();
   WriteOut();
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv();
@@ -1029,13 +1036,10 @@ yaclib::Future<Store::GroupCompaction> Store::CompactGroupAsync(
     }
   };
   bool empty = false;
-  do {
-    const auto field_options = CompactionOptions();
-    result.status = (co_await CompactUnsafeAsync(
-                       GetSearchEngine().Maintenance().Enter(context), group,
-                       progress, empty, field_options.get(), env))
-                      .res;
-  } while (absl::IsUnavailable(result.status));
+  const auto field_options = CompactionOptions();
+  result.status = (co_await CompactUnsafeAsync(group, progress, empty,
+                                               field_options.get(), env))
+                    .res;
   result.merged = !empty;
   co_return result;
 }
@@ -1527,7 +1531,7 @@ std::shared_ptr<const irs::SegmentReaderImpl> Store::ReplayPiece(
     }
   }
   SDB_ENSURE(PieceDocs(piece.trx) == rows, "table ", _id, ": ", rows,
-             " rows of its log indexed into ", PieceDocs(piece.trx),
+             " rows of its WAL indexed into ", PieceDocs(piece.trx),
              " documents");
   return piece.trx.SealPiece(piece.id);
 }

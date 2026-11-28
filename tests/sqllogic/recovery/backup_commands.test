@@ -99,7 +99,7 @@ INSERT INTO bcmd_db.public.t VALUES (1);
 
 statement ok
 CREATE TEMP TABLE bcmd_files AS
-SELECT 'before' AS owner, file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*');
+SELECT 'before' AS owner, file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*');
 
 
 statement ok
@@ -107,7 +107,7 @@ VACUUM (FLUSH_TABLE) bcmd_gone;
 
 
 statement ok
-INSERT INTO bcmd_files SELECT 'gone', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+INSERT INTO bcmd_files SELECT 'gone', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*')
 WHERE file NOT IN (SELECT file FROM bcmd_files);
 
 
@@ -116,7 +116,7 @@ VACUUM (FLUSH_TABLE) bcmd_db.public.t;
 
 
 statement ok
-INSERT INTO bcmd_files SELECT 'other', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+INSERT INTO bcmd_files SELECT 'other', file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*')
 WHERE file NOT IN (SELECT file FROM bcmd_files);
 
 
@@ -133,19 +133,19 @@ t
 
 
 connection default
-statement error
-CHECKPOINT;
-----
-db error: ERROR: cannot checkpoint while a backup is in progress
-HINT: Retry after pg_backup_stop().
+statement ok
+CREATE TEMP TABLE bcmd_pinned AS
+SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*');
 
 
 connection default
-statement error
+statement ok
+CHECKPOINT;
+
+
+connection default
+statement ok
 FORCE CHECKPOINT;
-----
-db error: ERROR: cannot checkpoint while a backup is in progress
-HINT: Retry after pg_backup_stop().
 
 
 connection default
@@ -165,76 +165,15 @@ DROP DATABASE bcmd_db;
 
 connection default
 statement ok
-SELECT pg_sleep(1);
-
-
-connection default
-query
-SELECT
-  count(*) FILTER (WHERE owner = 'gone') > 0 AS table_kept,
-  count(*) FILTER (WHERE owner = 'other') > 0 AS database_kept
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*') JOIN bcmd_files USING (file);
-----
-table_kept	database_kept
-t	t
-
-
-connection default
-statement ok
-ALTER TABLE bcmd_merge SET (compaction_interval = 100);
-
-
-connection compactor
-statement async ok
 VACUUM (COMPACT_TABLE) bcmd_merge;
 
 
 connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS compacting FROM pg_stat_activity
-WHERE query LIKE 'VACUUM (COMPACT_TABLE) bcmd_merge%' AND state = 'active';
-----
-compacting
-1
-
-
-connection default
-statement ok
-SELECT pg_sleep(1);
-
-
-connection default
 query
-SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('bcmd_merge') WHERE column_name = 'id';
+SELECT count(DISTINCT row_group_id) < 4 AS merged FROM pragma_storage_info('bcmd_merge') WHERE column_name = 'id';
 ----
-segments
-4
-
-
-connection default
-statement ok
-CREATE TEMP TABLE bcmd_wal AS
-SELECT min(regexp_extract(file, '[^/]+$')) AS oldest
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
-
-
-connection default
-query
-SELECT oldest IS NOT NULL AS has_wal FROM bcmd_wal;
-----
-has_wal
+merged
 t
-
-
-connection holder
-query
-SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
-----
-label
-t
-
-
-wait
 
 
 connection default
@@ -256,10 +195,24 @@ t
 
 
 connection default
+statement ok
+SELECT pg_sleep(1);
+
+
+connection default
 query
-SELECT count(DISTINCT row_group_id) < 4 AS merged FROM pragma_storage_info('bcmd_merge') WHERE column_name = 'id';
+SELECT count(*) AS missing FROM bcmd_pinned
+WHERE file NOT IN (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*'));
 ----
-merged
+missing
+0
+
+
+connection holder
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
 t
 
 
@@ -268,10 +221,19 @@ query ok retry 40 backoff 250ms
 SELECT
   count(*) FILTER (WHERE owner = 'gone') AS table_files,
   count(*) FILTER (WHERE owner = 'other') AS database_files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*') JOIN bcmd_files USING (file);
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*') JOIN bcmd_files USING (file);
 ----
 table_files	database_files
 0	0
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) > 0 AS freed FROM bcmd_pinned
+WHERE file NOT IN (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*'));
+----
+freed
+t
 
 
 connection default

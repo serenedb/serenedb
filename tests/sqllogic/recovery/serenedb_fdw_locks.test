@@ -14,7 +14,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfl_copy && mkdir -p $__TEST_DIR__/sfl_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfl_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfl_copy/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfl_copy/
+rm -rf $__TEST_DIR__/sfl_copy && mkdir -p $__TEST_DIR__/sfl_copy && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfl_copy/
 
 connection holder
 statement ok
@@ -34,7 +34,7 @@ statement error
 CREATE SERVER sfl_owned FOREIGN DATA WRAPPER serenedb_fdw
   OPTIONS (path '${__TEST_DIR__}/sfl_copy', database '${__DATABASE__}');
 ----
-db error: ERROR: could not attach "<slt:ignore>": the data directory is in use: '<slt:ignore>' is locked by a running server; stop it first
+db error: ERROR: could not attach "<slt:ignore>": the server directory is in use: '<slt:ignore>' is locked by a running server; stop it first
 
 
 query

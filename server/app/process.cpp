@@ -81,8 +81,8 @@ void ParseOptions(int argc, char* argv[]) {
   absl::SetProgramUsageMessage(
     "serened -- SereneDB pg-wire server\n\n"
     "Usage:\n"
-    "  serened <data-dir> [--flag=value ...]\n"
-    "  serenedb server <data-dir> [--flag=value ...]\n"
+    "  serened <server-dir> [--flag=value ...]\n"
+    "  serenedb server <server-dir> [--flag=value ...]\n"
     "  serenedb shell [shell args ...]\n"
     "  serenedb psql  [psql args ...]\n\n"
     "Flag sources (absl built-in, full definitions under --helpfull):\n"
@@ -109,7 +109,7 @@ void ParseOptions(int argc, char* argv[]) {
   } else if (positionals.size() > 2) {
     // Runs before the DuckDB-backed log is up (SDB_* would crash), so report
     // this CLI usage error straight to stderr, like absl's own flag errors.
-    std::fputs("serened: expected at most one positional data-dir arg\n",
+    std::fputs("serened: expected at most one positional server-dir arg\n",
                stderr);
     irs::FatalErrorExit();
   }
@@ -127,6 +127,7 @@ void WaitForShutdown() {
   SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 #ifdef SDB_FAULT_INJECTION
   SDB_PARK_ONCE_ON_FAILURE("hold_shutdown");
+  SDB_IF_FAILURE("handover_at_stop") { lifecycle::BeginHandover(); }
   duckdb::FaultPoints::Clear();
 #endif
 }

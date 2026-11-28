@@ -20,11 +20,26 @@
 
 #pragma once
 
+#include <optional>
+#include <string>
+
+#include "backup/backup_label.h"
 #include "catalog/boot.h"
+#include "catalog/log.h"
 
 namespace sdb::backup {
 
-void PrepareDataDirectory(const catalog::DataDirectory& layout);
+struct PendingRestore {
+  std::string label_path;
+  BackupLabel label;
+  std::string pin;
+  catalog::Log::Identity identity;
+};
+
+std::optional<PendingRestore> FindRestore(
+  const catalog::ServerDirectory& layout);
+void PrepareServerDirectory(const catalog::ServerDirectory& layout,
+                            const std::optional<PendingRestore>& restore);
 
 bool SubscriptionsHeld();
 void ReleaseSubscriptionHold();

@@ -23,9 +23,11 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <filesystem>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -35,6 +37,7 @@
 #include <system_error>
 #include <utility>
 
+#include "backup/backup_label.h"
 #include "backup/pg_control.h"
 #include "catalog/boot.h"
 #include "catalog/database_directory.h"
@@ -56,7 +59,7 @@ std::string DatabaseName(const duckdb::AttachOptions& options) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FDW_INVALID_OPTION_NAME),
         ERR_MSG("invalid option \"", key, "\""),
-        ERR_HINT("A SereneDB data directory takes the options path and ",
+        ERR_HINT("A SereneDB server directory takes the options path and ",
                  kDatabaseOption, "."));
     }
     name = value.ToString();
@@ -86,17 +89,39 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
   const auto root = std::filesystem::canonical(info.path, ec).string();
   if (ec) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("could not open data directory \"", info.path,
+                    ERR_MSG("could not open server directory \"", info.path,
                             "\": ", ec.message()));
   }
   auto& fs = duckdb::FileSystem::GetFileSystem(context);
-  const DataDirectory layout{root};
+  const ServerDirectory layout{root, ServerDirectory::DefaultWal(root)};
   auto lock = FileLock::Take(fs.JoinPath(root, backup::kPgVersionFile),
                              FileLock::Mode::Shared);
-  if (!fs.DirectoryExists(layout.LogDir()) || absl::IsNotFound(lock.status())) {
+  auto snapshot = layout.SnapshotPath();
+  auto wal = layout.WalDir();
+  if (const auto label_path = fs.JoinPath(root, backup::kBackupLabelFile);
+      fs.FileExists(label_path)) {
+    const auto label = backup::ParseBackupLabel(irs::ReadWhole<std::string>(
+      duckdb::QueryContext{context}, fs, label_path));
+    if (!label.ok()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("cannot use \"", label_path, "\": ", label.status().message()));
+    }
+    snapshot = fs.JoinPath(layout.BackupsDir(), label->cut.snapshot);
+    wal.clear();
+    const auto identity = Log::ReadIdentity(fs, snapshot);
+    if (identity && identity->server_id != label->server_id) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("the backup belongs to another server: \"", label_path,
+                "\": it names the server ", label->server_id.Hex(),
+                ", its snapshot the server ", identity->server_id.Hex()));
+    }
+  }
+  if (!Log::HasSnapshot(fs, snapshot) || absl::IsNotFound(lock.status())) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FILE),
-      ERR_MSG("\"", info.path, "\" is not a SereneDB data directory"));
+      ERR_MSG("\"", info.path, "\" is not a SereneDB server directory"));
   }
   if (!lock.ok()) {
     THROW_SQL_ERROR(
@@ -105,19 +130,13 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
       ERR_MSG("could not attach \"", info.path,
               "\": ", lock.status().message()));
   }
-  if (Log::IsEarlierFormat(fs, layout.LogDir())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("\"", info.path,
-              "\" was written with an earlier layout of the data directory, "
-              "which this build cannot read"));
-  }
   ForeignLog foreign{
-    .dir = layout.LogDir(),
+    .dir = std::move(wal),
+    .snapshot = std::move(snapshot),
     .lock = std::move(*lock),
   };
   LoggedDatabases databases;
-  Log::Read(fs, foreign.dir, [&](std::span<uint8_t> payload) {
+  Log::Read(fs, foreign.dir, foreign.snapshot, [&](std::span<uint8_t> payload) {
     ReadDatabases(context, CatalogPart(payload), databases);
   });
   const auto it = absl::c_find_if(databases, [&](const auto& database) {
@@ -141,7 +160,7 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
     return id == foreign.database ? &catalog : nullptr;
   };
   Log::Read(duckdb::FileSystem::GetFileSystem(context), foreign.dir,
-            [&](std::span<uint8_t> payload) {
+            foreign.snapshot, [&](std::span<uint8_t> payload) {
               ReplayRecord(context, target, payload);
             });
   const auto transaction = catalog.GetCatalogTransaction(context);

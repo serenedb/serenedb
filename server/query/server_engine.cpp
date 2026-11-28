@@ -73,6 +73,7 @@
 #include "server/utils/build_info.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
+#include "storage/storage.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
@@ -87,30 +88,32 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "pool at runtime.");
 
 ABSL_DECLARE_FLAG(std::string, server_directory);
+ABSL_DECLARE_FLAG(std::string, max_temp_directory_size);
 
 namespace sdb::server::query {
 namespace {
 
 void ConfigureEngineDBConfig(duckdb::DBConfig& config,
-                             const std::string& datadir) {
+                             catalog::ServerDirectory layout) {
   duckdb::FunctionExpression::SetBuiltinPrefix({});
   config.options.system_object_prefix = "sdb_";
   config.options.product_name = "SereneDB";
   config.options.product_version = SERENEDB_VERSION;
   config.options.product_source_id = build::Commit();
   config.options.manage_extensions = false;
+  const duckdb::Value directory{layout.directory};
   config.create_internal_catalog =
-    [layout = catalog::DataDirectory{datadir}](duckdb::AttachedDatabase& db) {
+    [layout = std::move(layout)](duckdb::AttachedDatabase& db) {
       return catalog::CreateInternalCatalog(db, layout);
     };
   config.create_client_context = CreateClientContext;
   config.create_secret_storage = catalog::CreateSecretStorage;
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
-  config.AddExtensionOption(
-    duckdb::Identifier{"data_directory"}, "Shows the data directory.",
-    duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
-    duckdb::SetScope::AUTOMATIC, true);
+  config.AddExtensionOption(duckdb::Identifier{"data_directory"},
+                            "Shows the server directory.",
+                            duckdb::LogicalType::VARCHAR, directory, nullptr,
+                            nullptr, duckdb::SetScope::AUTOMATIC, true);
   connector::RegisterIResearchReplacementScan(config);
 }
 
@@ -121,17 +124,18 @@ void ConfigureShellDBConfig(duckdb::DBConfig& config) {
 }
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
-  // Server-mode DuckDB state lives under the datadir, never in cwd-relative
-  // temp files or ~/.duckdb fallbacks.
-  const auto datadir =
+  const auto directory =
     lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
-  ConfigureEngineDBConfig(config, datadir);
-  config.SetOptionByName(
-    "temp_directory",
-    duckdb::Value{duckdb::FileSystem::JoinPath(datadir, "tmp")});
+  ConfigureEngineDBConfig(config, ReadServerDirectory(directory));
+  const auto temp = ReadTempDirectory(directory);
+  config.SetOptionByName("temp_directory", duckdb::Value{temp});
+  if (const auto size = absl::GetFlag(FLAGS_max_temp_directory_size);
+      !size.empty()) {
+    config.SetOptionByName("max_temp_directory_size", duckdb::Value{size});
+  }
   config.SetOptionByName(
     "secret_directory",
-    duckdb::Value{duckdb::FileSystem::JoinPath(datadir, "secrets")});
+    duckdb::Value{duckdb::FileSystem::JoinPath(temp, "secrets")});
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset, and publish the resolved
@@ -219,6 +223,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   pg::RegisterSystemTableScanFunction(db);
 
   connector::RegisterSereneDBOptimizers(db);
+
+  for (const auto name : Registry<SqlFunctions>::Names()) {
+    Registry<SqlFunctions>::Find(name)->register_functions(db);
+  }
 
   duckdb::IndexType inverted;
   inverted.name = catalog::kInvertedIndexTypeName;

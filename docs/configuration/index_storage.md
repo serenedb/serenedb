@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The files of tables and inverted indexes live in the [tablespace](../sql/statements/create_tablespace/index.md) they are created in: the data directory by default, another local disk, or an object store.
+The files of tables and inverted indexes live in the [tablespace](../sql/statements/create_tablespace/index.md) they are created in: the server directory by default, another local disk, or an object store.
 
 ## Choosing the location
 
@@ -13,7 +13,7 @@ A tablespace's location is a local directory or an object store URL:
 
 | Location | Index files live in |
 | -------- | ------------------- |
-| `pg_default`, the default tablespace | the data directory |
+| `pg_default`, the default tablespace | the server directory |
 | `/mnt/fast/indexes` | that directory |
 | `s3://bucket/prefix` | an S3 bucket, or a bucket of an S3-compatible store, under that prefix |
 | `az://container/prefix` | an Azure Blob Storage container, under that prefix |
@@ -30,7 +30,7 @@ The server reads and writes index files with the credentials of a persistent sec
 
 The secret has to be persistent: the server opens tables and indexes at startup and maintains them in the background, outside any session. See [AWS Credentials](./aws_credentials.md) for the keys to use and for S3-compatible endpoints. For Azure, create a persistent secret of `TYPE azure` whose scope covers the container and prefix, for example with a `CONNECTION_STRING`; the container has to exist.
 
-Rotate credentials that expire, such as an S3 `SESSION_TOKEN` or an Azure shared access signature, by replacing the secret with `CREATE OR REPLACE PERSISTENT SECRET` before they expire. A request the store refuses with the old credentials is sent again with the replaced secret, for files that are already open and for background flushes and merges as well. A flush that cannot write its files, for example because the credentials expired before the secret was replaced, fails: its rows stay readable and in the log, and the next flush writes them. A server starts with the secret as it was last replaced.
+Rotate credentials that expire, such as an S3 `SESSION_TOKEN` or an Azure shared access signature, by replacing the secret with `CREATE OR REPLACE PERSISTENT SECRET` before they expire. A request the store refuses with the old credentials is sent again with the replaced secret, for files that are already open and for background flushes and merges as well. A flush that cannot write its files, for example because the credentials expired before the secret was replaced, fails: its rows stay readable and in the write-ahead log (WAL), and the next flush writes them. A server starts with the secret as it was last replaced.
 
 ## Caching
 
@@ -46,7 +46,7 @@ When a server opens an index on an object store, it loads the term dictionaries 
 - The cache shares `memory_limit` with queries: it uses memory that queries leave free, and blocks it holds are evicted when queries need the memory. Blocks of files on an object store keep `external_file_cache_min_memory`, 5% of `memory_limit` by default: below it, queries spill to the temporary directory first, so a large join or aggregate does not empty the cache of the blocks every search reads. The cache goes below it only when queries cannot spill.
 - A query reads data in place from a cached block. Data it needs in one piece that spans two blocks, such as a block of a column, is copied out of them once, and later queries read the same copy: the cache counts it in `external_file_cache_used_bytes` and evicts it, before the blocks, when queries need the memory.
 - An open index also keeps part of the term dictionaries of each segment in memory, and more of them for an index on an object store or in memory. This memory counts against `memory_limit` too: opening an index at the limit evicts other memory or fails with an out-of-memory error.
-- A block of a file on an object store keeps a copy in the temporary directory (`temp_directory`) once it is evicted, so reading it again costs a disk read instead of a request. The copy is written once and stays while the file version is cached. `external_file_cache_spill_size` is the disk space the copies may take, half of `max_temp_directory_size` by default; past it, evicted blocks are dropped and fetched again, and `0` drops them all, as `external_file_cache_spill = false` does. The last block of a file, when it is shorter than the others, may keep no copy and is then fetched again. Blocks of index files on local disk are dropped, and blocks of in-memory indexes are always kept.
+- A block of a file on an object store keeps a copy in the temporary directory (`temp_directory`) once it is evicted, so reading it again costs a disk read instead of a request. The copy is written once and stays while the file version is cached, and after it too: it is named after the file, the version the store tags it with and the block, so the server reads it again after a restart, and a file the server writes keeps copies under the version the store gave it. Copies of a version the server replaced or removed go with it. `external_file_cache_spill_size` is the disk space the copies may take, half of `max_temp_directory_size` by default: copies no cached block holds make room for new ones, least recently used first, and past it, evicted blocks are dropped and fetched again; `0` drops them all, as `external_file_cache_spill = false` does. A file the store does not tag with a version keeps copies only while the server runs, and its last block, when it is shorter than the others, keeps none. Blocks of index files on local disk are dropped, and blocks of in-memory indexes are always kept.
 - `enable_external_file_cache = false` drops the cached blocks of files on object stores and the copies made from them, and flushes and merges stop keeping the files they write in the cache; index files are still read through it.
 
 The `sdb_metrics` system table reports how the cache and the uploads do, in rows with a `NULL` `relation_id`:

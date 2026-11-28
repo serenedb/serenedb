@@ -27,13 +27,13 @@ statement ok
 INSERT INTO sfd_shop.public.notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
 
 statement ok
-CREATE TEMP TABLE sfd_before AS SELECT file FROM glob('${SDB_DATADIR}/engine_v1/store/*');
+CREATE TEMP TABLE sfd_before AS SELECT file FROM glob('${SDB_DATADIR}/segments/*');
 
 statement ok
 VACUUM (FLUSH_TABLE) sfd_shop.public.notes;
 
 statement ok
-COPY (SELECT parse_filename(file) FROM glob('${SDB_DATADIR}/engine_v1/store/*') WHERE file NOT IN (SELECT file FROM sfd_before))
+COPY (SELECT parse_filename(file) FROM glob('${SDB_DATADIR}/segments/*') WHERE file NOT IN (SELECT file FROM sfd_before))
 TO '${__TEST_DIR__}/sfd_notes.files' (FORMAT csv, HEADER false);
 
 statement ok
@@ -96,7 +96,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfd_copy && mkdir -p $__TEST_DIR__/sfd_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfd_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfd_copy/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfd_copy/
+rm -rf $__TEST_DIR__/sfd_copy && mkdir -p $__TEST_DIR__/sfd_copy && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfd_copy/
 
 connection holder
 statement ok
@@ -177,7 +177,7 @@ statement ok
 DROP SERVER sfd_again_snap;
 
 system ok
-rm -rf $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_torn && cd $__TEST_DIR__/sfd_torn/engine_v1/store && rm $(cat $__TEST_DIR__/sfd_notes.files)
+rm -rf $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_torn && cd $__TEST_DIR__/sfd_torn/segments && rm $(cat $__TEST_DIR__/sfd_notes.files)
 
 statement error
 CREATE SERVER sfd_torn FOREIGN DATA WRAPPER serenedb_fdw

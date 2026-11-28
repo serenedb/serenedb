@@ -28,41 +28,49 @@
 #include <string>
 #include <string_view>
 
+#include "server/utils/unique_id.h"
+
 namespace sdb::backup {
 
 inline constexpr std::string_view kPgControlFile = "global/pg_control";
 inline constexpr std::string_view kPgVersionFile = "PG_VERSION";
-inline constexpr std::string_view kPendingPgVersionFile = "PG_VERSION.new";
 inline constexpr uint32_t kTimeline = 1;
 inline constexpr uint32_t kWalSegmentSize = uint32_t{16} << 20;
 inline constexpr size_t kMockNonceLen = 32;
 
+using MockNonce = std::array<uint8_t, kMockNonceLen>;
+
 struct ControlState {
   uint64_t system_identifier = 0;
   uint64_t checkpoint = 0;
-  std::array<uint8_t, kMockNonceLen> mock_nonce{};
+  MockNonce mock_nonce{};
+
+  bool operator==(const ControlState&) const = default;
 };
 
 std::optional<ControlState> ReadPgControl(const std::string& data_dir);
 void WritePgControl(const std::string& data_dir, const ControlState& state);
-std::string PendingPgVersion(const std::string& data_dir);
-void PublishPgVersion(const std::string& data_dir);
+std::string OpenPgVersion(const std::string& data_dir);
+MockNonce NewMockNonce();
 
 class PositionSource final {
  public:
   static PositionSource& Instance();
 
-  void Open(const std::string& data_dir);
+  void Adopt(const std::string& data_dir, const UniqueId& server_id,
+             const MockNonce& mock_nonce, bool fresh);
+  ControlState State();
+  UniqueId ServerId();
   uint64_t SystemIdentifier();
   uint64_t Issue();
-  std::array<uint8_t, kMockNonceLen> MockNonce();
+  MockNonce GetMockNonce();
 
  private:
   absl::Mutex _mutex;
   std::string _data_dir ABSL_GUARDED_BY(_mutex);
+  UniqueId _server_id ABSL_GUARDED_BY(_mutex);
   std::optional<ControlState> _state ABSL_GUARDED_BY(_mutex);
-  std::optional<std::array<uint8_t, kMockNonceLen>> _volatile_nonce
-    ABSL_GUARDED_BY(_mutex);
+  std::optional<MockNonce> _volatile_nonce ABSL_GUARDED_BY(_mutex);
 };
 
 }  // namespace sdb::backup

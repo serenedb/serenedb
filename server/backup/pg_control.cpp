@@ -21,6 +21,7 @@
 #include "backup/pg_control.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/crc/crc32c.h>
 #include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
@@ -101,28 +102,18 @@ ControlFileData MakeControl(const ControlState& state) {
   return data;
 }
 
-uint64_t NewSystemIdentifier() {
-  const auto now = absl::Now();
-  const auto seconds = static_cast<uint64_t>(absl::ToUnixSeconds(now));
-  const auto micros =
-    static_cast<uint64_t>(absl::ToUnixMicros(now) % 1'000'000);
-  absl::BitGen gen;
-  return (seconds << 32) | (micros << 12) |
-         absl::Uniform<uint64_t>(gen, 0, 4096);
-}
-
 uint64_t ClockPosition() {
   return static_cast<uint64_t>(absl::ToUnixMicros(absl::Now()));
 }
 
-std::array<uint8_t, kMockNonceLen> NewMockNonce() {
-  std::array<uint8_t, kMockNonceLen> nonce{};
+}  // namespace
+
+MockNonce NewMockNonce() {
+  MockNonce nonce{};
   SDB_ENSURE(RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) == 1,
              "could not generate the mock authentication nonce");
   return nonce;
 }
-
-}  // namespace
 
 std::optional<ControlState> ReadPgControl(const std::string& data_dir) {
   auto& fs = catalog::StorageFileSystem();
@@ -161,34 +152,31 @@ void WritePgControl(const std::string& data_dir, const ControlState& state) {
   irs::WriteWhole(fs, path, buffer, true);
 }
 
-std::string PendingPgVersion(const std::string& data_dir) {
-  auto path = duckdb::FileSystem::JoinPath(data_dir, kPendingPgVersionFile);
-  const int fd =
-    ::open(path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+std::string OpenPgVersion(const std::string& data_dir) {
+  auto path = duckdb::FileSystem::JoinPath(data_dir, kPgVersionFile);
+  const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                        S_IRUSR | S_IWUSR);
   if (fd < 0) {
     const int error = errno;
+    if (error == EEXIST) {
+      return path;
+    }
     THROW_SQL_ERROR(
       ERR_CODE(irs::pg::ErrcodeForFileAccess(error)),
       ERR_MSG("could not create file \"", path, "\": ", std::strerror(error)));
   }
-  ::close(fd);
-  return path;
-}
-
-void PublishPgVersion(const std::string& data_dir) {
-  auto& fs = catalog::StorageFileSystem();
-  const auto pending = fs.JoinPath(data_dir, kPendingPgVersionFile);
-  {
-    const auto version = absl::StrCat(pg::kPgMajorVersion, "\n");
-    const auto handle =
-      fs.OpenFile(pending, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    handle->Write(duckdb::QueryContext{}, const_cast<char*>(version.data()),
-                  version.size(), 0);
-    handle->Sync();
+  absl::Cleanup close = [fd] { ::close(fd); };
+  const auto version = absl::StrCat(pg::kPgMajorVersion, "\n");
+  if (::write(fd, version.data(), version.size()) !=
+        static_cast<ssize_t>(version.size()) ||
+      ::fsync(fd) != 0) {
+    const int error = errno;
+    THROW_SQL_ERROR(
+      ERR_CODE(irs::pg::ErrcodeForFileAccess(error)),
+      ERR_MSG("could not write file \"", path, "\": ", std::strerror(error)));
   }
-  fs.MoveFile(pending, fs.JoinPath(data_dir, kPgVersionFile));
-  fs.SyncDirectory(data_dir);
+  catalog::StorageFileSystem().SyncDirectory(data_dir);
+  return path;
 }
 
 PositionSource& PositionSource::Instance() {
@@ -196,22 +184,41 @@ PositionSource& PositionSource::Instance() {
   return gSource;
 }
 
-void PositionSource::Open(const std::string& data_dir) {
+void PositionSource::Adopt(const std::string& data_dir,
+                           const UniqueId& server_id,
+                           const MockNonce& mock_nonce, bool fresh) {
+  ControlState state{.system_identifier = server_id.High(),
+                     .mock_nonce = mock_nonce};
+  if (!data_dir.empty()) {
+    const auto control = fresh ? std::nullopt : ReadPgControl(data_dir);
+    if (control && control->system_identifier != state.system_identifier) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("the snapshot belongs to the server with system identifier ",
+                state.system_identifier, ", and ", kPgControlFile,
+                " to the server with system identifier ",
+                control->system_identifier));
+    }
+    if (control) {
+      state.checkpoint = control->checkpoint;
+    }
+    if (control != state) {
+      WritePgControl(data_dir, state);
+    }
+  }
   absl::MutexLock lock{&_mutex};
-  auto state = ReadPgControl(data_dir);
-  if (!state) {
-    state =
-      ControlState{.system_identifier = NewSystemIdentifier(), .checkpoint = 0};
-  }
-  if (absl::c_all_of(state->mock_nonce, [](uint8_t b) { return b == 0; })) {
-    state->mock_nonce = NewMockNonce();
-    WritePgControl(data_dir, *state);
-  }
   _data_dir = data_dir;
+  _server_id = server_id;
   _state = state;
 }
 
-std::array<uint8_t, kMockNonceLen> PositionSource::MockNonce() {
+ControlState PositionSource::State() {
+  absl::MutexLock lock{&_mutex};
+  SDB_ASSERT(_state);
+  return *_state;
+}
+
+MockNonce PositionSource::GetMockNonce() {
   absl::MutexLock lock{&_mutex};
   if (_state) {
     return _state->mock_nonce;
@@ -220,6 +227,12 @@ std::array<uint8_t, kMockNonceLen> PositionSource::MockNonce() {
     _volatile_nonce = NewMockNonce();
   }
   return *_volatile_nonce;
+}
+
+UniqueId PositionSource::ServerId() {
+  absl::MutexLock lock{&_mutex};
+  SDB_ASSERT(_state);
+  return _server_id;
 }
 
 uint64_t PositionSource::SystemIdentifier() {
@@ -233,7 +246,9 @@ uint64_t PositionSource::Issue() {
   SDB_ASSERT(_state);
   auto next = *_state;
   next.checkpoint = std::max(ClockPosition(), _state->checkpoint + 1);
-  WritePgControl(_data_dir, next);
+  if (!_data_dir.empty()) {
+    WritePgControl(_data_dir, next);
+  }
   _state = next;
   return next.checkpoint;
 }

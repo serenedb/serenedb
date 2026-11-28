@@ -114,8 +114,6 @@ std::string_view ProgressPhaseName(ProgressCommand command, int64_t phase) {
           return "initializing";
         case progress_phase::BaseBackup::WaitingForCheckpoint:
           return "waiting for checkpoint to finish";
-        case progress_phase::BaseBackup::WaitingForMaintenance:
-          return "waiting for search maintenance to stop";
         case progress_phase::BaseBackup::WaitingForCommits:
           return "waiting for in-flight commits";
       }

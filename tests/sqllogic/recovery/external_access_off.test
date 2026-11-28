@@ -105,7 +105,7 @@ DROP TABLESPACE sandboxed;
 
 
 system ok
-for i in $(seq 240); do [ -z "$(ls $__TEST_DIR__/sandboxed/engine_v1)" ] && break; sleep 0.25; done; ls $__TEST_DIR__/sandboxed/engine_v1 | wc -l
+for i in $(seq 240); do [ -z "$(ls $__TEST_DIR__/sandboxed/segments)" ] && break; sleep 0.25; done; ls $__TEST_DIR__/sandboxed/segments | wc -l
 ----
 0
 

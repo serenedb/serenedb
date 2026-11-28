@@ -57,6 +57,7 @@ add_executable(
     storage_version_test.cpp
     striped_counters_test.cpp
     catalog/log_test.cpp
+    catalog/pins_test.cpp
     catalog/entry/tokenizer_test.cpp
     catalog/entry/inverted_index_config_test.cpp
     connector/ai_functions_test.cpp

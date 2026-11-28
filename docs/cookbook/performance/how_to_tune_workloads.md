@@ -71,7 +71,7 @@ This section explains the prerequisites, scope, and known limitations of larger-
 ### Spilling to Disk
 
 Larger-than-memory workloads are supported by spilling to disk.
-With the default configuration, the server spills to the `tmp` directory of its data directory, and `serenedb shell` creates the `⟨database_file_name⟩.tmp`{:.language-sql .highlight} temporary directory (in persistent mode) or the `.tmp`{:.language-sql .highlight} directory (in in-memory mode). This directory can be changed using the [`temp_directory` configuration option](../../configuration/pragmas.md#temp-directory-for-spilling-data-to-disk), e.g.:
+With the default configuration, the server spills to the `temp` directory of its server directory, and `serenedb shell` creates the `⟨database_file_name⟩.tmp`{:.language-sql .highlight} temporary directory (in persistent mode) or the `.tmp`{:.language-sql .highlight} directory (in in-memory mode). This directory can be changed using the [`temp_directory` configuration option](../../configuration/pragmas.md#temp-directory-for-spilling-data-to-disk), e.g.:
 
 <SqlLogicTest id="cookbook/performance/how_to_tune_workloads/example_003" />
 

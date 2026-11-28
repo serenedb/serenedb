@@ -2,7 +2,7 @@
 
 Path-style buckets that exist on first use, single and multipart uploads,
 the x-amz-meta-* metadata a single upload sets, ranged reads, ListObjectsV2,
-single and batched deletes.
+single and batched deletes, and copies of an object within the store.
 Requests are not authenticated. It counts requests by kind, accepted
 connections and the most part uploads in flight at once, in all and in one upload; `latency` delays every request, `trickle`
 sends the bodies of reads at that many bytes a second, `hold_read` holds a ranged read in the
@@ -42,6 +42,7 @@ import hashlib
 import json
 import threading
 import time
+import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -437,6 +438,9 @@ class _Handler(Handler):
             return
         if self._stalled("PUT", key):
             return
+        if "x-amz-copy-source" in self.headers:
+            self._copy(bucket, key)
+            return
         body = self._body()
         self.fake.count("PUT")
         began = time.monotonic()
@@ -463,6 +467,25 @@ class _Handler(Handler):
             return
         self._traced("PUT", key, began)
         self._reply(200, headers={"ETag": obj.etag})
+
+    def _copy(self, bucket: str, key: str) -> None:
+        self._body()
+        self.fake.count("COPY")
+        self._wait()
+        source_bucket, _, source_key = urllib.parse.unquote(
+            self.headers["x-amz-copy-source"]).lstrip("/").partition("/")
+        source = self._find(source_bucket, source_key)
+        if source is None:
+            self._missing(source_key)
+            return
+        obj = _Object(source.data, dict(source.metadata))
+        if not self._store(bucket, key, obj):
+            self._xml(412, "<Error><Code>PreconditionFailed</Code></Error>")
+            return
+        modified = datetime.fromtimestamp(obj.modified, timezone.utc)
+        self._xml(200, f'<CopyObjectResult xmlns="{NS}"><ETag>{escape(obj.etag)}</ETag>'
+                       f"<LastModified>{modified.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
+                       "</LastModified></CopyObjectResult>")
 
     def _put_part(self, number: int, upload_id: str) -> None:
         with self.fake.lock:

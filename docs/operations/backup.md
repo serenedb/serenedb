@@ -6,13 +6,14 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-SereneDB provides PostgreSQL compatible low level backup functions `pg_backup_start` and `pg_backup_stop`. Between the two calls you can copy the whole data directory with any file copy tool, or use PostgreSQL compatible backup tool like [pgBackRest](#pgbackrest). The server keeps accepting reads and writes the whole time. The backup contains every transaction that committed before `pg_backup_start` returned and none that committed after. On storage with crash-consistent snapshots, a [volume snapshot](#volume-snapshots) of the running server is a backup too.
+SereneDB provides PostgreSQL compatible low level backup functions `pg_backup_start` and `pg_backup_stop`. Between the two calls you can copy the whole server directory with any file copy tool, or use PostgreSQL compatible backup tool like [pgBackRest](#pgbackrest). The server keeps accepting reads and writes the whole time. The backup contains every transaction that committed before `pg_backup_start` returned and none that committed after. On storage with crash-consistent snapshots, a [volume snapshot](#volume-snapshots) of the running server is a backup too.
 
 Differences from PostgreSQL:
 
 - One backup at a time, owned by the session that started it.
-- A backup copies only the data directory: `pg_backup_start` fails while a [tablespace](../sql/statements/create_tablespace/index.md) other than `pg_default` and `pg_global` exists.
-- `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
+- A backup copies only the server directory: `pg_backup_start` fails while a [tablespace](../sql/statements/create_tablespace/index.md) other than `pg_default` and `pg_global` exists.
+- `pg_backup_start` writes a snapshot of everything committed and keeps it in `backups/` until `pg_backup_stop`, together with the segment files it uses; a restore starts from that snapshot. The write-ahead log (WAL) is not part of a backup, so a WAL directory outside the server directory (`--wal_directory`) need not be copied.
+- `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` always writes its snapshot at once, and there is no WAL archiving.
 - Without WAL archiving, the backup tool must be able to take a backup without it; most tools have a flag for this.
 - `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.
 - Both functions require a superuser.
@@ -25,7 +26,7 @@ Differences from PostgreSQL:
 
    <SqlLogicTest id="operations/backup/start" />
 
-2. Copy the entire data directory, every file and subdirectory, while that session stays open. Files can be copied in any order, and files that change during the copy are fine.
+2. Copy the entire server directory, every file and subdirectory, while that session stays open. Files can be copied in any order, and files that change or disappear during the copy are fine: the copy tool has to skip a file that is gone by the time it reads it, as pgBackRest does.
 
 3. In the same session, stop the backup:
 
@@ -39,14 +40,14 @@ Only one backup runs at a time. A second `pg_backup_start` fails with `a backup 
 
 ## Restoring
 
-1. Put the copied files into an empty data directory, keeping their layout.
+1. Put the copied files into an empty server directory, keeping their layout.
 2. Write the `labelfile` text as the file `backup_label` in the top level of that directory.
 3. Start the server on it.
 
-At startup the server sees `backup_label`, brings the copy to the state it had when `pg_backup_start` returned, and renames the label to `backup_label.old`. If the server stops while doing so, start it again: the restore resumes.
+At startup the server sees `backup_label`, brings the copy to the state it had when `pg_backup_start` returned, and renames the label to `backup_label.old`: it starts from the snapshot the backup kept, drops the WAL that the copy holds, and removes the segment files that snapshot does not use. If the server stops while doing so, start it again: the restore resumes. A copy without the snapshot the label names is refused.
 
 <DocCallout type="attention">
-Never start a file-by-file copy without its `backup_label`. Its files were copied at different moments, the server cannot tell such a copy apart from a data directory that crashed, and it may refuse to start or start on inconsistent data. [Volume snapshots](#volume-snapshots) are taken at one moment and need no label.
+Never start a file-by-file copy without its `backup_label`. Its files were copied at different moments, the server cannot tell such a copy apart from a server directory that crashed, and it may refuse to start or start on inconsistent data. [Volume snapshots](#volume-snapshots) are taken at one moment and need no label.
 </DocCallout>
 
 ## Functions
@@ -65,18 +66,13 @@ Arguments can be passed by position or by name:
 
 ## During a backup
 
-Queries and writes run as usual. These commands behave differently until `pg_backup_stop`:
+Queries, writes, checkpoints, compactions and drops run as usual. A `pg_backup_start` issued while a checkpoint runs waits for it, and a `CHECKPOINT` issued while `pg_backup_start` records its position waits for that.
 
-| Command | During a backup |
-|---|---|
-| `CHECKPOINT`, `FORCE CHECKPOINT` | Fail with `cannot checkpoint while a backup is in progress`. Run them again after `pg_backup_stop`. A `pg_backup_start` issued while a checkpoint runs waits for it. |
-| Automatic checkpoints | Skipped. |
-| `VACUUM (COMPACT_*)` | Waits until the backup ends, then compacts. It can be canceled while it waits. |
-| `VACUUM (FLUSH_*)` | Runs. |
-| `DROP TABLE`, `DROP INDEX`, `DROP DATABASE` | Commit at once. The files of the dropped objects are removed after `pg_backup_stop`. |
-| Background compaction of tables and indexes | Paused. |
+The segment files the backup's snapshot uses stay until `pg_backup_stop`: the files a compaction replaces and the files of dropped tables, indexes and databases are removed then, instead of at once. Plan disk space for the length of the backup.
 
-Because nothing is checkpointed, the write-ahead log keeps growing, and dropped objects and the segment files tables stop using keep their disk space until `pg_backup_stop`. Plan disk space for the length of the backup.
+## A server directory on an object store
+
+When the server directory is on S3 or another object store, `pg_backup_start` copies its snapshot inside the store, without downloading it. Between `pg_backup_start` and `pg_backup_stop`, copy every object under the server directory's prefix to a new prefix with any S3 tool, then store the `labelfile` text as the object `backup_label` under the new prefix. A server started on the new prefix, with its own WAL directory, restores the backup as in [Restoring](#restoring).
 
 ## Monitoring
 
@@ -90,7 +86,6 @@ Because nothing is checkpointed, the write-ahead log keeps growing, and dropped 
 |---|---|
 | `initializing` | Starting. |
 | `waiting for checkpoint to finish` | A checkpoint is running; the backup starts when it finishes. |
-| `waiting for search maintenance to stop` | Compactions of tables and indexes are being paused. |
 | `waiting for in-flight commits` | Transactions that are committing are finishing; the backup position is recorded next. |
 
 `backup_total`, `backup_streamed`, `tablespaces_total` and `tablespaces_streamed` are always 0. Once `pg_backup_start` has returned, the view no longer shows the backup.
@@ -101,7 +96,7 @@ A restored server starts with every [subscription](../sql/statements/create_subs
 
 ## Volume snapshots
 
-When the data directory lives on storage that takes crash-consistent snapshots, a snapshot of the running server's volume is a backup. A crash-consistent snapshot holds every write the volume had completed at that moment, the same state the volume would be in after a power failure, and SereneDB recovers from it at startup the way it recovers from a crash. No `backup_label` is needed: start the server on a volume restored from the snapshot.
+When the server directory lives on storage that takes crash-consistent snapshots, a snapshot of the running server's volume is a backup. A crash-consistent snapshot holds every write the volume had completed at that moment, the same state the volume would be in after a power failure, and SereneDB recovers from it at startup the way it recovers from a crash. No `backup_label` is needed: start the server on a volume restored from the snapshot.
 
 The major clouds take such snapshots of their block storage:
 
@@ -111,13 +106,13 @@ The major clouds take such snapshots of their block storage:
 
 Storage arrays and filesystems with point-in-time snapshots (LVM, ZFS, btrfs) work the same way.
 
-Keep the whole data directory on one volume. If it spans several, snapshot all of them in one crash-consistent operation, such as the provider's multi-volume snapshot; snapshots of the volumes taken one after another do not form a consistent backup.
+Keep the whole server directory, with its WAL directory, on one volume. If they span several, snapshot all of them in one crash-consistent operation, such as the provider's multi-volume snapshot; snapshots of the volumes taken one after another do not form a consistent backup.
 
-Taking the snapshot between `pg_backup_start` and `pg_backup_stop` is still advised: while a backup runs, the server checkpoints nothing and removes no files, so the snapshot catches the data directory with fewer changes in progress. Such a snapshot can also be restored to the moment `pg_backup_start` returned, by writing the `labelfile` from `pg_backup_stop` as `backup_label` before starting the server, as in [Restoring](#restoring).
+A snapshot taken between `pg_backup_start` and `pg_backup_stop` can also be restored to the moment `pg_backup_start` returned, by writing the `labelfile` from `pg_backup_stop` as `backup_label` before starting the server, as in [Restoring](#restoring).
 
 ## pgBackRest
 
-[pgBackRest](https://pgbackrest.org) takes full backups of SereneDB and restores them. It runs on the server's host, reads the data directory directly, and connects over TCP. A minimal configuration:
+[pgBackRest](https://pgbackrest.org) takes full backups of SereneDB and restores them. It runs on the server's host, reads the server directory directly, and connects over TCP. A minimal configuration:
 
 ```ini
 [global]
@@ -130,7 +125,7 @@ pg1-socket-path=127.0.0.1
 pg1-user=postgres
 ```
 
-- `pg1-path` is the server's data directory.
+- `pg1-path` is the server directory.
 - `pg1-socket-path` is the address the server listens on. SereneDB does not listen on a Unix socket, so this makes pgBackRest connect over TCP.
 
 Create the stanza once, then back up and restore:
@@ -142,7 +137,7 @@ pgbackrest --stanza=serenedb --type=none restore
 ```
 
 - `backup` needs `--no-archive-check`: SereneDB has no WAL archiving.
-- `restore` needs `--type=none`, and restores into an empty data directory. Start the server on it afterwards; pgBackRest has already written `backup_label`.
+- `restore` needs `--type=none`, and restores into an empty server directory. Start the server on it afterwards; pgBackRest has already written `backup_label`.
 
 Limitations:
 

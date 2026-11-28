@@ -100,7 +100,7 @@ def _command_description(command: str) -> str:
         return "Open the embedded SQL shell without starting the SereneDB server."
     if " psql " in command:
         return "Open the psql-compatible shell subcommand without starting the SereneDB server."
-    return "Start the SereneDB pg-wire server, using the optional data directory and flags."
+    return "Start the SereneDB pg-wire server, using the optional server directory and flags."
 
 
 def _parse_list_section(lines: list[str], heading: str) -> list[dict]:

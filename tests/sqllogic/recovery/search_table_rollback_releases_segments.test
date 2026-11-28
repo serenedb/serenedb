@@ -22,7 +22,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_own_dir = '${SDB_DATADIR}/engine_v1/store/*';
+SET VARIABLE rrs_own_dir = '${SDB_DATADIR}/segments/*';
 
 
 statement ok
@@ -116,7 +116,7 @@ CHECKPOINT;
 statement ok
 CREATE MACRO rrs_re_stale() AS (
   (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1))
-   FROM glob('${SDB_DATADIR}/engine_v1/store/*')
+   FROM glob('${SDB_DATADIR}/segments/*')
    WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '')
   - (SELECT sum(value) FROM sdb_metrics WHERE metric = 'num_segments'));
 
@@ -206,7 +206,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_bk_dir = '${SDB_DATADIR}/engine_v1/store/*';
+SET VARIABLE rrs_bk_dir = '${SDB_DATADIR}/segments/*';
 
 
 statement ok
@@ -240,11 +240,11 @@ statement ok
 ROLLBACK;
 
 
-query
-SELECT count(*) > 0 AS kept FROM glob(getvariable('rrs_bk_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_bk_files);
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left_over FROM glob(getvariable('rrs_bk_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_bk_files);
 ----
-kept
-t
+left_over
+0
 
 
 connection backup

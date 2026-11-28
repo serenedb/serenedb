@@ -55,6 +55,7 @@ namespace sdb::catalog {
 
 struct ForeignLog {
   std::string dir;
+  std::string snapshot;
   duckdb::idx_t database = 0;
   FileLock lock;
 };

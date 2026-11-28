@@ -77,11 +77,8 @@ wait
 
 
 connection checkpointer
-statement error
+statement ok
 CHECKPOINT bwc_db;
-----
-db error: ERROR: cannot checkpoint while a backup is in progress
-HINT: Retry after pg_backup_stop().
 
 
 connection starter

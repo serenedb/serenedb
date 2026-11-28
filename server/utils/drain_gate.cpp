@@ -49,6 +49,7 @@ auto DrainGate::TryEnter() noexcept -> Pass {
 
 auto DrainGate::Close(duckdb::ClientContext& context) -> Closed {
   absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+  context.Await([this] { return !IsClosed(); });
   [[maybe_unused]] const auto previous = _state.fetch_or(kClosed);
   SDB_ASSERT(!(previous & kClosed));
   absl::Cleanup reopen = [this] { _state.fetch_and(~kClosed); };

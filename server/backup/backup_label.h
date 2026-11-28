@@ -28,14 +28,15 @@
 #include <string_view>
 
 #include "backup/backup_session.h"
+#include "server/utils/unique_id.h"
 
 namespace sdb::backup {
 
-inline constexpr uint32_t kBackupLabelFormat = 2;
+inline constexpr uint32_t kBackupLabelFormat = 4;
 inline constexpr std::string_view kBackupLabelFile = "backup_label";
 
 struct BackupLabel {
-  uint64_t system_identifier = 0;
+  UniqueId server_id;
   uint64_t start_lsn = 0;
   Cut cut;
 };
@@ -43,7 +44,7 @@ struct BackupLabel {
 std::string WalFileName(uint64_t lsn);
 
 std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
-                             uint64_t system_identifier, absl::Time start_time,
+                             const UniqueId& server_id, absl::Time start_time,
                              const Cut& cut);
 
 absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text);

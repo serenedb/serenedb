@@ -26,6 +26,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -33,11 +34,13 @@
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <iresearch/utils/group_commit.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "server/utils/message_buffer.h"
+#include "server/utils/unique_id.h"
 
 namespace sdb::catalog {
 
@@ -132,20 +135,41 @@ class Log {
   using Compact = absl::FunctionRef<std::vector<std::vector<uint8_t>>(
     std::span<const std::span<uint8_t>>)>;
 
+  struct Identity {
+    UniqueId server_id;
+    std::array<uint8_t, 32> mock_nonce{};
+
+    explicit operator bool() const noexcept {
+      return static_cast<bool>(server_id);
+    }
+    bool operator==(const Identity&) const = default;
+  };
+
+  struct Replayed {
+    bool snapshot = false;
+    bool clean = false;
+    Identity identity;
+  };
+
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
 
   static std::string ChunkName(uint64_t number);
-  static bool Exists(duckdb::FileSystem& fs, const std::string& dir);
-  static bool IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir);
-  static void Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply);
-  static void Move(duckdb::FileSystem& fs, const std::string& from,
+  static bool HasSnapshot(duckdb::FileSystem& fs, const std::string& snapshot);
+  static std::optional<Identity> ReadIdentity(duckdb::FileSystem& fs,
+                                              const std::string& snapshot);
+  static std::vector<uint64_t> ReadSegments(duckdb::FileSystem& fs,
+                                            const std::string& snapshot);
+  static void Read(duckdb::FileSystem& fs, const std::string& dir,
+                   const std::string& snapshot, Apply apply);
+  static void Copy(duckdb::FileSystem& fs, const std::string& from,
                    const std::string& to);
-  static void Cut(duckdb::FileSystem& fs, const std::string& dir, Lsn end);
-  static bool Remove(duckdb::FileSystem& fs, const std::string& dir);
+  static void Discard(duckdb::FileSystem& fs, const std::string& dir,
+                      const std::string& snapshot);
 
-  Log(duckdb::FileSystem& fs, std::string dir);
+  Log(duckdb::FileSystem& fs, std::string dir, std::string snapshot);
 
-  void Replay(Apply apply, CatalogPart part);
+  Replayed Replay(Apply apply, CatalogPart part);
+  void SetIdentity(const Identity& identity) noexcept { _identity = identity; }
 
   Range Reserve(size_t payload_size);
   void Write(const Range& range, RecordBuffer& record);
@@ -153,9 +177,12 @@ class Log {
 
   Lsn Append(RecordBuffer record);
 
-  void WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
-                     CatalogPart part, Compact compact);
+  void WriteSnapshot(Lsn covered, std::span<const uint64_t> segments,
+                     std::span<const RecordBuffer> records, CatalogPart part,
+                     Compact compact, bool clean);
   void DropCovered();
+  void Pin(const std::string& to);
+  void Clear();
 
   static constexpr uint64_t kTailBytes = uint64_t{16} << 20;
 
@@ -163,8 +190,6 @@ class Log {
     return _tail_bytes.load(std::memory_order_relaxed);
   }
   void FoldTail(Lsn bound, CatalogPart part, Compact compact);
-
-  Lsn Link(const std::string& dir);
 
   Lsn Covered() const noexcept {
     return _covered.load(std::memory_order_acquire);
@@ -237,6 +262,8 @@ class Log {
 
   duckdb::FileSystem& _fs;
   std::string _dir;
+  std::string _snapshot_path;
+  Identity _identity;
   mutable absl::Mutex _mutex;
   absl::btree_map<Lsn, std::shared_ptr<Chunk>> _chunks ABSL_GUARDED_BY(_mutex);
   uint64_t _next_number ABSL_GUARDED_BY(_mutex) = 0;
@@ -261,7 +288,6 @@ class Log {
   std::atomic<uint64_t> _snapshot_bytes{0};
   std::atomic<uint64_t> _history_bytes{0};
   absl::Mutex _files_mutex;
-  uint64_t _snapshot ABSL_GUARDED_BY(_files_mutex) = 0;
   std::vector<std::vector<uint8_t>> _history ABSL_GUARDED_BY(_files_mutex);
   absl::Mutex _tail_mutex;
   absl::btree_map<Lsn, TailPart> _tail ABSL_GUARDED_BY(_tail_mutex);

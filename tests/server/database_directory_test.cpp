@@ -30,11 +30,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iterator>
 #include <store/simulated_object_store.hpp>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "backup/pg_control.h"
 #include "catalog/database_directory.h"
 #include "runtime/runtime.h"
 
@@ -62,6 +65,8 @@ bool Eventually(const auto& done) {
 class DatabaseDirectoryTest : public ::testing::Test {
  protected:
   void SetUp() final {
+    backup::PositionSource::Instance().Adopt({}, UniqueId::New(),
+                                             backup::NewMockNonce(), true);
     _root = std::filesystem::temp_directory_path() /
             absl::StrCat("database_directory_", ::getpid());
     std::filesystem::remove_all(_root);
@@ -90,11 +95,11 @@ class DatabaseDirectoryTest : public ::testing::Test {
 };
 
 TEST_F(DatabaseDirectoryTest, StoresSitInTheStoreDirectoryOfATablespace) {
-  EXPECT_EQ(StoreDirOf(Path("ts/engine_v1")), Path("ts/engine_v1/store"));
+  EXPECT_EQ(StoreDirOf(Path("ts")), Path("ts/segments"));
 }
 
 TEST_F(DatabaseDirectoryTest, CreatesOnceWithEveryMissingParent) {
-  const auto store = Path("ts/engine_v1/store");
+  const auto store = Path("ts/segments");
   EXPECT_FALSE(StorageFileSystem().DirectoryExists(store));
   CreateDirectory(store);
   EXPECT_TRUE(std::filesystem::is_directory(store));
@@ -105,41 +110,29 @@ TEST_F(DatabaseDirectoryTest, CreatesOnceWithEveryMissingParent) {
 
 TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesTheFilesOfOthers) {
   CreateDirectory(StoreDirOf(_root.string()));
-  std::ofstream{_root / "store" / "0000000000000007.col"} << "rows";
-  std::ofstream{_root / "store" / "0000000000000008.col"} << "rows";
+  std::ofstream{_root / kStoreDir / "0000000000000007.col"} << "rows";
+  std::ofstream{_root / kStoreDir / "0000000000000008.col"} << "rows";
   BeginStorageWork();
-  RemoveStorage([this] {
-    return std::filesystem::remove(_root / "store" / "0000000000000007.col");
+  RemoveStorage(StoreDirOf(_root.string()), [this] {
+    return std::filesystem::remove(_root / kStoreDir / "0000000000000007.col");
   });
-  EXPECT_TRUE(Gone(_root / "store" / "0000000000000007.col"));
+  EXPECT_TRUE(Gone(_root / kStoreDir / "0000000000000007.col"));
   EXPECT_TRUE(
-    std::filesystem::exists(_root / "store" / "0000000000000008.col"));
+    std::filesystem::exists(_root / kStoreDir / "0000000000000008.col"));
 }
 
 TEST_F(DatabaseDirectoryTest, AStorageWhoseFilesStayIsKept) {
   CreateDirectory(StoreDirOf(_root.string()));
-  std::ofstream{_root / "store" / "0000000000000007.col"} << "rows";
+  std::ofstream{_root / kStoreDir / "0000000000000007.col"} << "rows";
   std::atomic_bool tried{false};
   BeginStorageWork();
-  RemoveStorage([&] {
+  RemoveStorage(StoreDirOf(_root.string()), [&] {
     tried.store(true);
     return false;
   });
   EXPECT_TRUE(Eventually([&] { return tried.load(); }));
   EXPECT_TRUE(
-    std::filesystem::exists(_root / "store" / "0000000000000007.col"));
-}
-
-TEST_F(DatabaseDirectoryTest, RemovalsWaitWhileTheyAreDeferred) {
-  const auto file = _root / "0000000000000007.col";
-  std::ofstream{file} << "rows";
-  DeferRemovals();
-  BeginStorageWork();
-  RemoveStorage([&] { return std::filesystem::remove(file); });
-  std::this_thread::sleep_for(std::chrono::milliseconds{50});
-  EXPECT_TRUE(std::filesystem::exists(file));
-  ResumeRemovals();
-  EXPECT_TRUE(Gone(file));
+    std::filesystem::exists(_root / kStoreDir / "0000000000000007.col"));
 }
 
 TEST_F(DatabaseDirectoryTest, AStoreDirectoryOnAnObjectStore) {
@@ -190,9 +183,52 @@ TEST_F(DatabaseDirectoryTest, RemoveTreeOrThrowSaysWhyTheTreeStays) {
 
 TEST_F(DatabaseDirectoryTest, CountsTheBytesOfAStoreDirectory) {
   CreateDirectory(StoreDirOf(_root.string()));
-  std::ofstream{_root / "store" / "0000000000000007.col"} << "rows";
-  std::ofstream{_root / "store" / "0000000000000008.col"} << "more";
+  std::ofstream{_root / kStoreDir / "0000000000000007.col"} << "rows";
+  std::ofstream{_root / kStoreDir / "0000000000000008.col"} << "more";
   EXPECT_EQ(8, StorageBytes(StoreDirOf(_root.string())));
+}
+
+TEST_F(DatabaseDirectoryTest, ALocationBelongsToTheServerThatClaimedIt) {
+  const auto location = Path("owned");
+  std::filesystem::create_directories(location);
+  ClaimLocation(location);
+  const auto owner = _root / "owned" / kOwnerFile;
+  std::ifstream in{owner};
+  const std::string self{std::istreambuf_iterator<char>{in}, {}};
+  EXPECT_FALSE(self.empty());
+  ClaimLocation(location);
+  std::ofstream{owner, std::ios::trunc} << "another\n";
+  EXPECT_THROW(ClaimLocation(location), irs::SqlException);
+  ReleaseLocation(location);
+  _runtime.Background().Drain();
+  EXPECT_TRUE(std::filesystem::exists(owner));
+}
+
+TEST_F(DatabaseDirectoryTest, AReleasedLocationKeepsItsOwnerUntilItsFilesGo) {
+  const auto location = Path("released");
+  const auto store = StoreDirOf(location);
+  std::filesystem::create_directories(store);
+  ClaimLocation(location);
+  const auto owner = _root / "released" / kOwnerFile;
+  const auto file = std::filesystem::path{store} / "0000000000000007.col";
+  std::ofstream{file} << "rows";
+  ReleaseLocation(location);
+  _runtime.Background().Drain();
+  EXPECT_TRUE(std::filesystem::exists(owner));
+  BeginStorageWork();
+  RemoveStorage(store, [&] { return std::filesystem::remove(file); });
+  EXPECT_TRUE(Gone(owner));
+  EXPECT_TRUE(std::filesystem::is_directory(store));
+}
+
+TEST_F(DatabaseDirectoryTest, AClaimAfterAReleaseKeepsTheOwner) {
+  const auto location = Path("reclaimed");
+  std::filesystem::create_directories(StoreDirOf(location));
+  ClaimLocation(location);
+  ReleaseLocation(location);
+  ClaimLocation(location);
+  _runtime.Background().Drain();
+  EXPECT_TRUE(std::filesystem::exists(_root / "reclaimed" / kOwnerFile));
 }
 
 TEST_F(DatabaseDirectoryTest, SegmentIdsAreOneCounterForTheServer) {

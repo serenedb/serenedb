@@ -50,7 +50,7 @@ statement ok
 CHECKPOINT;
 
 system ok
-rm -rf $__TEST_DIR__/sft_snap && mkdir -p $__TEST_DIR__/sft_snap/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sft_snap/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sft_snap/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sft_snap/
+rm -rf $__TEST_DIR__/sft_snap && mkdir -p $__TEST_DIR__/sft_snap && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sft_snap/
 
 statement error
 CREATE SERVER sft_tables_snap FOREIGN DATA WRAPPER serenedb_fdw
@@ -67,7 +67,7 @@ db error: ERROR: cannot attach "<slt:ignore>" read-only: inverted index "docs_id
 
 
 system ok
-cp -r $__TEST_DIR__/sft_space/*/engine_v1/store/. $__TEST_DIR__/sft_snap/engine_v1/store/
+cp -r $__TEST_DIR__/sft_space/segments/. $__TEST_DIR__/sft_snap/segments/
 
 statement ok
 CREATE SERVER sft_placed_snap FOREIGN DATA WRAPPER serenedb_fdw

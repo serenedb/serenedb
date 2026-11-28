@@ -13,12 +13,26 @@ SereneDB can read and write AWS resources — files in S3, and Iceberg tables in
 | Your situation                                                    | Use                                                        |
 | ------------------------------------------------------------------ | ----------------------------------------------------------- |
 | Production                                                          | [Access keys](#access-keys) of a dedicated least-privilege IAM identity |
+| A server running on AWS: EC2, EKS, ECS                              | [The server's own credentials](#the-servers-own-credentials) |
 | Temporary credentials from STS / an assumed role                   | [Session tokens](#session-tokens)                           |
 | S3-compatible stores (MinIO, Cloudflare R2, Tigris, ...)           | [Custom endpoints](#s3-compatible-stores), or the dedicated [`r2` secret type](../cookbook/network_cloud_storage/cloudflare_r2_import.md) |
 
 <DocCallout type="attention">
-    <code>PROVIDER credential_chain</code> (SSO sessions, EC2 instance roles and other automatic discovery) is not available for <code>s3</code> secrets: creating such a secret fails with <em>Secret provider "credential_chain" for type "s3" does not exist in SereneDB</em>. Configure explicit keys as shown below. The server also reads <code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>, <code>AWS_SESSION_TOKEN</code> and <code>AWS_REGION</code> (or <code>AWS_DEFAULT_REGION</code>) from its own environment when it starts, and uses them for <code>s3://</code> access wherever a secret does not set those keys, while <code>enable_global_s3_configuration</code> is on (the default).
+    <code>PROVIDER credential_chain</code> is not available for <code>s3</code> secrets: creating such a secret fails with <em>Secret provider "credential_chain" for type "s3" does not exist in SereneDB</em>. Configure explicit keys as shown below, or rely on <a href="#the-servers-own-credentials">the server's own credentials</a>.
 </DocCallout>
+
+## The server's own credentials
+
+Wherever neither a secret nor the `s3_access_key_id` and `s3_secret_access_key` settings name keys, the server signs `s3://` requests with the credentials of its environment, found the way AWS tools find them:
+
+1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
+2. A web identity: `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE`, as EKS sets them for IAM roles for service accounts; the server exchanges the token for credentials with STS in the `AWS_REGION`.
+3. The container credentials endpoint: `AWS_CONTAINER_CREDENTIALS_FULL_URI` or `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, with `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` or `AWS_CONTAINER_AUTHORIZATION_TOKEN`, as EKS Pod Identity and ECS set them.
+4. The EC2 instance metadata service, unless `AWS_EC2_METADATA_DISABLED` is `true`.
+
+Credentials that expire are fetched again five minutes before they do, so a server keeps working on them for as long as it runs, background work included. Setting `s3_access_key_id` or `s3_secret_access_key`, even to an empty string, or turning `enable_global_s3_configuration` off, stops the server from using them. The keys are not settings, so `current_setting('s3_access_key_id')` does not show them.
+
+The environment also gives the defaults of the region (`AWS_REGION` or `AWS_DEFAULT_REGION`) and, for S3-compatible stores, of the endpoint (`DUCKDB_S3_ENDPOINT`), of TLS (`DUCKDB_S3_USE_SSL`) and of the URL style (`DUCKDB_S3_URL_STYLE`). A [server directory on an object store](../releases/storage-compatibility.md#server-directory) is read with these credentials, since the server needs them before it reads its secrets.
 
 ## Access keys
 
@@ -53,7 +67,7 @@ If your organization issues only **temporary credentials** — from [STS](https:
 <SqlLogicTest id="configuration/aws_credentials/example_session" />
 
 <DocCallout type="attention">
-    Temporary credentials expire (typically after 1–12 hours) and SereneDB cannot renew them — when they lapse, the secret must be re-created with fresh ones. Fine for interactive sessions and testing; for unattended production use, prefer a dedicated IAM user's permanent keys.
+    Temporary credentials in a secret expire (typically after 1–12 hours) and SereneDB cannot renew them — when they lapse, the secret must be re-created with fresh ones. Fine for interactive sessions and testing; for unattended production use, prefer a dedicated IAM user's permanent keys or <a href="#the-servers-own-credentials">the server's own credentials</a>, which the server renews.
 </DocCallout>
 
 ## S3-compatible stores

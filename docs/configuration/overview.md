@@ -170,7 +170,7 @@ Durability, the write-ahead log, and how rows are laid out on disk.
 | `disabled_compression_methods` | Disable a specific set of compression methods (comma separated) | `VARCHAR` | `GLOBAL` |  |
 | `enable_optimistic_write` | Whether or not to optimistically write large appends to disk before committing. Disable this to keep bulk appends in memory. | `BOOLEAN` | `GLOBAL` | `true` |
 | `fsync_mode` | How to synchronize database file changes to stable storage (`STANDARD`, `NONE` or `FULL`). `NONE` may cause database corruption after an operating system or hardware crash. | `VARCHAR` | `GLOBAL` | `STANDARD` |
-| `max_wal_size` | Size of the write-ahead log written since the last log snapshot at which the server writes a new snapshot and removes the log files it covers, such as '1GB' or '64MB'; a snapshot larger than it raises the threshold to its own size. Bounds the log on disk and the part of it a restart replays. | `VARCHAR` | `GLOBAL` | `1GB` |
+| `max_wal_size` | Size of the write-ahead log (WAL) written since the last snapshot at which the server writes a new snapshot and removes the WAL files it covers, such as '1GB' or '64MB'; a snapshot larger than it raises the threshold to its own size. Bounds the WAL on disk and the part of it a restart replays. | `VARCHAR` | `GLOBAL` | `1GB` |
 | `initial_column_segment_size` | The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Subsequent segments double in size until reaching the block size. | `UBIGINT` | `GLOBAL` | `2048` |
 | `row_group_size` | Default columnstore row-group size for newly created tables and inverted indexes over views. Their WITH (row_group_size = ...) overrides it. Reads from existing ones are unaffected. Default: 122'880. | `UINTEGER` | `SESSION` | `122880` |
 | `storage_block_prefetch` | In which scenarios to use storage block prefetching | `VARCHAR` | `GLOBAL` | `REMOTE_ONLY` |
@@ -232,7 +232,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `client_min_messages` | Sets the message levels that are sent to the client. | `VARCHAR` | `SESSION` | `notice` |
 | `current_transaction_invalidation_policy` | Which types of exceptions invalidate the database for the current transaction | `VARCHAR` | `GLOBAL` | `STANDARD_POLICY` |
 | `custom_user_agent` | Metadata from SereneDB callers | `VARCHAR` | `GLOBAL` |  |
-| `data_directory` | Shows the data directory. Read-only. | `VARCHAR` | `SESSION` | The directory the server was started with |
+| `data_directory` | Shows the server directory. Read-only. | `VARCHAR` | `SESSION` | The directory the server was started with |
 | `DateStyle` | Sets the display format for date and time values. | `VARCHAR` | `SESSION` | `ISO, MDY` |
 | `default_table_access_method` | Not used. Added for PostgreSQL compatibility only. Another value is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `heap` |
 | `default_tablespace` | The [tablespace](../sql/statements/create_tablespace/index.md) tables and inverted indexes on views are created in when `CREATE` names none; empty for the tablespace of their database. Setting it to a tablespace that does not exist is an error. | `VARCHAR` | `SESSION` |  |
@@ -300,7 +300,7 @@ Authentication, authorization and what the server is allowed to reach.
 | `enable_macro_dependencies` | Enable created MACROs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
 | `hba` | Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. A rule that lets the `postgres` superuser in without a password over local and loopback (127.0.0.1, ::1) connections always comes first, so a bad ruleset cannot lock the superuser out; other roles follow the ruleset. An empty value restores the default (SCRAM for every role). Server-global. | `VARCHAR` | `GLOBAL` |  |
 | `scram_iterations` | Sets the iteration count for SCRAM secret generation. | `INTEGER` | `SESSION` | `4096` |
-| `secret_directory` | Not used: persistent secrets are stored in the server's log with the rest of the catalog. | `VARCHAR` | `GLOBAL` | `<datadir>/secrets` |
+| `secret_directory` | Not used: persistent secrets are stored with the rest of the catalog, in the server's snapshot and WAL. | `VARCHAR` | `GLOBAL` | `<temp_directory>/secrets` |
 
 ### Logging, metrics and profiling
 
@@ -389,7 +389,7 @@ Local paths, remote object stores and the external file cache.
 | `s3_url_style` | S3 URL style | `VARCHAR` | `SESSION` | `vhost` |
 | `s3_use_ssl` | S3 use SSL | `BOOLEAN` | `SESSION` | `true` |
 | `s3_version_id_pinning` | Pin S3 reads to a specific object version for consistency | `BOOLEAN` | `SESSION` | `false` |
-| `temp_directory` | Set the directory to which to write temp files | `VARCHAR` | `GLOBAL` | `<datadir>/tmp` |
+| `temp_directory` | Set the directory to which to write temp files | `VARCHAR` | `GLOBAL` | `<server directory>/temp`, or the `--temp_directory` flag |
 
 ### Database connectors
 

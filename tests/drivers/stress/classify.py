@@ -96,7 +96,7 @@ FAULT_ARMING_MARKERS = (
 CRASH_FAULT_PREFIXES = ("crash_", "shutdown_")
 
 # Keyed on the armed fault so it is never excused otherwise.
-INJECTED_ABORT_MARKER = "catalog log: could not append the transaction"
+INJECTED_ABORT_MARKER = "catalog WAL: could not append the transaction"
 CATALOG_APPEND_FAILS = "catalog_append_fails"
 
 

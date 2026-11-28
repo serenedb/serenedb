@@ -51,7 +51,7 @@ absl::StatusOr<FileLock> FileLock::Take(std::string_view path, Mode mode) {
   ::close(fd);
   if (error == EWOULDBLOCK) {
     return absl::FailedPreconditionError(
-      absl::StrCat("the data directory is in use: '", name, "' is locked by ",
+      absl::StrCat("the server directory is in use: '", name, "' is locked by ",
                    shared ? "a running server"
                           : "a running server or a read-only attachment",
                    "; stop it first"));

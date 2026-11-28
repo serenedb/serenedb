@@ -88,15 +88,15 @@ def _run_until_ready(datadir: Path) -> _Server:
 def test_info_timeline(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     first = _run_until_ready(datadir)
-    for line in ("starting SereneDB ", "Created database directory: ",
+    for line in ("starting SereneDB ", "Created server directory: ",
                  f"listening on postgres://127.0.0.1:{first.port}",
                  "SereneDB is ready for business",
                  "received shutdown signal", "SereneDB is shut down"):
         assert line in first.output(), first.output()
 
     second = _run_until_ready(datadir)
-    assert "Created database directory" not in second.output(), second.output()
-    assert "replayed the log" not in second.output(), second.output()
+    assert "Created server directory" not in second.output(), second.output()
+    assert "replayed the WAL" not in second.output(), second.output()
 
 
 def test_trace_logging_shuts_down_cleanly(tmp_path: Path) -> None:
@@ -126,7 +126,7 @@ def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("recovery: replayed the log into 1 of 1 table(s) in "
+    assert ("recovery: replayed the WAL into 1 of 1 table(s) in "
             in restarted.output()), restarted.output()
 
 
@@ -147,14 +147,14 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("recovery: replayed the log into 1 of 2 table(s) in "
+    assert ("recovery: replayed the WAL into 1 of 2 table(s) in "
             in restarted.output()), restarted.output()
 
 
 def test_terminate_while_starting(tmp_path: Path) -> None:
     server = _Server(tmp_path / "data")
     deadline = time.monotonic() + 60
-    while "Created database directory: " not in server.output():
+    while "Created server directory: " not in server.output():
         assert server.proc.poll() is None, server.output()
         assert time.monotonic() < deadline, server.output()
         time.sleep(0.005)
@@ -172,7 +172,7 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
         second = _Server(datadir)
         try:
             assert second.proc.wait(timeout=60) != 0, second.output()
-            assert (f"the data directory is in use: '{datadir}/PG_VERSION' "
+            assert (f"the server directory is in use: '{datadir}/PG_VERSION' "
                     "is locked by a running server or a read-only attachment"
                     in second.output()), second.output()
         finally:
@@ -225,6 +225,19 @@ def test_io_threads(tmp_path: Path) -> None:
         server.stop()
 
 
+def test_max_temp_directory_size(tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data", args=("--max_temp_directory_size=3GiB",))
+    try:
+        assert server.wait_ready(), server.output()
+        with psycopg.connect(host="127.0.0.1", port=server.port,
+                             user="postgres", dbname="postgres") as conn:
+            assert conn.execute(
+                "SELECT current_setting('max_temp_directory_size')"
+            ).fetchone() == ("3.0 GiB",)
+    finally:
+        server.stop()
+
+
 def test_server_directory_flag_without_a_positional(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     server = _Server(datadir, datadir_flag=True)
@@ -240,7 +253,7 @@ def test_two_positional_data_directories(tmp_path: Path) -> None:
         [SERENED_BIN, str(tmp_path / "a"), str(tmp_path / "b")],
         capture_output=True, text=True, timeout=60)
     assert result.returncode != 0, result
-    assert ("expected at most one positional data-dir arg"
+    assert ("expected at most one positional server-dir arg"
             in result.stderr), result
     assert not (tmp_path / "a").exists()
 
@@ -252,7 +265,7 @@ def test_a_data_directory_that_cannot_be_created(tmp_path: Path) -> None:
     result = subprocess.run([SERENED_BIN, str(datadir)], capture_output=True,
                             text=True, timeout=60)
     assert result.returncode != 0, result
-    assert (f"Unable to create database directory '{datadir}'"
+    assert (f"Unable to create directory '{datadir}'"
             in result.stdout + result.stderr), result
 
 
@@ -263,9 +276,10 @@ def test_a_pg_version_that_cannot_be_checked(tmp_path: Path) -> None:
     result = subprocess.run([SERENED_BIN, str(datadir)], capture_output=True,
                             text=True, timeout=60)
     assert result.returncode != 0, result
-    assert (f"Unable to check '{datadir}/PG_VERSION'"
+    assert (f"cannot open '{datadir}/PG_VERSION': "
+            "Too many levels of symbolic links"
             in result.stdout + result.stderr), result
-    assert not (datadir / "engine_v1").exists()
+    assert [path.name for path in datadir.iterdir()] == ["PG_VERSION"]
 
 
 @pytest.mark.parametrize("relative", [True, False])

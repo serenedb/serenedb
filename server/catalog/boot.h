@@ -41,15 +41,37 @@ struct DBConfig;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-struct DataDirectory {
-  explicit DataDirectory(std::string directory);
+struct LockedOwner;
+
+struct ServerDirectory {
+  ServerDirectory() = default;
+  ServerDirectory(std::string directory, std::string wal,
+                  std::string temp = {});
+
+  static std::string DefaultWal(std::string_view directory);
+  static std::string DefaultTemp(std::string_view directory);
 
   bool InMemory() const noexcept { return directory.empty(); }
-  std::string LogDir() const;
+  bool Remote() const;
+  const std::string& WalDir() const noexcept { return wal; }
+  const std::string& TempDir() const noexcept { return temp; }
+  bool WalHasOwner() const;
+  bool TempHasOwner() const;
+  std::string SnapshotPath() const;
   std::string StoreDir() const;
+  std::string BackupsDir() const;
 
   std::string directory;
-  std::string engine;
+  std::string wal;
+  std::string temp;
+};
+
+struct CatalogStart {
+  bool default_database = true;
+  bool require_existing = false;
+  std::string abandon_wal;
+  LockedOwner* wal_owner = nullptr;
+  LockedOwner* temp_owner = nullptr;
 };
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
@@ -61,9 +83,9 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   duckdb::AttachedDatabase& db, duckdb::Catalog& catalog);
 
 duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
-                                              const DataDirectory& layout);
+                                              const ServerDirectory& layout);
 
-void InitCatalog(bool default_database, bool initialized);
+void InitCatalog(const CatalogStart& start);
 
 void CloseLog();
 

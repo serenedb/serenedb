@@ -35,17 +35,14 @@
 namespace sdb::backup {
 namespace {
 
-constexpr uint64_t kSystemIdentifier = 7696604830604944365ULL;
+constexpr std::string_view kServerHex = "0196e0c4a1b2c3d4e5f60718293a4b5c";
+const UniqueId kServerId = *UniqueId::FromHex(kServerHex);
 constexpr uint64_t kStartLsn = (uint64_t{0x65DD1} << 32) | 0xB480E1C3;
 
-Cut MakeCut() {
-  Cut cut;
-  cut.log_size = 2876;
-  return cut;
-}
+Cut MakeCut() { return {.snapshot = "pg_backup-2876"}; }
 
 std::string Build(std::string_view label = "nightly") {
-  return BuildBackupLabel(label, kStartLsn, kSystemIdentifier,
+  return BuildBackupLabel(label, kStartLsn, kServerId,
                           absl::FromUnixSeconds(1792138223), MakeCut());
 }
 
@@ -63,9 +60,9 @@ std::string WithChecksum(std::string_view body) {
 TEST(BackupLabelTest, RoundTripKeepsEveryField) {
   const auto parsed = ParseBackupLabel(Build());
   ASSERT_TRUE(parsed.ok()) << parsed.status();
-  EXPECT_EQ(parsed->system_identifier, kSystemIdentifier);
+  EXPECT_EQ(parsed->server_id, kServerId);
   EXPECT_EQ(parsed->start_lsn, kStartLsn);
-  EXPECT_EQ(parsed->cut.log_size, MakeCut().log_size);
+  EXPECT_EQ(parsed->cut.snapshot, MakeCut().snapshot);
 }
 
 TEST(BackupLabelTest, StartsWithThePostgresHeader) {
@@ -80,7 +77,9 @@ TEST(BackupLabelTest, StartsWithThePostgresHeader) {
     "LABEL: nightly\n"
     "START TIMELINE: 1\n"))
     << text;
-  EXPECT_TRUE(absl::StrContains(text, "SERENEDB LOG: 2876\n"));
+  EXPECT_TRUE(absl::StrContains(text, "SERENEDB SNAPSHOT: pg_backup-2876\n"));
+  EXPECT_TRUE(absl::StrContains(
+    text, absl::StrCat("SERENEDB SERVER: ", kServerHex, "\n")));
 }
 
 TEST(BackupLabelTest, LabelLineBreaksBecomeSpaces) {
@@ -125,8 +124,8 @@ TEST(BackupLabelTest, RejectsAnUnknownSereneDBKey) {
 
 TEST(BackupLabelTest, RejectsAMissingRequiredLine) {
   for (std::string_view prefix :
-       {"START WAL LOCATION: ", "SERENEDB BACKUP FORMAT: ",
-        "SERENEDB SYSTEM IDENTIFIER: ", "SERENEDB LOG: "}) {
+       {"START WAL LOCATION: ", "SERENEDB BACKUP FORMAT: ", "SERENEDB SERVER: ",
+        "SERENEDB SNAPSHOT: "}) {
     auto body = Body(Build());
     const auto at = body.find(prefix);
     ASSERT_NE(at, std::string::npos) << prefix;
@@ -162,13 +161,18 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
   constexpr Case kCases[] = {
     {"START WAL LOCATION: 65DD1/B480E1C3 ",
      "START WAL LOCATION: 65DD1-B480E1C3 "},
-    {"SERENEDB BACKUP FORMAT: 2\n", "SERENEDB BACKUP FORMAT: 2 2\n"},
-    {"SERENEDB BACKUP FORMAT: 2\n", "SERENEDB BACKUP FORMAT: x\n"},
-    {"SERENEDB SYSTEM IDENTIFIER: 7696604830604944365\n",
-     "SERENEDB SYSTEM IDENTIFIER: x7696604830604944365\n"},
-    {"SERENEDB LOG: 2876\n", "SERENEDB LOG: \n"},
-    {"SERENEDB LOG: 2876\n", "SERENEDB LOG: 2876 12\n"},
-    {"SERENEDB LOG: 2876\n", "SERENEDB LOG: 28x6\n"},
+    {"SERENEDB BACKUP FORMAT: 4\n", "SERENEDB BACKUP FORMAT: 4 4\n"},
+    {"SERENEDB BACKUP FORMAT: 4\n", "SERENEDB BACKUP FORMAT: x\n"},
+    {"SERENEDB SERVER: 0196e0c4a1b2c3d4e5f60718293a4b5c\n",
+     "SERENEDB SERVER: x196e0c4a1b2c3d4e5f60718293a4b5c\n"},
+    {"SERENEDB SERVER: 0196e0c4a1b2c3d4e5f60718293a4b5c\n",
+     "SERENEDB SERVER: 0196e0c4a1b2c3d4\n"},
+    {"SERENEDB SERVER: 0196e0c4a1b2c3d4e5f60718293a4b5c\n",
+     "SERENEDB SERVER: 00000000000000000000000000000000\n"},
+    {"SERENEDB SNAPSHOT: pg_backup-2876\n", "SERENEDB SNAPSHOT: \n"},
+    {"SERENEDB SNAPSHOT: pg_backup-2876\n", "SERENEDB SNAPSHOT: ..\n"},
+    {"SERENEDB SNAPSHOT: pg_backup-2876\n",
+     "SERENEDB SNAPSHOT: ../pg_backup-2876\n"},
   };
   for (const auto& c : kCases) {
     const auto body = absl::StrReplaceAll(Body(Build()), {{c.from, c.to}});
@@ -187,10 +191,10 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
 TEST(BackupLabelTest, RejectsALabelOfAnEarlierLayout) {
   const auto body = absl::StrReplaceAll(
     Body(Build()),
-    {{"SERENEDB BACKUP FORMAT: 2\n", "SERENEDB BACKUP FORMAT: 1\n"}});
+    {{"SERENEDB BACKUP FORMAT: 4\n", "SERENEDB BACKUP FORMAT: 3\n"}});
   const auto parsed = ParseBackupLabel(WithChecksum(body));
   ASSERT_FALSE(parsed.ok());
-  EXPECT_EQ(parsed.status().message(), "unsupported backup_label format 1");
+  EXPECT_EQ(parsed.status().message(), "unsupported backup_label format 3");
 }
 
 }  // namespace

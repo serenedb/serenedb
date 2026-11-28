@@ -39,6 +39,8 @@ namespace sdb::lifecycle {
 namespace {
 
 std::atomic_bool gIsStopping = false;
+std::atomic_bool gHandover = false;
+std::atomic_bool gShutdownFailed = false;
 std::string gDataDirArg;
 
 // eventfd-backed wakeup channel. Created at static-init time so that
@@ -103,6 +105,23 @@ void BeginShutdown() noexcept {
   }
 }
 
+void BeginHandover() noexcept {
+  gHandover.store(true, std::memory_order_release);
+  BeginShutdown();
+}
+
+bool HandoverRequested() noexcept {
+  return gHandover.load(std::memory_order_acquire);
+}
+
+void FailShutdown() noexcept {
+  gShutdownFailed.store(true, std::memory_order_release);
+}
+
+bool ShutdownFailed() noexcept {
+  return gShutdownFailed.load(std::memory_order_acquire);
+}
+
 void WaitForShutdown() noexcept {
   uint64_t v;
   while (true) {
@@ -131,6 +150,9 @@ std::string ResolveDataDir(std::string flag_value) {
   }
   dir.erase(dir.find_last_not_of(std::filesystem::path::preferred_separator) +
             1);
+  if (duckdb::Path::IsRemote(dir)) {
+    return dir;
+  }
   std::error_code ec;
   if (auto abs = std::filesystem::absolute(dir, ec); !ec) {
     dir = duckdb::Path::Normalize(abs.string());

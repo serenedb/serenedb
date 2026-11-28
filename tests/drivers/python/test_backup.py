@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import random
-import shutil
 import threading
 import time
 from collections import Counter
@@ -511,14 +510,14 @@ def _retained_backup(tmp_path: Path) -> Path:
             backup.execute("SELECT pg_backup_start('retained')")
             with _connect(source, "st") as conn:
                 conn.execute("INSERT INTO docs SELECT i, 'after' FROM range(4000, 4010) r(i)")
-            shutil.copytree(source.datadir, copy, symlinks=True)
+            _copy_tree(Path(source.datadir), copy, random.Random(0))
             (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
     finally:
         source.stop()
 
     (copy / "backup_label").write_text(label)
-    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
-    assert len(chunks) >= 2, chunks
+    pins = list((copy / "backups").iterdir())
+    assert len(pins) == 1, pins
     return copy
 
 
@@ -544,17 +543,15 @@ def test_backup_restores_rows_held_only_in_the_log(tmp_path: Path) -> None:
         restored.stop()
 
 
-@pytest.mark.parametrize("missing", ["oldest", "newest"])
-def test_backup_without_a_log_file_refuses_to_boot(tmp_path: Path, missing: str) -> None:
+def test_backup_without_its_snapshot_refuses_to_boot(tmp_path: Path) -> None:
     copy = _retained_backup(tmp_path)
-    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
-    name = (chunks[0] if missing == "oldest" else chunks[-1]).name
-    for directory in ("backup", "wal"):
-        (copy / "engine_v1" / directory / name).unlink(missing_ok=True)
+    for pin in (copy / "backups").iterdir():
+        pin.unlink()
     restored = Serened(SERENED_BIN, datadir=str(copy),
                        log_path=str(tmp_path / "restored.log"))
     try:
-        with pytest.raises(RuntimeError, match="the copy is incomplete"):
+        with pytest.raises(RuntimeError,
+                           match="the copy has no snapshot of the backup"):
             restored.start()
         assert (copy / "backup_label").is_file()
     finally:
@@ -610,7 +607,7 @@ def test_backup_of_a_database_with_a_failed_checkpoint(tmp_path: Path, abort: st
             with _connect(source, "fc") as conn:
                 conn.execute("INSERT INTO t SELECT i, 'after' FROM range(5000, 5100) r(i)")
                 conn.execute("INSERT INTO s SELECT i, 'after' FROM range(5000, 5010) r(i)")
-            shutil.copytree(source.datadir, copy, symlinks=True)
+            _copy_tree(Path(source.datadir), copy, random.Random(0))
             (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
         source.stop()
 
@@ -637,6 +634,42 @@ def test_backup_of_a_database_with_a_failed_checkpoint(tmp_path: Path, abort: st
 BULK_ROWS = 500_000
 
 
+def test_a_copy_with_its_label_attaches_as_of_the_backup(tmp_path: Path) -> None:
+    source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "source.log"))
+    try:
+        source.start()
+        with _connect(source) as conn:
+            conn.execute("CREATE DATABASE hot")
+        with _connect(source, "hot") as conn:
+            conn.execute("CREATE TABLE t (x BIGINT) WITH (compaction_interval = 0)")
+            for part in range(4):
+                conn.execute(f"INSERT INTO t SELECT i FROM range({part * 250}, "
+                             f"{(part + 1) * 250}) r(i)")
+                conn.execute("VACUUM (FLUSH_TABLE) t")
+
+        copy = tmp_path / "copy"
+        with _connect(source) as backup:
+            backup.execute("SELECT pg_backup_start('hot')")
+            with _connect(source, "hot") as conn:
+                conn.execute("INSERT INTO t SELECT -i FROM range(1, 11) r(i)")
+                conn.execute("VACUUM (COMPACT_TABLE) t")
+                conn.execute("CHECKPOINT")
+            _copy_tree(Path(source.datadir), copy, random.Random(0))
+            (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
+        (copy / "backup_label").write_text(label)
+
+        with _connect(source) as conn:
+            conn.execute("CREATE SERVER hot_copy FOREIGN DATA WRAPPER serenedb_fdw "
+                         f"OPTIONS (path '{copy}', database 'hot')")
+            assert conn.execute(
+                "SELECT count(*), min(x), sum(x) FROM hot_copy.public.t").fetchone() == (
+                    1000, 0, 499500)
+        assert (copy / "backup_label").is_file()
+    finally:
+        source.stop()
+
+
 def test_backup_keeps_a_table_dropped_during_the_backup(tmp_path: Path) -> None:
     source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
                      log_path=str(tmp_path / "source.log"))
@@ -655,7 +688,7 @@ def test_backup_keeps_a_table_dropped_during_the_backup(tmp_path: Path) -> None:
                 conn.execute("CREATE TABLE reused (x BIGINT, tag TEXT)")
                 conn.execute(f"INSERT INTO reused SELECT -i, 'reused' "
                              f"FROM range({BULK_ROWS}) r(i)")
-            shutil.copytree(source.datadir, copy, symlinks=True)
+            _copy_tree(Path(source.datadir), copy, random.Random(0))
             (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
         source.stop()
 
@@ -701,7 +734,7 @@ def _back_up_an_enabled_subscription(tmp_path: Path) -> Path:
         copy = tmp_path / "copy"
         with _connect(source) as backup:
             backup.execute("SELECT pg_backup_start('subscriptions')")
-            shutil.copytree(source.datadir, copy, symlinks=True)
+            _copy_tree(Path(source.datadir), copy, random.Random(0))
             (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
         source.restart()
         assert _subscription_enabled(source)
@@ -718,7 +751,7 @@ def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> N
     try:
         restored.start()
         assert not _subscription_enabled(restored)
-        assert not (copy / "engine_v1" / "subscriptions.hold").exists()
+        assert not (copy / "subscriptions.hold").exists()
         _expect_one_warning(
             tmp_path / "restored.log",
             'subscription "bsub" in database "postgres" was disabled because the '

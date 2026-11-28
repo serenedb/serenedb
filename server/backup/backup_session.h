@@ -23,25 +23,31 @@
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
-#include <duckdb/common/shared_ptr.hpp>
-#include <duckdb/common/typedefs.hpp>
-#include <duckdb/common/unique_ptr.hpp>
-#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "pg/progress_registry.h"
-#include "utils/drain_gate.h"
 
 namespace sdb::backup {
 
-inline constexpr std::string_view kBackupDir = "backup";
+inline constexpr std::string_view kSessionPinPrefix = "pg_backup-";
 
 struct Cut {
-  uint64_t log_size = 0;
+  std::string snapshot;
 };
+
+struct CreatedBackup {
+  uint64_t start_lsn = 0;
+  std::string label_file;
+};
+
+CreatedBackup CreateBackup(duckdb::ClientContext& context,
+                           std::string_view name,
+                           pg::ProgressMetrics& progress);
+void DropBackup(std::string_view name);
+std::vector<std::string> Backups();
 
 struct BackupOwner {
   const void* session = nullptr;
@@ -68,9 +74,7 @@ class BackupSession final {
 
   absl::Mutex _mutex;
   bool _active ABSL_GUARDED_BY(_mutex) = false;
-  utils::DrainGate::Closed _checkpoints ABSL_GUARDED_BY(_mutex);
-  utils::DrainGate::Closed _maintenance ABSL_GUARDED_BY(_mutex);
-  std::string _backup_dir ABSL_GUARDED_BY(_mutex);
+  std::string _name ABSL_GUARDED_BY(_mutex);
   BackupOwner _owner ABSL_GUARDED_BY(_mutex);
   std::string _label_file ABSL_GUARDED_BY(_mutex);
 };

@@ -103,7 +103,7 @@ The same holds between concurrent transactions: when one transaction drops an ob
 
 ## Reclaiming Disk Space
 
-`DROP TABLE`, `DROP INDEX` and `DROP DATABASE` remove the files of the dropped objects once the dropping transaction commits and no running query reads them; while a [backup](../../../operations/backup.md) runs, the files stay until `pg_backup_stop`. `PRAGMA database_size` reports, for each database, the size of its tables and indexes in `database_size`:
+`DROP TABLE`, `DROP INDEX` and `DROP DATABASE` remove the files of the dropped objects once the dropping transaction commits and no running query reads them; while a [backup](../../../operations/backup.md) runs, the files it uses stay until `pg_backup_stop`. `PRAGMA database_size` reports, for each database, the size of its tables and indexes in `database_size`:
 
 <SqlLogicTest id="sql/statements/drop/index/example_013" />
 

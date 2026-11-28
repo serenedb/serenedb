@@ -83,6 +83,7 @@ add_library(
     registry.cpp
     signals.cpp
     striped_counters.cpp
+    unique_id.cpp
 )
 add_dependencies(serene serene_build_commit)
 

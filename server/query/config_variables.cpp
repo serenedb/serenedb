@@ -1109,9 +1109,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       kMaxWalSizeSetting,
       {
         LogicalTypeId::VARCHAR,
-        "Size of the write-ahead log written since the last log snapshot at "
-        "which the server writes a new snapshot and removes the log files it "
-        "covers, such as '1GB' or '64MB'. Bounds the log on disk and the part "
+        "Size of the write-ahead log (WAL) written since the last snapshot at "
+        "which the server writes a new snapshot and removes the WAL files it "
+        "covers, such as '1GB' or '64MB'. Bounds the WAL on disk and the part "
         "of it a restart replays. Default '1GB'. Server-global.",
         [] { return duckdb::Value{"1GB"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {

@@ -20,7 +20,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_dirty && mkdir -p $__TEST_DIR__/sfa_dirty/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_dirty/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_dirty/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_dirty/
+rm -rf $__TEST_DIR__/sfa_dirty && mkdir -p $__TEST_DIR__/sfa_dirty && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_dirty/
 
 connection holder
 statement ok
@@ -100,7 +100,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_new && mkdir -p $__TEST_DIR__/sfa_new/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_new/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_new/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_new/
+rm -rf $__TEST_DIR__/sfa_new && mkdir -p $__TEST_DIR__/sfa_new && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_new/
 
 connection holder
 statement ok
@@ -169,16 +169,16 @@ db error: ERROR: option "path" is required for serenedb_fdw
 statement error
 CREATE SERVER sfa_missing FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nowhere');
 ----
-db error: ERROR: could not open data directory "<slt:ignore>/sfa_nowhere": No such file or directory
+db error: ERROR: could not open server directory "<slt:ignore>/sfa_nowhere": No such file or directory
 
 
 system ok
-rm -rf $__TEST_DIR__/sfa_nolog && mkdir -p $__TEST_DIR__/sfa_nolog/engine_v1 && cp -r $__TEST_DIR__/sfa_new/engine_v1/store $__TEST_DIR__/sfa_nolog/engine_v1/
+rm -rf $__TEST_DIR__/sfa_nolog && mkdir -p $__TEST_DIR__/sfa_nolog && cp -r $__TEST_DIR__/sfa_new/wal $__TEST_DIR__/sfa_new/segments $__TEST_DIR__/sfa_new/PG_VERSION $__TEST_DIR__/sfa_nolog/
 
 statement error
 CREATE SERVER sfa_nolog FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nolog');
 ----
-db error: ERROR: "<slt:ignore>/sfa_nolog" is not a SereneDB data directory
+db error: ERROR: "<slt:ignore>/sfa_nolog" is not a SereneDB server directory
 
 
 statement error
@@ -193,13 +193,13 @@ CREATE SERVER sfa_option FOREIGN DATA WRAPPER serenedb_fdw
   OPTIONS (path '${__TEST_DIR__}/sfa_new', colour 'blue');
 ----
 db error: ERROR: invalid option "colour"
-HINT: A SereneDB data directory takes the options path and database.
+HINT: A SereneDB server directory takes the options path and database.
 
 
 statement error
 CREATE SERVER sfa_own FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}');
 ----
-db error: ERROR: could not attach "<slt:ignore>": the data directory is in use: '<slt:ignore>' is locked by a running server; stop it first
+db error: ERROR: could not attach "<slt:ignore>": the server directory is in use: '<slt:ignore>' is locked by a running server; stop it first
 
 
 system ok
@@ -208,14 +208,14 @@ rm -f $__TEST_DIR__/sfa_own_link && ln -s ${SDB_DATADIR} $__TEST_DIR__/sfa_own_l
 statement error
 CREATE SERVER sfa_own_link FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_own_link');
 ----
-db error: ERROR: could not attach "<slt:ignore>": the data directory is in use: '<slt:ignore>' is locked by a running server; stop it first
+db error: ERROR: could not attach "<slt:ignore>": the server directory is in use: '<slt:ignore>' is locked by a running server; stop it first
 
 
 statement error
 CREATE SERVER sfa_rw FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_new', read_only 'false');
 ----
 db error: ERROR: cannot attach "<slt:ignore>/sfa_new" as a SereneDB database: a SereneDB database is created with CREATE DATABASE
-HINT: Attach the data directory of another server with READ_ONLY.
+HINT: Attach the server directory of another server with READ_ONLY.
 
 
 query
@@ -248,7 +248,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_aborted && mkdir -p $__TEST_DIR__/sfa_aborted/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_aborted/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_aborted/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_aborted/
+rm -rf $__TEST_DIR__/sfa_aborted && mkdir -p $__TEST_DIR__/sfa_aborted && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_aborted/
 
 connection holder
 statement ok

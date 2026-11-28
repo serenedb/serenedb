@@ -11,7 +11,7 @@ RESET sdb_faults;
 statement ok
 CREATE MACRO lx_stale() AS (
   (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1))
-   FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+   FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/segments/*')
    WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '')
   - (SELECT sum(value) FROM sdb_metrics WHERE metric = 'num_segments'));
 
@@ -200,7 +200,7 @@ connection after_alter_crash
 statement error
 CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (body);
 ----
-db error: ERROR: catalog log: could not append the transaction
+db error: ERROR: catalog WAL: could not append the transaction
 
 
 connection after_alter_crash

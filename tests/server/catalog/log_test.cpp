@@ -19,10 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <array>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
@@ -34,6 +34,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "catalog/log.h"
@@ -66,7 +67,6 @@ std::vector<std::vector<uint8_t>> Keep(
 
 class FailingFileSystem final : public duckdb::LocalFileSystem {
  public:
-  bool fail_listing = false;
   bool fail_reads = false;
   bool fail_writes = false;
   bool fail_removal = false;
@@ -94,35 +94,27 @@ class FailingFileSystem final : public duckdb::LocalFileSystem {
     }
     return LocalFileSystem::TryRemoveFile(filename, opener);
   }
-
- protected:
-  bool ListFilesExtended(
-    const std::string& directory,
-    const std::function<void(duckdb::OpenFileInfo& info)>& callback,
-    duckdb::optional_ptr<duckdb::FileOpener> opener,
-    const duckdb::ListFilesOptions& options) final {
-    if (fail_listing) {
-      throw duckdb::IOException("the disk refused the listing");
-    }
-    return LocalFileSystem::ListFilesExtended(directory, callback, opener,
-                                              options);
-  }
 };
 
 class LogTest : public ::testing::Test {
  protected:
   void SetUp() final {
-    _dir = std::filesystem::temp_directory_path() /
-           absl::StrCat("log_test_", ::getpid());
-    std::filesystem::remove_all(_dir);
+    _root = std::filesystem::temp_directory_path() /
+            absl::StrCat("log_test_", ::getpid());
+    _dir = _root / "wal";
+    std::filesystem::remove_all(_root);
+    std::filesystem::create_directories(_root);
   }
 
-  void TearDown() final { std::filesystem::remove_all(_dir); }
+  void TearDown() final { std::filesystem::remove_all(_root); }
+
+  std::filesystem::path SnapshotPath() const { return _root / "snapshot"; }
 
   std::unique_ptr<Log> Open() {
     _records.clear();
-    auto log = std::make_unique<Log>(*_fs, _dir);
-    log->Replay(
+    auto log =
+      std::make_unique<Log>(*_fs, _dir.string(), SnapshotPath().string());
+    _replayed = log->Replay(
       [&](std::span<uint8_t> payload) {
         _records.emplace_back(payload.begin(), payload.end());
       },
@@ -130,9 +122,11 @@ class LogTest : public ::testing::Test {
     return log;
   }
 
-  static void Snapshot(Log& log, Lsn covered) {
+  static void Snapshot(Log& log, Lsn covered, bool clean = false,
+                       std::span<const uint64_t> segments = {}) {
     log.WriteSnapshot(
-      covered, {}, [](std::span<uint8_t> payload) { return payload; }, &Keep);
+      covered, segments, {}, [](std::span<uint8_t> payload) { return payload; },
+      &Keep, clean);
   }
 
   struct Written {
@@ -149,10 +143,6 @@ class LogTest : public ::testing::Test {
 
   std::filesystem::path Chunk(uint64_t number) const {
     return _dir / Log::ChunkName(number);
-  }
-
-  std::filesystem::path SnapshotFile(uint64_t sequence) const {
-    return _dir / absl::StrFormat("%016x.snapshot", sequence);
   }
 
   void Overwrite(uint64_t number, uint64_t at, const std::string& bytes) const {
@@ -183,8 +173,10 @@ class LogTest : public ::testing::Test {
 
   std::unique_ptr<FailingFileSystem> _fs =
     std::make_unique<FailingFileSystem>();
+  std::filesystem::path _root;
   std::filesystem::path _dir;
   std::vector<std::string> _records;
+  Log::Replayed _replayed;
 };
 
 TEST_F(LogTest, ReplayFollowsTheChunks) {
@@ -279,73 +271,58 @@ TEST_F(LogTest, ASnapshotOfTheWholeLogKeepsTheCurrentChunk) {
   EXPECT_FALSE(std::filesystem::exists(Chunk(2)));
 }
 
-TEST_F(LogTest, EachSnapshotIsWrittenOnceUnderItsOwnNumber) {
+TEST_F(LogTest, ASnapshotReplacesThePreviousOne) {
   {
     auto log = Open();
     const auto a = log->Append(Bytes(Payload('A')));
     Snapshot(*log, a);
-    EXPECT_TRUE(std::filesystem::exists(SnapshotFile(1)));
+    const auto first = std::filesystem::file_size(SnapshotPath());
     const auto b = log->Append(Bytes(Payload('B')));
     Snapshot(*log, b);
-    EXPECT_FALSE(std::filesystem::exists(SnapshotFile(1)));
-    EXPECT_TRUE(std::filesystem::exists(SnapshotFile(2)));
+    EXPECT_GT(std::filesystem::file_size(SnapshotPath()), first);
     log->Append(Bytes(Payload('C')));
   }
+  EXPECT_EQ(std::distance(std::filesystem::directory_iterator{_root},
+                          std::filesystem::directory_iterator{}),
+            2);
   Open();
+  EXPECT_TRUE(_replayed.snapshot);
+  EXPECT_FALSE(_replayed.clean);
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B'), Payload('C')}));
 }
 
-TEST_F(LogTest, ASnapshotThePointerDoesNotNameYetIsRemoved) {
+TEST_F(LogTest, AnInterruptedReplaceKeepsThePreviousSnapshot) {
   {
     auto log = Open();
     const auto a = log->Append(Bytes(Payload('A')));
     Snapshot(*log, a);
     log->Append(Bytes(Payload('B')));
   }
-  std::ofstream{SnapshotFile(2)} << "cut short by a crash";
+  const auto replacing = _root / "snapshot.tmp";
+  std::ofstream{replacing} << "cut short by a crash";
   Open();
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
-  EXPECT_FALSE(std::filesystem::exists(SnapshotFile(2)));
-  EXPECT_TRUE(std::filesystem::exists(SnapshotFile(1)));
+  EXPECT_FALSE(std::filesystem::exists(replacing));
+  EXPECT_TRUE(std::filesystem::exists(SnapshotPath()));
 }
 
-TEST_F(LogTest, TheSnapshotThePointerMovedFromIsRemoved) {
-  {
-    auto log = Open();
-    const auto a = log->Append(Bytes(Payload('A')));
-    Snapshot(*log, a);
-    const auto b = log->Append(Bytes(Payload('B')));
-    Snapshot(*log, b);
-  }
-  std::ofstream{SnapshotFile(1)} << "left by a crash";
-  Open();
-  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
-  EXPECT_FALSE(std::filesystem::exists(SnapshotFile(1)));
-  EXPECT_TRUE(std::filesystem::exists(SnapshotFile(2)));
-}
-
-TEST_F(LogTest, ADamagedSnapshotPointerIsRefused) {
+TEST_F(LogTest, ASnapshotWithoutItsLogIsRefused) {
   {
     auto log = Open();
     const auto a = log->Append(Bytes(Payload('A')));
     Snapshot(*log, a);
   }
-  {
-    std::fstream pointer{_dir / "current_snapshot",
-                         std::ios::in | std::ios::out | std::ios::binary};
-    pointer.seekp(8);
-    pointer.put('\x7f');
-  }
+  std::filesystem::remove_all(_dir);
   EXPECT_THROW(Open(), irs::SqlException);
 }
 
-TEST_F(LogTest, AMissingSnapshotIsRefused) {
+TEST_F(LogTest, ASnapshotAtTheStartOfItsChunkWithoutItsLogIsRefused) {
   {
     auto log = Open();
-    const auto a = log->Append(Bytes(Payload('A')));
-    Snapshot(*log, a);
+    Snapshot(*log, 0);
+    log->Append(Bytes(Payload('A')));
   }
-  std::filesystem::remove(SnapshotFile(1));
+  std::filesystem::remove_all(_dir);
   EXPECT_THROW(Open(), irs::SqlException);
 }
 
@@ -355,44 +332,119 @@ TEST_F(LogTest, ADamagedSnapshotIsRefused) {
     const auto a = log->Append(Bytes(Payload('A')));
     Snapshot(*log, a);
   }
-  Damage(SnapshotFile(1), "cut short");
+  Damage(SnapshotPath(), "cut short");
   EXPECT_THROW(Open(), irs::SqlException);
 }
 
-TEST_F(LogTest, ACutBeforeTheSnapshotIsRefused) {
-  Lsn a = 0;
+TEST_F(LogTest, ASnapshotOfAnotherVersionIsRefused) {
+  struct Header {
+    uint64_t version;
+    Lsn covered;
+    uint64_t number;
+    Lsn begin;
+    uint64_t clean;
+    std::array<uint8_t, UniqueId::kBytes> server_id;
+    std::array<uint8_t, 32> mock_nonce;
+  };
+  const Header header{.version = uint64_t{1} << 40};
+  const std::string payload{reinterpret_cast<const char*>(&header),
+                            sizeof(header)};
+  {
+    Open()->Append(Bytes(payload));
+  }
+  Damage(SnapshotPath(),
+         ReadBytes(0, 0, RecordBuffer::kFrameBytes + payload.size()));
+  try {
+    Open();
+    ADD_FAILURE() << "the snapshot was read";
+  } catch (const irs::SqlException& e) {
+    EXPECT_NE(std::string_view{e.what()}.find("storage version"),
+              std::string_view::npos)
+      << e.what();
+  }
+}
+
+TEST_F(LogTest, ASnapshotKeepsTheIdentityOfItsServer) {
+  const Log::Identity identity{.server_id = UniqueId::New(), .mock_nonce = {7}};
+  const auto path = SnapshotPath().string();
+  EXPECT_FALSE(Log::ReadIdentity(*_fs, path));
   {
     auto log = Open();
-    a = log->Append(Bytes(Payload('A')));
-    const auto b = log->Append(Bytes(Payload('B')));
-    Snapshot(*log, b);
+    EXPECT_FALSE(_replayed.identity);
+    log->SetIdentity(identity);
+    Snapshot(*log, log->Append(Bytes(Payload('A'))));
   }
-  EXPECT_THROW(Log::Cut(*_fs, _dir.string(), a), irs::SqlException);
+  EXPECT_EQ(Log::ReadIdentity(*_fs, path), identity);
+  Open();
+  EXPECT_EQ(_replayed.identity, identity);
+  std::filesystem::resize_file(SnapshotPath(), 4);
+  EXPECT_THROW(Log::ReadIdentity(*_fs, path), irs::SqlException);
 }
 
-TEST_F(LogTest, AnEmptyLogIsCutAtItsStart) {
-  std::filesystem::create_directories(_dir);
-  Log::Cut(*_fs, _dir.string(), 0);
+TEST_F(LogTest, ASnapshotListsTheSegmentsItHolds) {
+  const std::vector<uint64_t> segments{7, 3, 11};
+  const auto path = SnapshotPath().string();
+  {
+    auto log = Open();
+    Snapshot(*log, log->Append(Bytes(Payload('A'))), false, segments);
+    log->Append(Bytes(Payload('B')));
+  }
+  EXPECT_EQ(Log::ReadSegments(*_fs, path), segments);
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+  std::filesystem::resize_file(SnapshotPath(), 4);
+  EXPECT_THROW(std::ignore = Log::ReadSegments(*_fs, path), irs::SqlException);
+}
+
+TEST_F(LogTest, ACleanSnapshotStartsWithoutTheLog) {
+  {
+    auto log = Open();
+    log->Append(Bytes(Half('A')));
+    const auto b = log->Append(Bytes(Half('B')));
+    Snapshot(*log, b, true);
+    log->Clear();
+  }
   EXPECT_TRUE(std::filesystem::is_empty(_dir));
+  {
+    auto log = Open();
+    EXPECT_TRUE(_replayed.clean);
+    EXPECT_EQ(_records, (std::vector{Half('A'), Half('B')}));
+    log->Append(Bytes(Payload('C')));
+  }
+  Open();
+  EXPECT_FALSE(_replayed.clean);
+  EXPECT_EQ(_records, (std::vector{Half('A'), Half('B'), Payload('C')}));
 }
 
-TEST_F(LogTest, ALogDirectoryWithForeignFilesIsKept) {
+TEST_F(LogTest, ADiscardedLogContinuesAfterTheSnapshot) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Half('A')));
+    Snapshot(*log, a);
+    log->Append(Bytes(Half('B')));
+    log->Append(Bytes(Half('C')));
+  }
+  EXPECT_TRUE(std::filesystem::exists(Chunk(1)));
+  Log::Discard(*_fs, _dir.string(), SnapshotPath().string());
+  EXPECT_FALSE(std::filesystem::exists(Chunk(1)));
+  {
+    auto log = Open();
+    EXPECT_FALSE(_replayed.clean);
+    EXPECT_EQ(_records, std::vector{Half('A')});
+    log->Append(Bytes(Payload('D')));
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Half('A'), Payload('D')}));
+}
+
+TEST_F(LogTest, NoLogIsDiscardedWithoutASnapshot) {
   {
     Open()->Append(Bytes(Payload('A')));
   }
-  std::filesystem::create_directory(_dir / "foreign");
-  EXPECT_FALSE(Log::Remove(*_fs, _dir.string()));
-  EXPECT_FALSE(std::filesystem::exists(Chunk(0)));
-  EXPECT_TRUE(std::filesystem::exists(_dir / "foreign"));
-}
-
-TEST_F(LogTest, ALogThatCannotBeListedIsKept) {
-  {
-    Open()->Append(Bytes(Payload('A')));
-  }
-  _fs->fail_listing = true;
-  EXPECT_FALSE(Log::Remove(*_fs, _dir.string()));
-  EXPECT_TRUE(std::filesystem::exists(Chunk(0)));
+  EXPECT_THROW(Log::Discard(*_fs, _dir.string(), SnapshotPath().string()),
+               irs::SqlException);
+  Open();
+  EXPECT_EQ(_records, std::vector{Payload('A')});
 }
 
 TEST_F(LogTest, ANextChunkThatCannotBeWrittenIsNotUsed) {
@@ -411,18 +463,20 @@ TEST_F(LogTest, ANextChunkThatCannotBeWrittenIsNotUsed) {
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
 }
 
-TEST_F(LogTest, ALinkOverAnExistingFileIsRefused) {
-  const auto copy = _dir.string() + "_copy";
-  std::filesystem::remove_all(copy);
+TEST_F(LogTest, APinKeepsTheSnapshotItCopied) {
+  const auto pin = (_root / "pin").string();
   {
     auto log = Open();
     const auto a = log->Append(Bytes(Payload('A')));
     Snapshot(*log, a);
-    log->Append(Bytes(Payload('B')));
-    EXPECT_EQ(log->Link(copy), log->Durable());
-    EXPECT_THROW(log->Link(copy), irs::SqlException);
+    log->Pin(pin);
+    const auto b = log->Append(Bytes(Payload('B')));
+    Snapshot(*log, b);
   }
-  std::filesystem::remove_all(copy);
+  Log::Copy(*_fs, pin, SnapshotPath().string());
+  Log::Discard(*_fs, _dir.string(), SnapshotPath().string());
+  Open();
+  EXPECT_EQ(_records, std::vector{Payload('A')});
 }
 
 TEST_F(LogTest, ARecordOverTheSizeLimitIsRefused) {

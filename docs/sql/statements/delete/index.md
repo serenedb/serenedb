@@ -38,7 +38,7 @@ A [job](../create_job/index.md) that deletes rows older than a cutoff keeps a ta
 
 <SqlLogicTest id="sql/statements/delete/index/example_007" />
 
-The log space of a delete grows with the number of stretches of consecutive rows it removes, not with the number of rows: the oldest rows of a table filled in time order are one stretch, however many rows go. Rows deleted one by one from among rows that stay are a stretch each. Finding the rows to delete still reads each of them.
+The write-ahead log (WAL) space of a delete grows with the number of stretches of consecutive rows it removes, not with the number of rows: the oldest rows of a table filled in time order are one stretch, however many rows go. Rows deleted one by one from among rows that stay are a stretch each. Finding the rows to delete still reads each of them.
 
 ## Syntax
 

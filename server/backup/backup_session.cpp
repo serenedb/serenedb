@@ -20,39 +20,35 @@
 
 #include "backup/backup_session.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 #include <absl/time/clock.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
+#include <span>
 #include <utility>
 
 #include "backup/backup_label.h"
 #include "backup/commit_gate.h"
 #include "backup/pg_control.h"
+#include "catalog/boot.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
 #include "catalog/log.h"
+#include "catalog/pins.h"
 #include "catalog/transaction.h"
-#include "search/engine.h"
-#include "search/store.h"
-#include "search/task.h"
 
 namespace sdb::backup {
 namespace {
 
-Cut RecordCut(duckdb::ClientContext& context, const std::string& backup_dir,
-              pg::ProgressMetrics& progress) {
-  Cut cut;
-  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
-  const auto commits = CommitGate().Close(context);
-  auto* log = catalog::Transactions::Get().GetLog();
-  SDB_ENSURE(log, "cannot start a backup of a server without a log");
-  cut.log_size = log->Link(backup_dir);
-  return cut;
-}
+constexpr std::string_view kReplacingSuffix = ".tmp";
 
 std::optional<duckdb::Identifier> UserTablespace() {
   std::optional<duckdb::Identifier> found;
@@ -66,7 +62,107 @@ std::optional<duckdb::Identifier> UserTablespace() {
   return found;
 }
 
+void CheckName(std::string_view name) {
+  const bool valid =
+    !name.empty() && name.front() != '.' &&
+    !absl::EndsWith(name, kReplacingSuffix) &&
+    !name.starts_with(kSessionPinPrefix) && absl::c_all_of(name, [](char c) {
+      return absl::ascii_isalnum(c) || c == '_' || c == '-' || c == '.';
+    });
+  if (!valid) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_NAME),
+      ERR_MSG("invalid backup name \"", name, "\""),
+      ERR_DETAIL("A backup name holds letters, digits, '_', '-' and '.', does "
+                 "not start with '.', does not end with \"",
+                 kReplacingSuffix, "\" and does not start with \"",
+                 kSessionPinPrefix, "\"."));
+  }
+}
+
+CreatedBackup Create(duckdb::ClientContext& context, std::string_view name,
+                     std::string_view label, uint64_t start_lsn,
+                     pg::ProgressMetrics& progress) {
+  if (const auto tablespace = UserTablespace()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot start a backup: tablespace \"",
+                            tablespace->GetIdentifierName(),
+                            "\" keeps its files outside the server directory"),
+                    ERR_DETAIL("A backup copies only the server directory."));
+  }
+  auto& transactions = catalog::Transactions::Get();
+  auto* log = transactions.GetLog();
+  SDB_ENSURE(log, "cannot start a backup of a server without a WAL");
+  const auto& layout = catalog::ClusterOf().Layout();
+  auto& fs = catalog::StorageFileSystem();
+  fs.CreateDirectoryExtended(
+    layout.BackupsDir(),
+    {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
+
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
+  const auto checkpoints = transactions.CloseCheckpoints(context);
+  auto& pins = catalog::Pins::Get();
+  if (pins.Contains(name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("backup \"", name, "\" already exists"));
+  }
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
+  const auto commits = CommitGate().Close(context);
+  const auto pin = fs.JoinPath(layout.BackupsDir(), name);
+  absl::Cleanup drop_pin = [&] {
+    fs.TryRemoveFile(pin);
+    catalog::RemoveParked(pins.Remove(name));
+  };
+  const auto status = transactions.TruncateLog(
+    checkpoints, [&](std::span<const uint64_t> segments) {
+      log->Pin(pin);
+      pins.Add(std::string{name}, segments);
+    });
+  if (!status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("cannot start a backup: the checkpoint failed: ",
+                            status.message()));
+  }
+  CreatedBackup created{
+    .start_lsn = start_lsn,
+    .label_file =
+      BuildBackupLabel(label, start_lsn, PositionSource::Instance().ServerId(),
+                       absl::Now(), {.snapshot = std::string{name}}),
+  };
+  std::move(drop_pin).Cancel();
+  return created;
+}
+
+void Drop(std::string_view name) {
+  const auto& layout = catalog::ClusterOf().Layout();
+  auto& fs = catalog::StorageFileSystem();
+  fs.RemoveFile(fs.JoinPath(layout.BackupsDir(), name));
+  fs.SyncDirectory(layout.BackupsDir());
+  catalog::RemoveParked(catalog::Pins::Get().Remove(name));
+}
+
 }  // namespace
+
+CreatedBackup CreateBackup(duckdb::ClientContext& context,
+                           std::string_view name,
+                           pg::ProgressMetrics& progress) {
+  CheckName(name);
+  progress.SetCommand(pg::ProgressCommand::BaseBackup);
+  progress.SetPhase(pg::progress_phase::BaseBackup::Initializing);
+  return Create(context, name, name, PositionSource::Instance().Issue(),
+                progress);
+}
+
+void DropBackup(std::string_view name) {
+  if (!catalog::Pins::Get().Contains(name) ||
+      name.starts_with(kSessionPinPrefix)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("backup \"", name, "\" does not exist"));
+  }
+  Drop(name);
+}
+
+std::vector<std::string> Backups() { return catalog::Pins::Get().Names(); }
 
 BackupSession& BackupSession::Instance() {
   static BackupSession gSession;
@@ -90,50 +186,16 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
       ERR_MSG("a backup is already in progress"),
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
-  auto& fs = catalog::StorageFileSystem();
-  auto backup_dir =
-    fs.JoinPath(catalog::ClusterOf().Layout().engine, kBackupDir);
-  if (!catalog::Log::Remove(fs, backup_dir)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not remove the leftover backup directory '",
-                            backup_dir, "'"));
-  }
-  catalog::CreateDirectory(backup_dir);
-  absl::Cleanup remove_backup_dir = [&]() noexcept {
-    catalog::Log::Remove(fs, backup_dir);
-  };
-
-  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
-  auto checkpoints = catalog::Transactions::Get().CloseCheckpoints(context);
-  catalog::DeferRemovals();
-  absl::Cleanup resume_removals = [] { catalog::ResumeRemovals(); };
-  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
-  absl::Cleanup resume_cleanups = [] { search::RequestCleanups(); };
-  auto maintenance = search::GetSearchEngine().Maintenance().Close(context);
-  auto cut = RecordCut(context, backup_dir, progress);
-  if (const auto tablespace = UserTablespace()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("cannot start a backup: tablespace \"",
-                            tablespace->GetIdentifierName(),
-                            "\" keeps its files outside the data directory"),
-                    ERR_DETAIL("A backup copies only the data directory."));
-  }
-  auto& positions = PositionSource::Instance();
-  const auto start_lsn = positions.Issue();
-  auto label_file = BuildBackupLabel(
-    label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
-  std::move(resume_cleanups).Cancel();
-  std::move(resume_removals).Cancel();
-  std::move(remove_backup_dir).Cancel();
+  const auto start_lsn = PositionSource::Instance().Issue();
+  auto name = absl::StrCat(kSessionPinPrefix, start_lsn);
+  auto created = Create(context, name, label, start_lsn, progress);
 
   // Noexcept committing of backup start
-  _checkpoints = std::move(checkpoints);
-  _maintenance = std::move(maintenance);
-  _backup_dir = std::move(backup_dir);
+  _name = std::move(name);
   _owner = owner;
-  _label_file = std::move(label_file);
+  _label_file = std::move(created.label_file);
   _active = true;
-  return start_lsn;
+  return created.start_lsn;
 }
 
 FinishedBackup BackupSession::Finish(const void* session) {
@@ -166,12 +228,12 @@ void BackupSession::End() noexcept {
 }
 
 void BackupSession::Stop() noexcept {
-  _maintenance.reset();
-  search::RequestCleanups();
-  _checkpoints.reset();
-  catalog::ResumeRemovals();
-  catalog::Log::Remove(catalog::StorageFileSystem(), _backup_dir);
-  _backup_dir.clear();
+  try {
+    Drop(_name);
+  } catch (const std::exception& e) {
+    SDB_WARN(GENERAL, "cannot remove the backup \"", _name, "\": ", e.what());
+  }
+  _name.clear();
   _owner = {};
   _label_file.clear();
   _active = false;

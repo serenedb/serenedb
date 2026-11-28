@@ -18,6 +18,12 @@ t
 
 connection default
 statement ok
+CREATE TEMP TABLE bclc_pin AS
+SELECT filename, size, last_modified FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/backups/*');
+
+
+connection default
+statement ok
 SET sdb_faults = 'compact_inside_ddl';
 
 
@@ -158,14 +164,20 @@ DROP TABLE bclc_churn_12;
 
 connection default
 query
-SELECT count(*) > 0 AS linked,
-       count(*) FILTER (WHERE regexp_extract(b.file, '[^/]+$') NOT IN (
-         SELECT regexp_extract(l.file, '[^/]+$')
-         FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log') AS l)) AS truncated
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*.log') AS b;
+SELECT count(*) AS pinned,
+       count(*) FILTER (WHERE b.size = p.size AND b.last_modified = p.last_modified) AS unchanged
+FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/backups/*') AS b JOIN bclc_pin AS p USING (filename);
 ----
-linked	truncated
-t	0
+pinned	unchanged
+1	1
+
+
+connection default
+query
+SELECT value < 4096 AS compacted FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
+----
+compacted
+t
 
 
 connection holder

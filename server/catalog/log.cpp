@@ -36,6 +36,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -69,6 +70,7 @@ constexpr size_t kRecordMaxGrowth = size_t{64} << 20;
 constexpr std::string_view kChunkSuffix = ".log";
 constexpr std::string_view kSnapshotSuffix = ".snapshot";
 constexpr std::string_view kCurrentSnapshot = "current_snapshot";
+constexpr std::string_view kPendingSnapshot = "current_snapshot.tmp";
 constexpr std::string_view kEarlierSnapshot = "snapshot";
 constexpr size_t kIoBytes = size_t{1} << 20;
 constexpr uint64_t kMaxRecordBytes = std::numeric_limits<uint32_t>::max();
@@ -152,16 +154,19 @@ std::array<uint8_t, sizeof(Header) + sizeof(uint64_t)> PointerRecord(
 }
 
 void WritePointer(duckdb::FileSystem& fs, const std::string& dir,
-                  uint64_t sequence, bool create) {
+                  uint64_t sequence) {
   auto record = PointerRecord(sequence);
-  const auto file = fs.OpenFile(fs.JoinPath(dir, kCurrentSnapshot),
-                                duckdb::FileFlags::FILE_FLAGS_WRITE |
-                                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
-  file->Write(duckdb::QueryContext{}, record.data(), record.size(), 0);
-  file->Sync();
-  if (create) {
-    fs.SyncDirectory(dir);
+  const auto pending = fs.JoinPath(dir, kPendingSnapshot);
+  {
+    const auto file =
+      fs.OpenFile(pending, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+    SDB_IF_FAILURE("crash_inside_log_pointer_write") { SDB_IMMEDIATE_ABORT(); }
+    file->Write(duckdb::QueryContext{}, record.data(), record.size(), 0);
+    file->Sync();
   }
+  fs.MoveFile(pending, fs.JoinPath(dir, kCurrentSnapshot));
+  fs.SyncDirectory(dir);
 }
 
 uint64_t ReadPointer(duckdb::FileSystem& fs, const std::string& dir) {
@@ -454,6 +459,7 @@ bool Log::Remove(duckdb::FileSystem& fs, const std::string& dir) {
       fs.TryRemoveFile(fs.JoinPath(dir, name));
     }
     fs.TryRemoveFile(fs.JoinPath(dir, kCurrentSnapshot));
+    fs.TryRemoveFile(fs.JoinPath(dir, kPendingSnapshot));
     if (fs.RemoveDirectoryExtended(dir, {})) {
       fs.SyncDirectory(fs.JoinPath(dir, ".."));
       return true;
@@ -583,6 +589,7 @@ void Log::Replay(Apply apply, CatalogPart part) {
   removed =
     _fs.TryRemoveFile(_fs.JoinPath(_dir, SnapshotName(scanned.snapshot + 1))) ||
     removed;
+  removed = _fs.TryRemoveFile(_fs.JoinPath(_dir, kPendingSnapshot)) || removed;
   if (scanned.snapshot > 1) {
     removed = _fs.TryRemoveFile(
                 _fs.JoinPath(_dir, SnapshotName(scanned.snapshot - 1))) ||
@@ -918,7 +925,7 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
     file->Sync();
   }
   SyncDirectory();
-  WritePointer(_fs, _dir, sequence, _snapshot == 0);
+  WritePointer(_fs, _dir, sequence);
   if (_snapshot != 0) {
     _fs.TryRemoveFile(_fs.JoinPath(_dir, SnapshotName(_snapshot)));
   }
@@ -985,7 +992,7 @@ Lsn Log::Link(const std::string& dir) {
     }
   }
   if (_snapshot != 0) {
-    WritePointer(_fs, dir, _snapshot, false);
+    WritePointer(_fs, dir, _snapshot);
   }
   _fs.SyncDirectory(dir);
   return durable;

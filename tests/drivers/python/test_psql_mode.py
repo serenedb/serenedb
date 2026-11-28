@@ -168,7 +168,7 @@ def test_psql_list_databases() -> None:
 
 
 def test_psql_no_password_flag_accepted() -> None:
-    # -w / -W are no-ops in serened (no auth) but must not break parsing.
+    # -w / -W are accepted and ignored (the password comes from PGPASSWORD or ~/.pgpass).
     k = _kw()
     r = _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
               "-d", k["dbname"], "-w", "-c", "SELECT 1;"])
@@ -392,7 +392,7 @@ def test_psql_question_mark_is_help() -> None:
 
 
 def test_psql_password_force_short() -> None:
-    # -W must be accepted (no-op since serened has no auth).
+    # -W must be accepted and ignored: serenedb psql never prompts.
     r = _run(_conn_args() + ["-W", "-c", "SELECT 1;"])
     assert r.returncode == 0, r.stderr
 

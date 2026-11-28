@@ -215,3 +215,38 @@ SELECT ts_lexize('pattern_optional', 'abc 123 def456ghi');
 ----
 ts_lexize
 {abc,def,ghi}
+
+
+# --- \C matches one byte, so the tokens are bytes ---
+
+query
+SELECT pg_typeof(split_by_pattern('é', '\C', group := 0)) AS t;
+----
+t
+bytea[]
+
+
+query
+SELECT list_transform(split_by_pattern('é', '\C', group := 0), lambda x: hex(x)) AS bytes;
+----
+bytes
+{C3,A9}
+
+
+query
+SELECT pg_typeof(split_by_pattern('é', '\\C', group := 0)) AS t;
+----
+t
+text[]
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_any_byte AS
+    split_by_pattern('\C', group := 0)
+
+
+query
+SELECT list_transform(ts_lexize('pattern_any_byte', 'é'), lambda x: hex(x)) AS bytes;
+----
+bytes
+{C3,A9}

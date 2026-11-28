@@ -442,6 +442,19 @@ TEST(TokenizerConfig, AWildcardCutsByteGramsForBytes) {
   EXPECT_TRUE(bytes(duckdb::LogicalType::BLOB));
 }
 
+TEST(TokenizerConfig, APatternMatchingSingleBytesHasByteTerms) {
+  const auto terms = [](std::string pattern, int group) {
+    return tests::Bound(Cfg{PatternTokenizer::Options{
+                          .pattern = std::move(pattern), .group = group}})
+      .terms;
+  };
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, terms("\\s+", -1));
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, terms("\\\\C", -1));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, terms("\\C", 0));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, terms("a|(x\\C)+", 1));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, terms("[ ,]\\C?", -1));
+}
+
 TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {
   const auto plain =
     Pack(Cfg{NGramTokenizer::Options{.min_gram = 2, .max_gram = 3}});

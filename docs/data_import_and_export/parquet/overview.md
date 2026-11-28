@@ -77,6 +77,8 @@ Export the table contents of the entire database as parquet:
 
 Parquet files are compressed columnar files that are efficient to load and process. SereneDB provides support for both reading and writing Parquet files in an efficient manner, as well as support for pushing filters and projections into the Parquet file scans.
 
+SereneDB reads Parquet files that are uncompressed or compressed with Snappy, gzip, zstd, Brotli, `LZ4_RAW` or the older `LZ4`, in Hadoop's framing or as a plain LZ4 block.
+
 <DocCallout type="tip">
 Parquet datasets differ based on the number of files, the size of individual files, the compression algorithm used, row group size, etc. These have a significant effect on performance. Please consult the [Performance Guide](../../cookbook/performance/file_formats.md) for details.
 </DocCallout>

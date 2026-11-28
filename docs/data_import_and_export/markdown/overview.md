@@ -59,8 +59,9 @@ A path that ends in `.md` or `.markdown` can be queried as a table, which `read_
 | `title`        | `VARCHAR`  | The heading text, without formatting.                                                                                                                                                            |
 | `content`      | `MARKDOWN` | The Markdown under the heading, see `content_mode` below.                                                                                                                                        |
 | `parent_id`    | `VARCHAR`  | The id of the enclosing section, the nearest one above with a lower level, or `NULL`.                                                                                                            |
-| `start_line`   | `BIGINT`   | The line of the heading, counted from 1; in a file with frontmatter, from the first line of text after it.                                                                                       |
+| `start_line`   | `BIGINT`   | The line of the heading in the file, counted from 1, frontmatter included.                                                                                                                       |
 | `end_line`     | `BIGINT`   | The last line of the section.                                                                                                                                                                    |
+| `stats`        | `STRUCT`   | Only with `include_stats = true`: the statistics [`md_stats`](../../data_import_and_export/markdown/markdown_functions.md#statistics) returns for the section's `content`.                        |
 
 With this `guide.md`:
 
@@ -86,7 +87,7 @@ Run it.
 
 A section's `content` is its Markdown as written in the file, from its first block to its last. `content` and `end_line` stop at the next heading by default (`content_mode = 'minimal'`). With `content_mode = 'full'` they reach the next heading of the same or a higher level, so a section includes its subsections. `content_mode = 'smart'` is `full`, except that content longer than `max_content_length` bytes keeps only the text before the first subsection, or its first `max_content_length` bytes when there is no such text, followed by a `... (see #id)` line per direct subsection.
 
-`min_level` and `max_level` limit the heading levels returned, and `max_depth` limits their number, counted from `min_level`: `max_depth = 2` returns levels 1 and 2. A section's `parent_id` is then the nearest returned section above it with a lower level. A file with frontmatter adds a section with `section_id` `frontmatter`, `level` 0 and the frontmatter text as `content`, unless `extract_metadata = false`.
+`min_level` and `max_level` limit the heading levels returned, and `max_depth` limits their number, counted from `min_level`: `max_depth = 2` returns levels 1 and 2. A section's `parent_id` is then the nearest returned section above it with a lower level. A file with frontmatter adds a section with `section_id` `frontmatter`, `level` 0, the frontmatter text as `content` and `start_line` 1, unless `extract_metadata = false`, `min_level` is above 1 or `section_filter` names another section. `include_empty_sections = false` leaves out the sections whose `content` is empty, such as a heading followed directly by another with `content_mode = 'minimal'`.
 
 ### Selecting a Section
 
@@ -145,11 +146,12 @@ A file larger than `maximum_file_size` is an error, with `ignore_errors` as well
 | `content_as_varchar` | Return `content` as `VARCHAR` instead of `MARKDOWN`. `read_markdown` and `read_markdown_sections` only.                                                                                                                                                                                  | `BOOL`    | `false`    |
 | `content_mode`       | Where the `content` and `end_line` of a section stop: `minimal`, `full` or `smart`, see [Reading Sections](#reading-sections). `read_markdown_sections` only.                                                                                                                            | `VARCHAR` | `minimal`  |
 | `extract_extensions` | Extractors that add a column each, separated by commas: `wikilinks` adds the `[[target]]` links of each row as [`md_extract_wikilinks`](../../data_import_and_export/markdown/markdown_functions.md#extracting-content) finds them, `tags` the `#tags` as `md_extract_tags` finds them, and `obsidian` both. | `VARCHAR` | `NULL`     |
-| `extract_metadata`   | `read_markdown`: return the `metadata` column. `read_markdown_sections`: return the frontmatter as a section.                                                                                                                                                                             | `BOOL`    | `true`     |
+| `extract_metadata`   | `read_markdown`: return the `metadata` column. `read_markdown_sections`: return the frontmatter as a section. `read_markdown_blocks`: return the frontmatter as a `metadata` block; without it `element_order` counts from the first block of the text.                                     | `BOOL`    | `true`     |
 | `filename`           | Add a `filename` column with the path of each row's file. Alias: `include_filepath`.                                                                                                                                                                                                     | `BOOL`    | `false`    |
 | `ignore_errors`      | Skip missing, non-Markdown and unreadable files with a warning.                                                                                                                                                                                                                         | `BOOL`    | `false`    |
 | `include_content`    | Return the `content` of each section; with `false`, `content` is empty. `read_markdown_sections` only.                                                                                                                                                                                  | `BOOL`    | `true`     |
-| `include_stats`      | Return the `stats` column. `read_markdown` only.                                                                                                                                                                                                                                         | `BOOL`    | `false`    |
+| `include_empty_sections` | Return the sections whose `content` is empty. `read_markdown_sections` only.                                                                                                                                                                                                         | `BOOL`    | `true`     |
+| `include_stats`      | Return the `stats` column: of each file for `read_markdown`, of each section for `read_markdown_sections`.                                                                                                                                                                              | `BOOL`    | `false`    |
 | `max_content_length` | The length in bytes from which `content_mode = 'smart'` shortens the content of a section. `0` means 2000. `read_markdown_sections` only.                                                                                                                                                | `UBIGINT` | `0`        |
 | `max_depth`          | The number of heading levels returned, counted from `min_level`, from 1 to 6. `read_markdown_sections` only.                                                                                                                                                                             | `INTEGER` | `6`        |
 | `max_level`          | The largest heading level returned, `6` for `######`. `read_markdown_sections` only.                                                                                                                                                                                                     | `INTEGER` | `6`        |
@@ -158,4 +160,35 @@ A file larger than `maximum_file_size` is an error, with `ignore_errors` as well
 | `normalize_content`  | Turn `\r\n` and `\r` line breaks into `\n` before the file is parsed.                                                                                                                                                                                                                    | `BOOL`    | `true`     |
 | `section_filter`     | Return only the section with this `section_id` and the sections inside it. `read_markdown_sections` only.                                                                                                                                                                                | `VARCHAR` | (empty)    |
 
-`read_markdown_blocks` takes `extract_extensions`, `extract_metadata`, `filename`, `ignore_errors`, `maximum_file_size` and `normalize_content`, and returns the frontmatter as a `metadata` block whatever `extract_metadata` says. `flavor` (`gfm`, `commonmark` or `multimarkdown`) and `include_empty_sections` are accepted and change nothing, and neither does `include_stats` for `read_markdown_sections`.
+`read_markdown_blocks` takes `extract_extensions`, `extract_metadata`, `filename`, `ignore_errors`, `maximum_file_size` and `normalize_content`.
+
+## Writing Markdown
+
+`COPY ... TO ... (FORMAT markdown)` writes the rows as a Markdown table by default. Number columns are aligned right, `BOOLEAN` columns centered and the others left; a `|` in a value is written as `\|` and a line break as `<br>`:
+
+<SqlLogicTest id="data_import_and_export/markdown/overview/example_008" />
+
+`markdown_mode = 'document'` writes a section per row: a heading of `level` `#` characters with the `title` text, then the `content`. A row with `level` 0 writes its `content` as frontmatter:
+
+<SqlLogicTest id="data_import_and_export/markdown/overview/example_009" />
+
+`markdown_mode = 'blocks'` writes rows in the columns `read_markdown_blocks` returns, so a file can be read as blocks, changed and written back:
+
+<SqlLogicTest id="data_import_and_export/markdown/overview/example_010" />
+
+| Name                  | Description                                                                                                      | Type      | Default        |
+| :-------------------- | :--------------------------------------------------------------------------------------------------------------- | :-------- | :------------- |
+| `markdown_mode`       | `table`, `document`, or `blocks` (also `duck_block`).                                                            | `VARCHAR` | `table`        |
+| `header`              | Write the row of column names and the alignment row. `table` mode.                                               | `BOOL`    | `true`         |
+| `escape_pipes`        | Put a backslash before each pipe character in a value. `table` mode.                                             | `BOOL`    | `true`         |
+| `escape_newlines`     | Write a line break in a value as `<br>`. `table` mode.                                                           | `BOOL`    | `true`         |
+| `null_value`          | The text written for `NULL`. `table` mode.                                                                       | `VARCHAR` | (empty)        |
+| `level_column`        | The column with the heading level of a section, or the nesting depth of a block.                                 | `VARCHAR` | `level`        |
+| `title_column`        | The column with the heading text of a section. `document` mode.                                                  | `VARCHAR` | `title`        |
+| `content_column`      | The column with the text of a section or a block.                                                                | `VARCHAR` | `content`      |
+| `frontmatter`         | Text written as frontmatter at the start of the file. `document` mode.                                           | `VARCHAR` | (empty)        |
+| `blank_lines`         | The number of blank lines written after each section. `document` mode.                                           | `INTEGER` | `1`            |
+| `kind_column`         | The column with the `kind` of a block. `blocks` mode.                                                            | `VARCHAR` | `kind`         |
+| `element_type_column` | The column with the `element_type` of a block. `blocks` mode.                                                    | `VARCHAR` | `element_type` |
+| `encoding_column`     | The column with the `encoding` of a block. `blocks` mode.                                                        | `VARCHAR` | `encoding`     |
+| `attributes_column`   | The column with the `attributes` of a block. `blocks` mode.                                                      | `VARCHAR` | `attributes`   |

@@ -176,6 +176,24 @@ id	score
 
 query
 SELECT id, BM25(obs_idx.tableoid) AS score FROM obs_idx
+WHERE body @@ 'dot'::tsquery::score('constant(1)') AND NOT (note = 'a')
+ORDER BY id;
+----
+id	score
+3	1
+
+
+query
+SELECT id, BM25(obs_idx.tableoid) AS score FROM obs_idx
+WHERE body @@ 'dot'::tsquery::score('constant(1)') AND NOT (id < 3 AND note = 'a')
+ORDER BY id;
+----
+id	score
+3	1
+
+
+query
+SELECT id, BM25(obs_idx.tableoid) AS score FROM obs_idx
 WHERE (body @@ 'dot'::tsquery::score('constant(1)') AND tag = 'dog')
    OR (body @@ 'zzz'::tsquery::score('constant(1)') AND tag = 'dog')
 ORDER BY id;
@@ -299,9 +317,10 @@ QUERY PLAN
 │ ╰─────────────────┬─────────────────╯                                                                                                 │
 │                   ├───────────────────────────────┬────────────────────────────────────────────────╮                                  │
 │ ╭─ Terms ─────────┴─────────────────╮  ╭─ Not ────┴──────────╮                         ╭─ Not ─────┴──────────╮                       │
-│ │ Field: body(string)               │  ╰──────────┬──────────╯                         ╰───────────┬──────────╯                       │
-│ │ Values: 'fig' [constant(value=1)] │             ├───────────────────────╮                        ├───────────────────────╮          │
-│ ╰───────────────────────────────────╯  ╭─ Terms ──┴──────────╮  ╭─ Terms ─┴─────────╮  ╭─ Terms ───┴──────────╮  ╭─ Terms ─┴────────╮ │
+│ │ Field: body(string)               │  │ Score: unscored     │                         │ Score: unscored      │                       │
+│ │ Values: 'fig' [constant(value=1)] │  ╰──────────┬──────────╯                         ╰───────────┬──────────╯                       │
+│ ╰───────────────────────────────────╯             ├───────────────────────╮                        ├───────────────────────╮          │
+│                                        ╭─ Terms ──┴──────────╮  ╭─ Terms ─┴─────────╮  ╭─ Terms ───┴──────────╮  ╭─ Terms ─┴────────╮ │
 │                                        │ Field: body(string) │  │ Field: body(null) │  │ Field: tag(string)   │  │ Field: tag(null) │ │
 │                                        │ Values: 'dot'       │  ╰───────────────────╯  │ Values: 'dog', 'zzz' │  ╰──────────────────╯ │
 │                                        ╰─────────────────────╯                         ╰──────────────────────╯                       │

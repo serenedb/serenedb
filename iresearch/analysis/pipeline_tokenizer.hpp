@@ -49,6 +49,9 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
     std::vector<std::unique_ptr<TokenizerConfig>> children;
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   static constexpr std::string_view type_name() noexcept { return "pipeline"; }
 

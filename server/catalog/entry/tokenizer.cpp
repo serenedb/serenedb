@@ -29,6 +29,7 @@
 #include <utility>
 
 #include "catalog/persistence/blob.h"
+#include "connector/index_expression.hpp"
 
 namespace sdb::catalog {
 
@@ -58,7 +59,7 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
   permissions = info.permissions;
 }
 
-Tokenizer::TokenizerWrapper Tokenizer::Acquire(
+TokenizerBinding::TokenizerWrapper TokenizerBinding::Acquire(
   duckdb::ClientContext& context) const {
   irs::analysis::Tokenizer::ptr analyzer;
   {
@@ -78,10 +79,51 @@ Tokenizer::TokenizerWrapper Tokenizer::Acquire(
   return wrapper;
 }
 
-void Tokenizer::Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept {
+void TokenizerBinding::Release(
+  irs::analysis::Tokenizer::ptr analyzer) const noexcept {
   analyzer->Unbind();
   const absl::MutexLock lock{&_mutex};
   _pool.emplace_back(std::move(analyzer));
+}
+
+TokenizerBindingRef Tokenizer::Bind(duckdb::ClientContext& context,
+                                    const duckdb::LogicalType& input) const {
+  {
+    const absl::ReaderMutexLock lock{&_mutex};
+    if (const auto it = _by_input.find(input.id()); it != _by_input.end()) {
+      return it->second;
+    }
+  }
+  irs::analysis::BindContext ctx{
+    .client = context,
+    .row_alone = connector::ComputedFromRowAlone,
+  };
+  auto bound = irs::analysis::BindInput(_config, input, ctx);
+  auto packed = PackTokenizerConfig(bound);
+  auto binding = Intern(std::move(packed), std::move(bound));
+  const absl::MutexLock lock{&_mutex};
+  return _by_input.try_emplace(input.id(), std::move(binding)).first->second;
+}
+
+TokenizerBindingRef Tokenizer::Intern(std::string_view name,
+                                      std::string_view bound) const {
+  {
+    const absl::ReaderMutexLock lock{&_mutex};
+    if (const auto it = _bindings.find(bound); it != _bindings.end()) {
+      return it->second;
+    }
+  }
+  return Intern(std::string{bound}, UnpackTokenizerConfig(name, bound));
+}
+
+TokenizerBindingRef Tokenizer::Intern(
+  std::string packed, irs::analysis::TokenizerConfig bound) const {
+  const absl::MutexLock lock{&_mutex};
+  auto& binding = _bindings[std::move(packed)];
+  if (!binding) {
+    binding = std::make_shared<TokenizerBinding>(std::move(bound));
+  }
+  return binding;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {

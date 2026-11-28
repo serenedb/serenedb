@@ -144,7 +144,6 @@ std::optional<std::vector<std::string>> FillGeoTermsWKB(
   irs::analysis::GeoTokenizer& a, irs::bytes_view wkb,
   irs::TokenLayout layout = irs::TokenLayout::TermsPos,
   irs::bstring* store_out = nullptr) {
-  a.SetWkbInput(true);
   const std::string_view raw{reinterpret_cast<const char*>(wkb.data()),
                              wkb.size()};
   auto& tokens = dynamic_cast<irs::analysis::Tokenizer&>(a);
@@ -155,7 +154,6 @@ std::optional<std::vector<std::string>> FillGeoTermsWKB(
         {layout});
     },
     store_out);
-  a.SetWkbInput(false);
   return out;
 }
 
@@ -1655,23 +1653,6 @@ TEST(GeoJsonTokenizerSourceTest, invalidGeoJson) {
   }
 }
 
-TEST(GeoJsonTokenizerSourceTest, unbindResetsWkbInput) {
-  constexpr std::string_view kPoint =
-    R"({"type":"Point","coordinates":[37.6156,55.7522]})";
-
-  GeoJsonTokenizer::Options opts;
-  auto tokenizer = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
-  auto& a = irs::analysis::GeoTokenizer::Cast(*tokenizer);
-
-  ASSERT_TRUE(FillGeoTerms(*tokenizer, kPoint).has_value());
-
-  a.SetWkbInput(true);
-  ASSERT_FALSE(FillGeoTerms(*tokenizer, kPoint).has_value());
-
-  tokenizer->Unbind();
-  ASSERT_TRUE(FillGeoTerms(*tokenizer, kPoint).has_value());
-}
-
 TEST(GeoJsonTokenizerSourceTest, prepareQuery) {
   {
     GeoJsonTokenizer::Options opts;
@@ -1867,6 +1848,7 @@ TEST(GeoJsonTokenizerShapeTest, tokenizePoint) {
   GeoJsonTokenizer::Options opts;
   opts.type = GeoJsonTokenizer::Type::Point;
   opts.coding = GeoJsonTokenizer::Coding::S2Point;
+  opts.wkb = true;
   auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
   ASSERT_NE(nullptr, a);
   auto* geo = dynamic_cast<GeoJsonTokenizer*>(a.get());
@@ -1888,6 +1870,7 @@ TEST(GeoJsonTokenizerShapeTest, tokenizePolygon) {
   GeoJsonTokenizer::Options opts;
   opts.type = GeoJsonTokenizer::Type::Shape;
   opts.coding = GeoJsonTokenizer::Coding::S2Point;
+  opts.wkb = true;
   auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
   ASSERT_NE(nullptr, a);
   auto* geo = dynamic_cast<GeoJsonTokenizer*>(a.get());
@@ -1916,6 +1899,7 @@ TEST(GeoJsonTokenizerShapeTest, rejectsShapeVsTypeMismatch) {
   GeoJsonTokenizer::Options opts;
   opts.type = GeoJsonTokenizer::Type::Point;
   opts.coding = GeoJsonTokenizer::Coding::S2Point;
+  opts.wkb = true;
   auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
   auto* geo = dynamic_cast<GeoJsonTokenizer*>(a.get());
   ASSERT_NE(nullptr, geo);
@@ -1990,6 +1974,7 @@ TEST(GeoJsonTokenizerShapeTest, storedShapeDecodesToTheParsedShape) {
 
 TEST(GeoPointTokenizerShapeTest, tokenizePoint) {
   GeoPointTokenizer::Options opts;
+  opts.wkb = true;
   GeoPointTokenizer a{opts};
 
   WkbBuilder b;
@@ -2006,6 +1991,7 @@ TEST(GeoPointTokenizerShapeTest, tokenizePoint) {
 
 TEST(GeoPointTokenizerShapeTest, rejectsNonPoint) {
   GeoPointTokenizer::Options opts;
+  opts.wkb = true;
   GeoPointTokenizer a{opts};
 
   WkbBuilder b;

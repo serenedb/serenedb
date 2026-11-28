@@ -41,6 +41,9 @@ class PatternTokenizer : private util::Noncopyable {
     return "split_by_pattern";
   }
   static Tokenizer::ptr Make(Options opts);
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
   static delim::Finder Detect(std::string_view pattern, int group = -1);
 };
 

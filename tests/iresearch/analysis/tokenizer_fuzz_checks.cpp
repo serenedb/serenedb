@@ -33,6 +33,7 @@
 #include <iresearch/utils/type_limits.hpp>
 #include <set>
 
+#include "bound_config.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
 #include "tokenizer_fuzz_mutator.hpp"
@@ -450,6 +451,9 @@ Probe::Probe(const Spec& spec) : _spec{&spec}, _conn{Connect()} {
     _children = spec.model_children();
   }
   _traits = _primary->Traits();
+  _terms = ::tests::Bound(spec.config(), duckdb::LogicalType{spec.input},
+                          *_conn.context)
+             .terms;
   _layouts = DeclaredLayouts(_traits);
 }
 
@@ -594,9 +598,16 @@ std::optional<std::string> Probe::operator()(std::string_view value,
   }
 
   const auto& rich = per_layout.back();
+  const bool text_terms = _terms == duckdb::LogicalTypeId::VARCHAR &&
+                          _spec->input == duckdb::LogicalTypeId::VARCHAR &&
+                          IsValidUtf8(value);
   size_t term_bytes = 0;
   size_t max_term = 0;
   for (const auto& t : rich.tokens) {
+    if (text_terms && !IsValidUtf8(t.term)) {
+      return std::format("text term {} of valid UTF-8 is not valid UTF-8",
+                         Describe(t.term));
+    }
     term_bytes += t.term.size();
     max_term = std::max(max_term, t.term.size());
   }

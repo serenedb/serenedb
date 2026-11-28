@@ -194,6 +194,8 @@ struct NullMarker {
 
 NullMarker NullMarkerOf(const SearchColumnInfo& info);
 
+duckdb::LogicalType FieldInput(const SearchColumnInfo& info);
+
 void AddNullMarkers(BoolTarget parent, const NullMarker& marker);
 
 // `ByTerms{field, terms, mm=k}`: one node holding the terms of a single

@@ -385,6 +385,20 @@ HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 
 statement ok
 DEALLOCATE lev_match
 
+statement error
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein(b);
+----
+db error: ERROR: ts_levenshtein text must be a non-null VARCHAR constant
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
+statement error
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', a);
+----
+db error: ERROR: ts_levenshtein distance must be a non-null INTEGER constant
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
 query
 SELECT ts_levenshtein('le', 1, transpositions := false, prefix := 'app', starts_with := true)::VARCHAR AS q
 ----

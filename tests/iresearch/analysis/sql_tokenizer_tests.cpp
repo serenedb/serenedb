@@ -26,6 +26,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 
+#include "bound_config.hpp"
 #include "gtest/gtest.h"
 #include "test_resources.hpp"
 #include "token_sink_utils.hpp"
@@ -34,9 +35,15 @@ namespace {
 
 using irs::analysis::SqlTokenizer;
 
-irs::analysis::Tokenizer::ptr MakeBound(std::string expression) {
-  auto a =
-    SqlTokenizer::Make({.expression = std::move(expression)}, tests::Cache());
+irs::analysis::TokenizerConfig Sql(std::string expression) {
+  return irs::analysis::TokenizerConfig{
+    SqlTokenizer::Options{.expression = std::move(expression)}};
+}
+
+irs::analysis::Tokenizer::ptr MakeBound(
+  std::string expression,
+  const duckdb::LogicalType& input = duckdb::LogicalType::VARCHAR) {
+  auto a = tests::MakeBound(Sql(std::move(expression)), input);
   a->Bind(tests::EngineContext());
   return a;
 }
@@ -130,10 +137,12 @@ TEST(SqlTokenizerTest, pipelineNullDropKeepsStackedPositions) {
   stages.emplace_back(irs::analysis::DelimitedTokenizer::Make(
     irs::analysis::DelimitedTokenizer::Options{.delimiter = " "}));
   stages.emplace_back(irs::analysis::NGramTokenizer::Make(
-    {.min_gram = 2, .max_gram = 3, .preserve_original = false}));
-  stages.emplace_back(SqlTokenizer::Make(
-    {.expression = "CASE WHEN length(input) >= 3 THEN input END"},
-    tests::Cache()));
+    {.min_gram = 2,
+     .max_gram = 3,
+     .preserve_original = false,
+     .stream_bytes_type = irs::analysis::NGramTokenizer::InputType::UTF8}));
+  stages.emplace_back(
+    tests::MakeBound(Sql("CASE WHEN length(input) >= 3 THEN input END")));
   irs::analysis::PipelineTokenizer pipe{std::move(stages)};
   pipe.Bind(tests::EngineContext());
   const auto tokens =
@@ -198,45 +207,39 @@ TEST(SqlTokenizerTest, matchesDelimitedTokenizer) {
 }
 
 TEST(SqlTokenizerTest, rebindAcrossPoolCycles) {
-  auto a = SqlTokenizer::Make({.expression = "upper(input)"}, tests::Cache());
-  a->Bind(tests::EngineContext());
+  auto a = MakeBound("upper(input)");
   ASSERT_EQ(tests::AnalyzeTerms(*a, "x"), (std::vector<std::string>{"X"}));
   a->Unbind();
   a->Bind(tests::EngineContext());
   ASSERT_EQ(tests::AnalyzeTerms(*a, "y"), (std::vector<std::string>{"Y"}));
 }
 
+TEST(SqlTokenizerTest, storedExpressionThatDoesNotReadNamesTheStage) {
+  auto bound = tests::Bound(Sql("upper(input)"));
+  auto& opts = std::get<SqlTokenizer::Options>(bound.config);
+  opts.bound.resize(opts.bound.size() / 2);
+  auto a = irs::analysis::CreateTokenizer(std::move(bound), tests::Cache());
+  try {
+    a->Bind(tests::EngineContext());
+    FAIL() << "a truncated expression bound";
+  } catch (const irs::SqlException& e) {
+    EXPECT_TRUE(std::string_view{e.what()}.starts_with("sql: ")) << e.what();
+  }
+}
+
 TEST(SqlTokenizerTest, parseErrors) {
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "lower(("}, tests::Cache()),
-               irs::SqlException);
-  ASSERT_THROW(
-    SqlTokenizer::Make({.expression = "input, input"}, tests::Cache()),
-    irs::SqlException);
-  ASSERT_THROW(
-    SqlTokenizer::Make({.expression = "(SELECT 'x')"}, tests::Cache()),
-    irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "upper($1)"}, tests::Cache()),
-               irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "memory.main.upper(input)"},
-                                  tests::Cache()),
-               irs::SqlException);
-  ASSERT_THROW(
-    SqlTokenizer::Make({.expression = "ts_lexize('d', input)"}, tests::Cache()),
-    irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_tokenize(input, 'd')"},
-                                  tests::Cache()),
-               irs::SqlException);
-  ASSERT_THROW(
-    SqlTokenizer::Make({.expression = "lower(ts_lexize('d', input)[1])"},
-                       tests::Cache()),
-    irs::SqlException);
+  for (const auto* expression :
+       {"lower((", "input, input", "(SELECT 'x')", "upper($1)",
+        "memory.main.upper(input)", "ts_lexize('d', input)",
+        "ts_tokenize(input, 'd')", "lower(ts_lexize('d', input)[1])"}) {
+    SCOPED_TRACE(expression);
+    ASSERT_THROW(tests::Bound(Sql(expression)), irs::SqlException);
+  }
 }
 
 TEST(SqlTokenizerTest, bindErrors) {
   const auto expect_bind_error = [&](std::string expression) {
-    auto a =
-      SqlTokenizer::Make({.expression = std::move(expression)}, tests::Cache());
-    ASSERT_THROW(a->Bind(tests::EngineContext()), irs::SqlException);
+    ASSERT_THROW(tests::Bound(Sql(std::move(expression))), irs::SqlException);
   };
   expect_bind_error("no_such_function_xyz(input)");
   expect_bind_error("upper(no_such_column)");
@@ -254,58 +257,66 @@ TEST(SqlTokenizerTest, userMacroRejected) {
     "upper(x)");
   ASSERT_FALSE(res->HasError()) << res->GetError();
 
-  ASSERT_THROW(
-    SqlTokenizer::Make({.expression = "sql_tok_userdb.main.sql_tok_test_up("
-                                      "input)"},
-                       tests::Cache()),
-    irs::SqlException);
+  ASSERT_THROW(tests::Bound(Sql("sql_tok_userdb.main.sql_tok_test_up(input)")),
+               irs::SqlException);
 
-  auto a = SqlTokenizer::Make({.expression = "sql_tok_test_up(input)"},
-                              tests::Cache());
-  ASSERT_THROW(a->Bind(*conn.context), irs::SqlException);
+  irs::analysis::BindContext ctx{
+    .client = *conn.context,
+    .row_alone = tests::AnyExpression,
+  };
+  ASSERT_THROW(irs::analysis::BindInput(Sql("sql_tok_test_up(input)"),
+                                        duckdb::LogicalType::VARCHAR, ctx),
+               irs::SqlException);
 }
 
 TEST(SqlTokenizerTest, traits) {
-  SqlTokenizer a{{.expression = "upper(input)"}, tests::Cache()};
-  const auto traits = a.Traits();
+  const auto traits = tests::MakeBound(Sql("upper(input)"))->Traits();
   ASSERT_FALSE(traits.explicit_pos);
   ASSERT_FALSE(traits.offsets);
   ASSERT_FALSE(traits.keyword);
-  ASSERT_FALSE(traits.unique);
+  ASSERT_TRUE(traits.unique);
 }
 
 TEST(SqlTokenizerTest, traits_unique_by_mode) {
   {
-    SqlTokenizer a{{.expression = "upper(input)"}, tests::Cache()};
-    ASSERT_FALSE(a.Traits().unique);
-    a.Bind(tests::EngineContext());
-    ASSERT_TRUE(a.Traits().unique);
-    a.Unbind();
-    ASSERT_TRUE(a.Traits().unique);
+    auto a = tests::MakeBound(Sql("upper(input)"));
+    ASSERT_TRUE(a->Traits().unique);
+    a->Bind(tests::EngineContext());
+    ASSERT_TRUE(a->Traits().unique);
+    a->Unbind();
+    ASSERT_TRUE(a->Traits().unique);
   }
   {
-    SqlTokenizer a{{.expression = "string_split(input, ',')"}, tests::Cache()};
-    a.Bind(tests::EngineContext());
-    ASSERT_FALSE(a.Traits().unique);
+    auto a = tests::MakeBound(Sql("string_split(input, ',')"));
+    ASSERT_FALSE(a->Traits().unique);
   }
 }
 
-TEST(SqlTokenizerTest, blobResultsDeclareBlobOutput) {
+TEST(SqlTokenizerTest, blobResultsBindAsBlobTerms) {
+  ASSERT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(Sql("[input::BLOB]")).terms);
   auto list = MakeBound("[input::BLOB]");
-  ASSERT_EQ(duckdb::LogicalTypeId::BLOB, list->Traits().output);
   ASSERT_FALSE(list->Traits().unique);
   ASSERT_EQ(tests::AnalyzeTerms(*list, "ab"), (std::vector<std::string>{"ab"}));
   AssertColumnMatchesPerValue(*list, {"ab", "", "xyz"});
 
+  ASSERT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(Sql("input::BLOB")).terms);
   auto scalar = MakeBound("input::BLOB");
-  ASSERT_EQ(duckdb::LogicalTypeId::BLOB, scalar->Traits().output);
   ASSERT_TRUE(scalar->Traits().unique);
   ASSERT_EQ(tests::AnalyzeTerms(*scalar, "ab"),
             (std::vector<std::string>{"ab"}));
   AssertColumnMatchesPerValue(*scalar, {"ab", "", "xyz"});
 
-  auto text = MakeBound("upper(input)");
-  ASSERT_EQ(duckdb::LogicalTypeId::VARCHAR, text->Traits().output);
+  ASSERT_EQ(duckdb::LogicalTypeId::VARCHAR,
+            tests::Bound(Sql("upper(input)")).terms);
+}
+
+TEST(SqlTokenizerTest, bytesInputIsBoundAsBlob) {
+  auto a = MakeBound("hex(input)", duckdb::LogicalType::BLOB);
+  ASSERT_EQ(tests::AnalyzeTerms(*a, "\\x41"),
+            (std::vector<std::string>{"5C783431"}));
+  ASSERT_EQ(tests::AnalyzeTerms(*a, "A"), (std::vector<std::string>{"41"}));
 }
 
 TEST(SqlTokenizerTest, inputReferencedTwiceWithConstants) {

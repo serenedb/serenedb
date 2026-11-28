@@ -23,10 +23,10 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 
@@ -120,8 +120,7 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts);
 std::string RenderTSQueryValueText(const TSQueryParts& parts);
 
 std::optional<duckdb::Value> TryFoldTSQueryCall(
-  duckdb::ClientContext& context, std::string_view name,
-  std::span<const duckdb::unique_ptr<duckdb::Expression>> children);
+  duckdb::ClientContext& context, const duckdb::BoundFunctionExpression& call);
 
 duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
   std::string_view text, duckdb::ClientContext& context);

@@ -32,7 +32,7 @@ The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they 
 
 | Function | Description |
 | :--- | :--- |
-| [`ts_dict_agg(column)`](#ts_dict_agg) | `LIST(VARCHAR)` of the field's terms, in byte order per segment. |
+| [`ts_dict_agg(column)`](#ts_dict_agg) | `LIST(VARCHAR)` of the field's terms, in no particular order. |
 | [`ts_dict_raw_agg(column)`](#ts_dict_agg) | `LIST(BLOB)` of the raw term bytes. |
 | [`ts_dict_count(column)`](#ts_dict_agg) | `LIST(INTEGER)`: live documents per term, aligned with `ts_dict_agg`. |
 | [`ts_dict_freq(column)`](#ts_dict_agg) | `LIST(BIGINT)`: total term occurrences, aligned. Needs `frequency = true` on the dictionary. |
@@ -40,7 +40,7 @@ The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they 
 | [`ts_dict_min(column)`](#ts_dict_min) | The smallest live term. |
 | [`ts_dict_max(column)`](#ts_dict_min) | The greatest live term. |
 
-`ts_dict_agg`, `ts_dict_min` and `ts_dict_max` return text, so they reject a `BYTEA` column and a column whose dictionary emits binary terms, such as [`collate_tokens`](./tokenizers/collate_tokens.md) or [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md), with `column has no text term dictionary`; `ts_dict_raw_agg` lists those terms, and the aligned lists work on them as on text.
+`ts_dict_agg`, `ts_dict_min` and `ts_dict_max` return text, so they reject a column whose terms are binary with `column has no text term dictionary`: a `BYTEA` column, unless its dictionary turns the bytes into text, as an [`sql`](../../statements/create_text_search_dictionary/sql.md) stage returning `VARCHAR` does, and a column whose dictionary emits binary terms, such as [`collate_tokens`](./tokenizers/collate_tokens.md) or [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md). `ts_dict_raw_agg` lists those terms, and the aligned lists work on them as on text.
 
 #### `ts_dict_agg` and the aligned lists {#ts_dict_agg}
 
@@ -62,7 +62,7 @@ A `WHERE` clause splits by what each conjunct means:
 
 - **Term matching** — comparisons on the enumerated field (`=`, `IN`, `LIKE 'x%'`, `BETWEEN`, range comparisons and boolean combinations of them) select terms directly and push into the scan as one fused filter tree: the conjuncts on the field become one dictionary walk — an exact `=` drives it by lookup, as does a pattern that can only match a short list of words, and otherwise up to four patterns (`LIKE` with wildcards, a regex) and one fuzzy match (`@@ ts_levenshtein` on a keyword column) step through the dictionary together, pruning every branch any of them rules out; `=`, prefix and range conjuncts bound the walk to their key range, disjunctions union into one automaton that matches exactly the terms each alternative matches on its own, and the rest are checked per emitted term. On a keyword column this is also exactly document filtering, since each document carries one term.
 - **Document filtering** — any [`@@ ts_*`](./full-text.md#tsquery-constructors) matcher on a tokenized column, and conditions on *other* indexed columns, filter documents: the aggregate returns **all terms of matching documents** with counts over that document set. `ts_dict_agg(cat) ... WHERE body @@ ts_starts_with('err')` is facet counting: category terms over the documents that match. The filter executes once per segment; each candidate term's postings are intersected with the cached result.
-- **Scalar predicates** on the enumerated field the index cannot claim (`length(col) = 5`, expressions over the term text) post-filter the emitted term rows.
+- **Scalar predicates** on the enumerated field the index cannot claim (`length(col) = 5`, expressions over the term text) post-filter the emitted term rows. On a `BYTEA` column they see the terms as bytes; a column whose dictionary emits binary terms rejects them with `ts_dict_agg() WHERE evaluates scalar post-filters over text terms only`.
 
 Filtering the *emitted terms* by arbitrary conditions belongs to the outer query (or a `HAVING` on the term key): `SELECT t FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM idx) sub WHERE t LIKE 'ap%'` pushes down into the enumeration the same way as a claimed term acceptor.
 

@@ -292,7 +292,7 @@ query
 SELECT (ts_phrase('a') || 'b c')::text AS t;
 ----
 t
-((ts_phrase('a')) || 'b c')
+(ts_phrase('a') || 'b c')
 
 statement error
 SELECT ('quick'::tokenize('keyword'))::text;
@@ -360,19 +360,19 @@ query
 SELECT tsquery_phrase(ts_phrase('a'), 'b'::tsquery, 3)::text AS t;
 ----
 t
-tsquery_phrase((ts_phrase('a')), 'b'::tsquery, 3)
+tsquery_phrase(ts_phrase('a'), 'b'::tsquery, 3)
 
 query
 SELECT (!!ts_phrase('x'))::text AS t;
 ----
 t
-(!!(ts_phrase('x')))
+(!!ts_phrase('x'))
 
 query
 SELECT ('quick' || ts_phrase('x'))::text AS t;
 ----
 t
-('quick' || (ts_phrase('x')))
+('quick' || ts_phrase('x'))
 
 query
 SELECT (ts_phrase('x') ^ 2.5)::text AS t;
@@ -385,14 +385,14 @@ query
 SELECT (ts_phrase('it''s') && 'a b')::text AS t;
 ----
 t
-((ts_phrase('it''s')) && 'a b')
+(ts_phrase('it''s') && 'a b')
 
 # Rendering is idempotent: text -> value -> text is a fixpoint.
 query
 SELECT (((ts_phrase('it''s') && 'a b')::text)::tsquery)::text AS t;
 ----
 t
-((ts_phrase('it''s')) && 'a b')
+(ts_phrase('it''s') && 'a b')
 
 query
 SELECT (NULL::tsquery)::text AS t;
@@ -409,13 +409,13 @@ query
 SELECT ((ts_phrase('a') && ts_any(['b', 'c'], 2)) || !!ts_like('d%'))::text AS t;
 ----
 t
-((((ts_phrase('a')) && (ts_any(['b', 'c'], 2)))) || ((!!(ts_like('d%')))))
+((ts_phrase('a') && ts_any(['b', 'c'], 2)) || (!!ts_like('d%')))
 
 query
 SELECT ((((ts_phrase('a') && ts_any(['b', 'c'], 2)) || !!ts_like('d%'))::text)::tsquery)::text AS t;
 ----
 t
-((((ts_phrase('a')) && (ts_any(['b', 'c'], 2)))) || ((!!(ts_like('d%')))))
+((ts_phrase('a') && ts_any(['b', 'c'], 2)) || (!!ts_like('d%')))
 
 query
 SELECT ts_between(-5, +10, true, true)::text AS t;
@@ -457,7 +457,7 @@ query
 SELECT tsquery_phrase(ts_phrase('a'), tsquery_phrase(ts_phrase('b'), 'c'::tsquery, 2), 3)::text AS t;
 ----
 t
-tsquery_phrase((ts_phrase('a')), (tsquery_phrase((ts_phrase('b')), 'c'::tsquery, 2)), 3)
+tsquery_phrase(ts_phrase('a'), tsquery_phrase(ts_phrase('b'), 'c'::tsquery, 2), 3)
 
 query
 SELECT ts_all(list_value('a', 'b'))::text AS t;

@@ -45,6 +45,7 @@
 #include "connector/functions/list_token_sink.hpp"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
+#include "connector/geo_validate.h"
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
@@ -66,24 +67,19 @@ catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
   return dict->GetTokenizer();
 }
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  duckdb::ClientContext& ctx, const catalog::Tokenizer& dict) {
-  return dict.Acquire(ctx);
-}
-
-catalog::Tokenizer::TokenizerWrapper AcquireTextTokenizer(
+catalog::Tokenizer::TokenizerWrapper AcquireForRows(
   duckdb::ClientContext& ctx, const catalog::Tokenizer& dict,
-  std::string_view dict_name) {
-  auto tokenizer = AcquireTokenizer(ctx, dict);
-  const auto output = tokenizer->Traits().output;
-  if (output != duckdb::LogicalTypeId::VARCHAR) {
+  std::string_view dict_name, const duckdb::LogicalType& element) {
+  const auto binding = dict.Bind(ctx, element);
+  if (element.id() == duckdb::LogicalTypeId::VARCHAR &&
+      binding->Terms() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
       ERR_MSG("text search dictionary \"", dict_name, "\" produces ",
-              duckdb::LogicalTypeIdToString(output),
+              duckdb::LogicalTypeIdToString(binding->Terms()),
               " tokens; pass the dictionary name as a constant"));
   }
-  return tokenizer;
+  return binding->Acquire(ctx);
 }
 
 struct DynamicCtx {
@@ -93,7 +89,7 @@ struct DynamicCtx {
 };
 
 struct TsLexizeBindData final : public duckdb::FunctionData {
-  std::variant<DynamicCtx, catalog::TokenizerRef> state;
+  std::variant<DynamicCtx, catalog::TokenizerBindingRef> state;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TsLexizeBindData>(*this);
@@ -111,10 +107,10 @@ struct TsLexizeLocalState final : public duckdb::FunctionLocalState {
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData* bind_data) {
-  auto& dict =
-    std::get<catalog::TokenizerRef>(bind_data->Cast<TsLexizeBindData>().state);
+  const auto& binding = std::get<catalog::TokenizerBindingRef>(
+    bind_data->Cast<TsLexizeBindData>().state);
   auto local = duckdb::make_uniq<TsLexizeLocalState>();
-  local->wrapper = AcquireTokenizer(state.GetContext(), *dict);
+  local->wrapper = binding->Acquire(state.GetContext());
   return local;
 }
 
@@ -199,8 +195,8 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
   for (size_t g = 0; g < groups.names.size(); ++g) {
     const auto& rows = groups.rows[g];
     auto dict = LookupTokenizerDict(state.GetContext(), groups.names[g]);
-    auto tokenizer =
-      AcquireTextTokenizer(state.GetContext(), *dict, groups.names[g]);
+    auto tokenizer = AcquireForRows(state.GetContext(), *dict, groups.names[g],
+                                    args.data[1].GetType());
     duckdb::SelectionVector sel{rows.size()};
     for (size_t i = 0; i < rows.size(); ++i) {
       sel.set_index(i, texts.sel->get_index(rows[i]));
@@ -247,8 +243,8 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
       continue;
     }
     auto dict = LookupTokenizerDict(state.GetContext(), groups.names[g]);
-    auto tokenizer =
-      AcquireTextTokenizer(state.GetContext(), *dict, groups.names[g]);
+    auto tokenizer = AcquireForRows(state.GetContext(), *dict, groups.names[g],
+                                    child.GetType());
     duckdb::SelectionVector sel{total};
     for (const auto r : groups.rows[g]) {
       const auto& entry = entries[lists.sel->get_index(r)];
@@ -271,6 +267,11 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   auto& context = input.GetClientContext();
   auto& conn_ctx = ConnectionContext::Get(context);
   DynamicCtx ctx{.db_id = conn_ctx.GetDatabaseId()};
+  const auto& value = input.GetBoundFunction().GetArguments()[1];
+  if (const auto& arg = input.GetArguments()[1]->GetReturnType();
+      arg.id() == duckdb::LogicalTypeId::GEOMETRY) {
+    ValidateGeometryCRS84(arg, "ts_lexize()");
+  }
 
   auto bind = duckdb::make_uniq<TsLexizeBindData>();
   if (auto val = input.TryGetConstant(0); val && !val->IsNull()) {
@@ -281,14 +282,14 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("text search dictionary \"", dict_name, "\" does not exist"));
     }
-    auto dict = entry->GetTokenizer();
-    const auto output = AcquireTokenizer(context, *dict)->Traits().output;
-    bind->state = std::move(dict);
     auto& fn = input.GetBoundFunction();
-    auto token = duckdb::ListType::GetChildType(fn.GetReturnType());
-    fn.SetReturnType(duckdb::LogicalType::LIST(
-      output == duckdb::LogicalTypeId::VARCHAR ? std::move(token)
-                                               : duckdb::LogicalType{output}));
+    auto binding = entry->GetTokenizer()->Bind(
+      context, value.id() == duckdb::LogicalTypeId::LIST
+                 ? duckdb::ListType::GetChildType(value)
+                 : value);
+    fn.SetReturnType(
+      duckdb::LogicalType::LIST(duckdb::LogicalType{binding->Terms()}));
+    bind->state = std::move(binding);
     fn.SetFunctionCallback(ConstantFn);
     fn.SetInitStateCallback(InitTsLexizeLocalState);
     return bind;
@@ -327,6 +328,10 @@ void RegisterTsLexize(duckdb::ExtensionLoader& loader) {
              text, TsLexizeArrayFunctionDynamic,
              TsLexizeBind<TsLexizeArrayFunctionConstant<1>>));
   }
+  set.AddFunction(
+    MakeFn({duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY()},
+           duckdb::LogicalType::BLOB, TsLexizeFunctionDynamic,
+           TsLexizeBind<TsLexizeFunctionConstant<1>>));
   loader.RegisterFunction(std::move(set));
 }
 

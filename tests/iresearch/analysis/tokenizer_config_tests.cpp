@@ -29,6 +29,7 @@
 #include <string>
 #include <vector>
 
+#include "bound_config.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -183,14 +184,6 @@ std::vector<Rejected> RejectedConfigs() {
     opts.children.push_back(nullptr);
     return Cfg{std::move(opts)};
   });
-  Collect(out, "pipeline/blob_into_varchar", [] {
-    PipelineTokenizer::Options opts;
-    opts.children.push_back(Child(Cfg{CollationTokenizer::Options{
-      .locale = duckdb::text::Locale::FromName("en_US.UTF-8")}}));
-    opts.children.push_back(
-      Child(Cfg{DelimitedTokenizer::Options{.delimiter = ","}}));
-    return Cfg{std::move(opts)};
-  });
   Collect(out, "pipeline/store_stage", [] {
     PipelineTokenizer::Options opts;
     opts.children.push_back(
@@ -232,8 +225,7 @@ TEST(TokenizerConfig, InvalidOptionsAreRefused) {
     irs::analysis::Tokenizer::ptr tokenizer;
     bool threw = false;
     try {
-      tokenizer =
-        irs::analysis::CreateTokenizer(rejected.config(), tests::Cache());
+      tokenizer = tests::MakeBound(rejected.config());
     } catch (...) {
       threw = true;
     }
@@ -246,8 +238,7 @@ TEST(TokenizerConfig, RefusalLeavesTheCacheUsable) {
   for (const auto& rejected : RejectedConfigs()) {
     SCOPED_TRACE(rejected.name);
     try {
-      auto ignored =
-        irs::analysis::CreateTokenizer(rejected.config(), tests::Cache());
+      auto ignored = tests::MakeBound(rejected.config());
     } catch (...) {
     }
   }
@@ -267,19 +258,10 @@ TEST(TokenizerConfig, InvalidSqlExpressionsAreRefused) {
        {"", "not_a_function(input)", "upper(", "input +", "1 +",
         "unknown_column", "upper(missing_arg_name)"}) {
     SCOPED_TRACE(expression);
-    bool threw = false;
-    try {
-      auto tokenizer = SqlTokenizer::Make(
-        {.expression = std::string{expression}}, tests::Cache());
-      if (tokenizer) {
-        tokenizer->Bind(tests::EngineContext());
-      } else {
-        threw = true;
-      }
-    } catch (...) {
-      threw = true;
-    }
-    EXPECT_TRUE(threw) << "expression was accepted: " << expression;
+    EXPECT_THROW(
+      tests::Bound(Cfg{SqlTokenizer::Options{.expression = expression}}),
+      irs::SqlException)
+      << "expression was accepted: " << expression;
   }
 }
 
@@ -337,6 +319,144 @@ TEST(TokenizerConfig, EverySpecRoundTripsThroughTheBinaryFormat) {
     ++round_tripped;
   }
   EXPECT_GT(round_tripped, tests::fuzz::AllSpecs().size() / 2);
+}
+
+TEST(TokenizerConfig, EveryBoundSpecRoundTripsThroughTheBinaryFormat) {
+  size_t round_tripped = 0;
+  for (const auto& spec : tests::fuzz::AllSpecs()) {
+    SCOPED_TRACE(spec.name);
+    std::string bytes;
+    try {
+      bytes =
+        Pack(tests::Bound(spec.config(), duckdb::LogicalType{spec.input}));
+    } catch (const std::exception& e) {
+      EXPECT_NE(std::string_view{e.what()}.find("for Accept"),
+                std::string_view::npos)
+        << e.what();
+      continue;
+    }
+    EXPECT_EQ(Pack(Unpack(bytes)), bytes);
+    ++round_tripped;
+  }
+  EXPECT_GT(round_tripped, tests::fuzz::AllSpecs().size() / 2);
+}
+
+TEST(TokenizerConfig, ATextTemplateKeepsTheTypeItIsGiven) {
+  const Cfg keyword{irs::KeywordTokenizer::Options{}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, tests::Bound(keyword).terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(keyword, duckdb::LogicalType::BLOB).terms);
+  EXPECT_THROW(tests::Bound(keyword, duckdb::LogicalType::INTEGER),
+               irs::SqlException);
+
+  const Cfg shingle{ShingleTokenizer::Options{}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, tests::Bound(shingle).terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(shingle, duckdb::LogicalType::BLOB).terms);
+}
+
+TEST(TokenizerConfig, APipelineThreadsTheTermTypeThroughItsStages) {
+  const auto bytes = [] {
+    return Cfg{NGramTokenizer::Options{
+      .min_gram = 2,
+      .max_gram = 2,
+      .preserve_original = false,
+      .stream_bytes_type = NGramTokenizer::InputType::Binary}};
+  };
+  const auto keyword = [] { return Cfg{irs::KeywordTokenizer::Options{}}; };
+  const auto text = [] { return Cfg{TextTokenizer::Options{}}; };
+  const auto pipeline = [](auto... stages) {
+    PipelineTokenizer::Options opts;
+    (opts.children.push_back(Child(stages())), ...);
+    return Cfg{std::move(opts)};
+  };
+  for (const auto& cfg : {pipeline(bytes, keyword), pipeline(keyword, bytes),
+                          pipeline(bytes, text)}) {
+    const auto bound = tests::Bound(cfg);
+    EXPECT_EQ(duckdb::LogicalTypeId::BLOB, bound.terms);
+    const auto& stages = std::get<PipelineTokenizer::Options>(bound.config);
+    for (size_t i = 1; i < stages.children.size(); ++i) {
+      EXPECT_EQ(stages.children[i - 1]->terms, stages.children[i]->input);
+    }
+    EXPECT_NE(nullptr, tests::MakeBound(cfg));
+  }
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
+            tests::Bound(pipeline(keyword, text)).terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(pipeline(), duckdb::LogicalType::BLOB).terms);
+  EXPECT_THROW(tests::Bound(pipeline(), duckdb::LogicalType::INTEGER),
+               irs::SqlException);
+}
+
+TEST(TokenizerConfig, AUnionTakesTheTypeItsMembersShare) {
+  const auto members = [](Cfg a, Cfg b) {
+    UnionTokenizer::Options opts;
+    opts.children.push_back(Child(std::move(a)));
+    opts.children.push_back(Child(std::move(b)));
+    return Cfg{std::move(opts)};
+  };
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
+            tests::Bound(members(Cfg{irs::KeywordTokenizer::Options{}},
+                                 Cfg{TextTokenizer::Options{}}))
+              .terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(members(Cfg{irs::KeywordTokenizer::Options{}},
+                                 Cfg{CollationTokenizer::Options{}}))
+              .terms);
+}
+
+TEST(TokenizerConfig, AnSqlStageBindsItsExpressionToItsInput) {
+  const Cfg identity{SqlTokenizer::Options{.expression = "input"}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, tests::Bound(identity).terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(identity, duckdb::LogicalType::BLOB).terms);
+  const Cfg hex{SqlTokenizer::Options{.expression = "hex(input)"}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
+            tests::Bound(hex, duckdb::LogicalType::BLOB).terms);
+  const Cfg upper{SqlTokenizer::Options{.expression = "upper(input)"}};
+  EXPECT_THROW(tests::Bound(upper, duckdb::LogicalType::BLOB),
+               irs::SqlException);
+}
+
+TEST(TokenizerConfig, GeoTakesJsonTextOrGeometry) {
+  const auto wkb = [](const Cfg& cfg, const duckdb::LogicalType& input) {
+    return std::get<GeoJsonTokenizer::Options>(tests::Bound(cfg, input).config)
+      .wkb;
+  };
+  const Cfg geojson{GeoJsonTokenizer::Options{}};
+  EXPECT_FALSE(wkb(geojson, duckdb::LogicalType::VARCHAR));
+  EXPECT_TRUE(wkb(geojson, duckdb::LogicalType::GEOMETRY()));
+  EXPECT_THROW(tests::Bound(geojson, duckdb::LogicalType::BLOB),
+               irs::SqlException);
+  const Cfg latlng{
+    GeoJsonTokenizer::Options{.coding = GeoJsonTokenizer::Coding::S2LatLngF64}};
+  EXPECT_THROW(tests::Bound(latlng, duckdb::LogicalType::GEOMETRY()),
+               irs::SqlException);
+}
+
+TEST(TokenizerConfig, AWildcardCutsByteGramsForBytes) {
+  const auto bytes = [](const duckdb::LogicalType& input) {
+    return std::get<WildcardTokenizer::Options>(
+             tests::Bound(Cfg{WildcardTokenizer::Options{.ngram_size = 3}},
+                          input)
+               .config)
+      .bytes;
+  };
+  EXPECT_FALSE(bytes(duckdb::LogicalType::VARCHAR));
+  EXPECT_TRUE(bytes(duckdb::LogicalType::BLOB));
+}
+
+TEST(TokenizerConfig, APatternMatchingSingleBytesHasByteTerms) {
+  const auto terms = [](std::string pattern, int group) {
+    return tests::Bound(Cfg{PatternTokenizer::Options{
+                          .pattern = std::move(pattern), .group = group}})
+      .terms;
+  };
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, terms("\\s+", -1));
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, terms("\\\\C", -1));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, terms("\\C", 0));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, terms("a|(x\\C)+", 1));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, terms("[ ,]\\C?", -1));
 }
 
 TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {

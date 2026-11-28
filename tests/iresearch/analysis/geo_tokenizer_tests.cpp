@@ -83,8 +83,9 @@ std::string PolygonWkb(std::span<const std::pair<double, double>> lng_lat) {
 }
 
 irs::analysis::Tokenizer::ptr MakeGeoJson(GeoJsonTokenizer::Type type,
-                                          GeoJsonTokenizer::Coding coding) {
-  return GeoJsonTokenizer::Make({.type = type, .coding = coding});
+                                          GeoJsonTokenizer::Coding coding,
+                                          bool wkb = false) {
+  return GeoJsonTokenizer::Make({.type = type, .coding = coding, .wkb = wkb});
 }
 
 std::vector<std::string> CollectedTerms(
@@ -245,8 +246,8 @@ TEST(GeoTokenizerTests, geojson_json_and_wkb_paths_agree) {
       AnalyzeGeo(*json_stream, R"({"type":"Point","coordinates":[2.0,1.0]})");
     ASSERT_TRUE(via_json.has_value());
 
-    auto wkb_stream = MakeGeoJson(type, GeoJsonTokenizer::Coding::S2Point);
-    dynamic_cast<GeoJsonTokenizer*>(wkb_stream.get())->SetWkbInput(true);
+    auto wkb_stream =
+      MakeGeoJson(type, GeoJsonTokenizer::Coding::S2Point, true);
     const auto via_wkb = AnalyzeGeo(*wkb_stream, PointWkb(2.0, 1.0));
     ASSERT_TRUE(via_wkb.has_value());
 
@@ -315,8 +316,7 @@ TEST(GeoTokenizerTests, geojson_polygon_terms_match_region_oracle) {
   EXPECT_EQ(expected, analysis->terms);
 
   auto wkb_stream = MakeGeoJson(GeoJsonTokenizer::Type::Shape,
-                                GeoJsonTokenizer::Coding::Source);
-  dynamic_cast<GeoJsonTokenizer*>(wkb_stream.get())->SetWkbInput(true);
+                                GeoJsonTokenizer::Coding::Source, true);
   const auto via_wkb = AnalyzeGeo(*wkb_stream, PolygonWkb(ring));
   ASSERT_TRUE(via_wkb.has_value());
   EXPECT_EQ(analysis->terms, via_wkb->terms);
@@ -333,8 +333,7 @@ TEST(GeoTokenizerTests, geojson_point_type_rejects_non_points) {
   EXPECT_FALSE(AnalyzeGeo(*stream, kPolygon).has_value());
 
   auto wkb_stream = MakeGeoJson(GeoJsonTokenizer::Type::Point,
-                                GeoJsonTokenizer::Coding::S2Point);
-  dynamic_cast<GeoJsonTokenizer*>(wkb_stream.get())->SetWkbInput(true);
+                                GeoJsonTokenizer::Coding::S2Point, true);
   EXPECT_FALSE(AnalyzeGeo(*wkb_stream, PolygonWkb(ring)).has_value());
 }
 
@@ -379,10 +378,8 @@ TEST(GeoTokenizerTests, geojson_wkb_column_fill_matches_per_value) {
                               GeoJsonTokenizer::Coding::S2Point}) {
       SCOPED_TRACE(testing::Message()
                    << "type=" << int(type) << " coding=" << int(coding));
-      auto fill_stream = MakeGeoJson(type, coding);
-      auto value_stream = MakeGeoJson(type, coding);
-      dynamic_cast<GeoJsonTokenizer*>(fill_stream.get())->SetWkbInput(true);
-      dynamic_cast<GeoJsonTokenizer*>(value_stream.get())->SetWkbInput(true);
+      auto fill_stream = MakeGeoJson(type, coding, true);
+      auto value_stream = MakeGeoJson(type, coding, true);
       ExpectColumnFillMatchesPerValue(*fill_stream, *value_stream, values);
     }
   }
@@ -406,10 +403,8 @@ TEST(GeoPointTokenizerTests, geopoint_column_fill_matches_per_value) {
   }
   {
     SCOPED_TRACE("array wkb");
-    auto fill_stream = GeoPointTokenizer::Make({});
-    auto value_stream = GeoPointTokenizer::Make({});
-    dynamic_cast<GeoPointTokenizer*>(fill_stream.get())->SetWkbInput(true);
-    dynamic_cast<GeoPointTokenizer*>(value_stream.get())->SetWkbInput(true);
+    auto fill_stream = GeoPointTokenizer::Make({.wkb = true});
+    auto value_stream = GeoPointTokenizer::Make({.wkb = true});
     ExpectColumnFillMatchesPerValue(*fill_stream, *value_stream, wkb_values);
   }
   {
@@ -424,10 +419,10 @@ TEST(GeoPointTokenizerTests, geopoint_column_fill_matches_per_value) {
   }
   {
     SCOPED_TRACE("object wkb");
-    auto fill_stream = GeoPointTokenizer::Make(object_opts());
-    auto value_stream = GeoPointTokenizer::Make(object_opts());
-    dynamic_cast<GeoPointTokenizer*>(fill_stream.get())->SetWkbInput(true);
-    dynamic_cast<GeoPointTokenizer*>(value_stream.get())->SetWkbInput(true);
+    auto wkb_opts = object_opts();
+    wkb_opts.wkb = true;
+    auto fill_stream = GeoPointTokenizer::Make(wkb_opts);
+    auto value_stream = GeoPointTokenizer::Make(wkb_opts);
     ExpectColumnFillMatchesPerValue(*fill_stream, *value_stream, wkb_values);
   }
 }
@@ -460,8 +455,7 @@ TEST(GeoPointTokenizerTests, wkb_point_matches_json_terms) {
   const auto via_json = AnalyzeGeo(*json_stream, "[1.0, 2.0]");
   ASSERT_TRUE(via_json.has_value());
 
-  auto wkb_stream = GeoPointTokenizer::Make({});
-  dynamic_cast<GeoPointTokenizer*>(wkb_stream.get())->SetWkbInput(true);
+  auto wkb_stream = GeoPointTokenizer::Make({.wkb = true});
   const auto via_wkb = AnalyzeGeo(*wkb_stream, PointWkb(2.0, 1.0));
   ASSERT_TRUE(via_wkb.has_value());
   EXPECT_EQ(via_json->terms, via_wkb->terms);
@@ -476,8 +470,7 @@ TEST(GeoPointTokenizerTests, rejects_invalid_input) {
   EXPECT_FALSE(AnalyzeGeo(*stream, "[1.0, 2.0, 3.0]").has_value());
   EXPECT_FALSE(AnalyzeGeo(*stream, "{}").has_value());
 
-  auto wkb_stream = GeoPointTokenizer::Make({});
-  dynamic_cast<GeoPointTokenizer*>(wkb_stream.get())->SetWkbInput(true);
+  auto wkb_stream = GeoPointTokenizer::Make({.wkb = true});
   EXPECT_FALSE(AnalyzeGeo(*wkb_stream, PolygonWkb(ring)).has_value());
 
   auto mismatched = [] {
@@ -666,10 +659,9 @@ TEST(GeoTokenizerTests, query_terms_match_s2_oracle) {
 TEST(GeoTokenizerTests, wkb_point_sample_matches_oracle) {
   const auto cases = SampleLatLngs(2048);
   auto stream = MakeGeoJson(GeoJsonTokenizer::Type::Point,
-                            GeoJsonTokenizer::Coding::S2Point);
+                            GeoJsonTokenizer::Coding::S2Point, true);
   auto* geo = dynamic_cast<GeoJsonTokenizer*>(stream.get());
   ASSERT_NE(nullptr, geo);
-  geo->SetWkbInput(true);
   S2RegionTermIndexer oracle{geo->options()};
   for (const auto& c : cases) {
     SCOPED_TRACE(testing::Message() << c.lat << "," << c.lng);

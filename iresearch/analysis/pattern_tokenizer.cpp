@@ -20,6 +20,7 @@
 
 #include "pattern_tokenizer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <re2/re2.h>
 #include <re2/regexp.h>
@@ -248,7 +249,24 @@ delim::Finder DetectSplit(const re2::RE2& pattern, int group) {
   return delim::FinderFor(set);
 }
 
+bool MatchesAnyByte(re2::Regexp& re) {
+  if (re.op() == re2::kRegexpAnyByte) {
+    return true;
+  }
+  return absl::c_any_of(std::span{re.sub(), static_cast<size_t>(re.nsub())},
+                        [](re2::Regexp* sub) { return MatchesAnyByte(*sub); });
+}
+
 }  // namespace
+
+duckdb::LogicalTypeId PatternTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& /*ctx*/) {
+  const auto type = TextOrBytes(type_name(), input);
+  const re2::RE2 regex{opts.pattern, RegexOptions(opts.group)};
+  return regex.ok() && MatchesAnyByte(*regex.Regexp())
+           ? duckdb::LogicalTypeId::BLOB
+           : type;
+}
 
 delim::Finder PatternTokenizer::Detect(std::string_view pattern, int group) {
   const re2::RE2 regex{pattern, RegexOptions(group)};

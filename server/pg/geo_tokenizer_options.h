@@ -90,7 +90,7 @@ inline constexpr OptionGroup kGeoJsonGroup{
   kGeoJsonSubgroups,
   "encode_geojson",
   TemplateKind::Tokenizer,
-  TemplateInput::Json,
+  TemplateInput::JsonOrGeometry,
 };
 
 }  // namespace sdb::pg::tokenizer_options

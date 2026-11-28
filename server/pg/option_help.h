@@ -212,6 +212,7 @@ enum class TemplateKind : uint8_t {
 enum class TemplateInput : uint8_t {
   Text,
   Json,
+  JsonOrGeometry,
 };
 
 struct OptionGroup {

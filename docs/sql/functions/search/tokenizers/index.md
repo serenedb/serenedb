@@ -18,8 +18,9 @@ Every template of [`CREATE TEXT SEARCH DICTIONARY`](../../../statements/create_t
 | `VARCHAR` | The value is analyzed as one value, the way a dictionary analyzes one cell. |
 | `VARCHAR[]` | Each element is analyzed on its own and the results are concatenated into one list, so a function applied to another function's result acts as the next stage of a pipeline. |
 | `VARCHAR[]` for `generate_shingles` and `generate_wildcard_ngrams` | The list is one token stream: the elements are the base tokens the shingles or wildcard grams are built from. |
+| `BYTEA`, `BYTEA[]` | The value is read as bytes, the way a dictionary reads a `BYTEA` column: a text template's tokens are then `BYTEA` too, and a list of them is a list of values or a token stream as above. |
 | `NULL` | A `NULL` value yields `NULL`; `NULL` elements of a list are skipped. |
-| `VARCHAR[N]` | A fixed-size array is read as the list it is, in the value position and in a list-valued option. |
+| `VARCHAR[N]`, `BYTEA[N]` | A fixed-size array is read as the list it is, in the value position and in a list-valued option. |
 
 Nesting the functions is the pipeline: the inner call produces the list the outer call re-analyzes element by element, so `stem_words(normalize_tokens(split_text(v, case := 'lower'), 'en_US.UTF-8', accent := false), 'en_US.UTF-8')` is the dictionary `split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')`:
 
@@ -30,6 +31,10 @@ Nesting the functions is the pipeline: the inner call produces the list the oute
 A list literal is analyzed element by element:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/index/list" />
+
+A `BYTEA` value is analyzed as bytes, and the tokens come back as `BLOB`s, decoded here to show them:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/index/bytes" />
 
 `generate_shingles` and `generate_wildcard_ngrams` need a token stream, so they take the output of another function; a bare `VARCHAR` counts as a single token:
 
@@ -45,7 +50,7 @@ An option whose value is a list of strings takes either spelling of the dictiona
 
 <SqlLogicTest id="sql/functions/search/tokenizers/index/constant_option" />
 
-The result type follows the tokenizer: `VARCHAR[]` for every text template, `BLOB[]` for [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md), [`encode_geojson`](./encode_geojson.md) and [`generate_wildcard_ngrams`](./generate_wildcard_ngrams.md), whose terms are binary. A template that stores a per-document payload alongside its terms, such as `encode_geojson` with a non-source coding, returns only the terms.
+The result type follows the tokenizer: a text template returns the type it reads, `VARCHAR[]` for text and `BLOB[]` for bytes, while [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md), [`encode_geojson`](./encode_geojson.md), [`generate_wildcard_ngrams`](./generate_wildcard_ngrams.md), [`generate_ngrams`](./generate_ngrams.md) with `input_type := 'binary'`, [`split_by_pattern`](./split_by_pattern.md) with a pattern that holds `\C` and [`split_text_csv`](./split_text_csv.md) with an empty delimiter return `BLOB[]` whatever they read, as their terms are binary. An outer call reads such a result as bytes, the way a later step of a [pipeline](../../../statements/create_text_search_dictionary/pipeline/index.md) does. A template that stores a per-document payload alongside its terms, such as `encode_geojson` with a non-source coding, returns only the terms.
 
 Four templates have no function form, because SQL already expresses them: [`keyword`](../../../statements/create_text_search_dictionary/keyword.md) is the list literal `[value]`, [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) is nesting, [`union`](../../../statements/create_text_search_dictionary/union.md) is `list_concat` of two calls, and a [`sql`](../../../statements/create_text_search_dictionary/sql.md) stage is the expression itself.
 
@@ -61,17 +66,17 @@ messages are on the page each row links to.
 | :--- | :--- |
 | [`split_text(value, case := 'none', break := 'alpha')`](./split_text.md) | Split text into words, sentences, lines, paragraphs or grapheme clusters on Unicode boundaries, optionally case-folded |
 | [`split_text_icu(value, locale, break := 'alpha')`](./split_text_icu.md) | Segment text into words or sentences with the ICU break iterator for `locale` |
-| [`split_text_csv(value, delimiter)`](./split_text_csv.md) | Cut the value at every occurrence of `delimiter`, honouring `"` quoting |
+| [`split_text_csv(value, delimiter)`](./split_text_csv.md) | Cut the value at every occurrence of `delimiter`, honouring `"` quoting; an empty `delimiter` cuts it into bytes, as `BLOB[]` |
 | [`split_by_delimiters(value, delimiters)`](./split_by_delimiters.md) | Cut the value at every occurrence of any of the `delimiters` |
 | [`split_by_non_alpha(value, case := 'none', break := 'ascii')`](./split_by_non_alpha.md) | Runs of word characters, everything else a separator; `break` picks them: ASCII letters and digits, those plus every byte from `0x80` up, letters and digits or letters alone in any script, or everything but whitespace |
-| [`split_by_pattern(value, pattern, group := -1)`](./split_by_pattern.md) | Match or split with an RE2 regular expression |
+| [`split_by_pattern(value, pattern, group := -1)`](./split_by_pattern.md) | Match or split with an RE2 regular expression; a pattern holding `\C` cuts bytes, as `BLOB[]` |
 | [`expand_path(value, delimiter := '/', replacement := '', reverse := false, skip := 0)`](./expand_path.md) | The cumulative prefixes of a delimited path |
 | [`normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc', keep_marks := [])`](./normalize_tokens.md) | Unicode normalization, locale-aware case conversion or full case folding, and accent stripping of each token |
 | [`stem_words(value, locale := '')`](./stem_words.md) | The Snowball stem of each token for the language of `locale`, which has no usable default |
 | [`remove_stopwords(value, stopwords := [], stopwords_path := '', hex := false)`](./remove_stopwords.md) | Drop the listed tokens |
 | [`filter_tokens(value, min_length := 0, max_length := 0)`, `filter_tokens(tokens, lambda x: <predicate>)`](./filter_tokens.md) | Drop the tokens outside a range of character lengths, or those a lambda rejects |
 | [`strip_html(value, join_inline_tags := false)`](./strip_html.md) | The text runs between HTML markup with character references decoded and `script` and `style` content dropped; `join_inline_tags` keeps words whole across inline tags |
-| [`generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')`](./generate_ngrams.md) | Character n-grams of each token, including the prefix-anchored edge n-grams of `mode := 'only_prefix'` |
+| [`generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')`](./generate_ngrams.md) | Character n-grams of each token, including the prefix-anchored edge n-grams of `mode := 'only_prefix'`; byte n-grams as `BLOB[]` with `input_type := 'binary'` |
 | [`generate_sparse_ngrams(value, max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)`](./generate_sparse_ngrams.md) | Sparse variable-length n-grams for substring search |
 | [`generate_wildcard_ngrams(value, ngram_size := 3)`](./generate_wildcard_ngrams.md) | Boundary-marked n-grams for wildcard and prefix matching, as `BLOB[]`; a list is the token stream, a `VARCHAR` one token |
 | [`generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')`](./generate_shingles.md) | Word n-grams over the token stream; a list is the token stream, a `VARCHAR` one token |

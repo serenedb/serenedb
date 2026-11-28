@@ -171,6 +171,11 @@ void AddBools(BoolTarget parent, const SearchColumnInfo& info,
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
+inline size_t PositionalArgumentCount(
+  const duckdb::BoundFunctionExpression& call) {
+  return call.GetChildren().size() - call.Function().GetNamedArguments().size();
+}
+
 inline const duckdb::vector<duckdb::Value>& ListOrArrayChildren(
   const duckdb::Value& value) {
   return value.type().id() == duckdb::LogicalTypeId::ARRAY

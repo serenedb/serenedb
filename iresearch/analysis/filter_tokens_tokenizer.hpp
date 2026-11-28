@@ -43,8 +43,13 @@ class FilterTokensTokenizer final
     size_t min_length{0};
     size_t max_length{0};
     std::string predicate;
+    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::INVALID;
+    std::string bound;
   };
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   static constexpr std::string_view type_name() noexcept {
     return "filter_tokens";

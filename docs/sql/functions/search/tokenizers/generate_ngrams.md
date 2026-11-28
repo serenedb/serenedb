@@ -24,7 +24,7 @@ For substring search over code, logs or identifiers, prefer [`generate_sparse_ng
 | `MIN_GRAM` | integer | `2` | Minimum n-gram length, in symbols |
 | `MAX_GRAM` | integer | `3` | Maximum n-gram length, in symbols |
 | `PRESERVE_ORIGINAL` | boolean | `false` | Emit original token alongside n-grams |
-| `INPUT_TYPE` | string | `'utf8'` | Unit the gram lengths count: `'utf8'` counts codepoints, `'binary'` counts bytes |
+| `INPUT_TYPE` | string | `'utf8'` | Unit the gram lengths count: `'utf8'` counts codepoints, `'binary'` counts bytes and makes the grams `BLOB` terms |
 | `START_MARKER` | string | `''` | Text prepended to the grams that start at the first symbol of the token; empty means no marker |
 | `END_MARKER` | string | `''` | Text appended to the grams that reach the last symbol of the token; empty means no marker |
 | `MODE` | string | `'all'` | Which grams to generate: `'all'`, `'only_prefix'`, `'only_suffix'`, `'only_prefix_and_suffix'` |
@@ -46,7 +46,7 @@ The other modes keep only the windows anchored to an edge of the token and emit 
 | `abcd` | `MIN_GRAM = 1`, `MAX_GRAM = 2`, `MODE = 'only_suffix'`, `PRESERVE_ORIGINAL = true` | `{abcd,cd,d}` |
 | `abcd` | `MIN_GRAM = 1`, `MAX_GRAM = 2`, `MODE = 'only_prefix_and_suffix'`, `PRESERVE_ORIGINAL = true` | `{a,ab,abcd,cd,d}` |
 
-A gram is a verbatim slice of the input: nothing is lowercased, stripped of accents or normalized, so `HeLLo` with `MODE = 'only_prefix'` and 2–3 symbols yields `{He,HeL}`. Lengths count codepoints by default; with `INPUT_TYPE = 'binary'` they count bytes, so a gram can cut a multi-byte character in half and its term text is then not valid UTF-8. Input that is not valid UTF-8 is never rejected — symbol boundaries fall back to a lead-byte walk — and an empty value yields no tokens.
+A gram is a verbatim slice of the input: nothing is lowercased, stripped of accents or normalized, so `HeLLo` with `MODE = 'only_prefix'` and 2–3 symbols yields `{He,HeL}`. Lengths count codepoints by default; with `INPUT_TYPE = 'binary'` they count bytes, so a gram can cut a multi-byte character in half. The grams are then `BLOB` terms: the function form and `ts_lexize` return `BLOB[]`, `ts_lexize` takes the dictionary name only as a constant, [`ts_dict_raw_agg`](../term-dictionary.md#ts_dict_agg) lists them where `ts_dict_agg` rejects the column, and a later step of a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) reads them as bytes. Input that is not valid UTF-8 is never rejected — symbol boundaries fall back to a lead-byte walk — and an empty value yields no tokens.
 
 Every token carries the byte range of its source gram in the value, so [`ts_offsets()`](../highlighting.md#ts_offsets) and [`ts_highlight()`](../highlighting.md#ts_highlight) work over a `generate_ngrams` dictionary; marker text is not part of that range. Positions follow the anchoring: in `'all'` mode the grams that share a start symbol share a position, `'only_prefix'` and `'only_suffix'` put every token at position 1, and `'only_prefix_and_suffix'` keeps the prefixes at position 1 and the suffixes at position 2.
 

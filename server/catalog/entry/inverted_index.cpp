@@ -351,7 +351,8 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
       if (!dict) {
         continue;
       }
-      resolved.tokenizer = dict->GetTokenizer();
+      resolved.binding = dict->GetTokenizer()->Intern(
+        dict->name.GetIdentifierName(), field.tokenizer);
       resolved.features = field.features.GetIndexFeatures();
       if (!field.features.HasFeatures(irs::IndexFeatures::Norm)) {
         resolved.tokenizer_column = field.synthetic_column;
@@ -366,34 +367,26 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
 }
 
 ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
-  return Acquire(field_id, *_context);
-}
-
-ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
-                                         duckdb::ClientContext& context) const {
   const auto it = _fields.find(field_id);
   if (it == _fields.end()) {
     return {};
   }
   const auto& field = it->second;
-  if (!field.tokenizer) {
+  if (!field.binding) {
     return {.analyzer = Tokenizer::TokenizerWrapper{
               std::make_unique<irs::KeywordTokenizer>().release(),
               Tokenizer::Deleter{}}};
   }
-  return {.analyzer = field.tokenizer->Acquire(context),
+  return {.analyzer = field.binding->Acquire(*_context),
           .features = field.features,
           .tokenizer_column = field.tokenizer_column};
 }
 
-IndexTokenizers::Bound IndexTokenizers::AcquireAll(
-  duckdb::ClientContext& context) const {
-  Bound bound;
-  bound.reserve(_fields.size());
-  for (const auto& [field_id, field] : _fields) {
-    bound.emplace(field_id, Acquire(field_id, context));
-  }
-  return bound;
+duckdb::LogicalTypeId IndexTokenizers::Terms(
+  irs::field_id field_id, duckdb::LogicalTypeId values) const {
+  const auto it = _fields.find(field_id);
+  return it != _fields.end() && it->second.binding ? it->second.binding->Terms()
+                                                   : values;
 }
 
 InvertedIndexConfig::InvertedIndexConfig(

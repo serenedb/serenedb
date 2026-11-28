@@ -257,6 +257,237 @@ QUERY PLAN
 │ ~1 row                                       │
 ╰──────────────────────────────────────────────╯
 
+# A BYTEA pattern on a VARCHAR column compares bytes there too, and its
+# wildcard index finds what a keyword index finds.
+statement ok
+CREATE TABLE bw (id INTEGER PRIMARY KEY, w VARCHAR)
+
+statement ok
+INSERT INTO bw VALUES (1, 'über'), (2, 'uber'), (3, 'café'), (4, 'cafe'), (5, '中文字')
+
+statement ok
+CREATE INDEX bw_wild_idx ON bw USING inverted (id, w bp_wild)
+
+statement ok
+CREATE INDEX bw_wild_pos_idx ON bw USING inverted (id, w bp_wild_pos)
+
+statement ok
+CREATE INDEX bw_kw_idx ON bw USING inverted (id, w)
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\xc3bc626572'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\xc3bc626572'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\xc3bc626572'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1}
+wild	{1}
+wild_pos	{1}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x636166c3a9'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x636166c3a9'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x636166c3a9'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{3}
+wild	{3}
+wild_pos	{3}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\xc3bc6225'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\xc3bc6225'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\xc3bc6225'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1}
+wild	{1}
+wild_pos	{1}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x6361665fa9'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x6361665fa9'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x6361665fa9'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{3}
+wild	{3}
+wild_pos	{3}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x636166c325'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x636166c325'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x636166c325'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{3}
+wild	{3}
+wild_pos	{3}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x6361665f'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x6361665f'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x6361665f'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{4}
+wild	{4}
+wild_pos	{4}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x25ff6125'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x25ff6125'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x25ff6125'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	NULL
+wild	NULL
+wild_pos	NULL
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_regexp('\xc3bc626572'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_regexp('\xc3bc626572'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_regexp('\xc3bc626572'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1}
+wild	{1}
+wild_pos	{1}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_regexp('\xe4b8ade69687e5ad97'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_regexp('\xe4b8ade69687e5ad97'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_regexp('\xe4b8ade69687e5ad97'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{5}
+wild	{5}
+wild_pos	{5}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x2561ff6225'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x2561ff6225'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x2561ff6225'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	NULL
+wild	NULL
+wild_pos	NULL
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x2561ff62636425'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x2561ff62636425'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x2561ff62636425'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	NULL
+wild	NULL
+wild_pos	NULL
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x25bc62657225'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x25bc62657225'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x25bc62657225'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1}
+wild	{1}
+wild_pos	{1}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x25a9a9a925'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x25a9a9a925'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x25a9a9a925'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	NULL
+wild	NULL
+wild_pos	NULL
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x25'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1,2,3,4,5}
+wild	{1,2,3,4,5}
+wild_pos	{1,2,3,4,5}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bf_wild AS generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TABLE bf (id INTEGER PRIMARY KEY, v BYTEA)
+
+statement ok
+CREATE INDEX bf_wild_idx ON bf USING inverted (id, v bf_wild)
+
+statement ok
+CREATE INDEX bf_kw_idx ON bf USING inverted (id, v)
+
+statement ok
+INSERT INTO bf VALUES (1, '\xff6265617374'), (2, '\x6d61ff62'), (3, '\x61ff'), (4, '\xffff')
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_like('\xff25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_like('\xff25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1,4}
+wild	{1,4}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_like('\x2561ff25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_like('\x2561ff25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{2,3}
+wild	{2,3}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_like('\xffff25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_like('\xffff25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{4}
+wild	{4}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_regexp('\xff.*')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_regexp('\xff.*')
+ORDER BY src
+----
+src	ids
+keyword	{1,4}
+wild	{1,4}
+
+statement ok
+DROP TABLE bf
+
+statement ok
+DROP TEXT SEARCH DICTIONARY bf_wild
+
+statement ok
+DROP TABLE bw
+
 statement ok
 DROP TABLE bp
 

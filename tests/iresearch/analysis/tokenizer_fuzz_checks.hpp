@@ -110,6 +110,7 @@ class Probe {
   irs::analysis::Tokenizer::ptr _blocked;
   std::vector<irs::analysis::Tokenizer::ptr> _children;
   irs::TokenTraits _traits;
+  duckdb::LogicalTypeId _terms = duckdb::LogicalTypeId::INVALID;
   std::vector<irs::TokenLayout> _layouts;
   uint64_t _behaviour = 0;
 };

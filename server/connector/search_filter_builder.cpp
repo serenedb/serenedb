@@ -386,6 +386,12 @@ NullMarker NullMarkerOf(const SearchColumnInfo& info) {
   };
 }
 
+duckdb::LogicalType FieldInput(const SearchColumnInfo& info) {
+  const auto& binding = info.tokenizer.analyzer.get_deleter().binding;
+  return duckdb::LogicalType{
+    binding ? binding->Input() : term_dict::ElementKind(info.logical_type)};
+}
+
 void AddNullMarkers(BoolTarget parent, const NullMarker& marker) {
   const auto add = [&](irs::DictMember member) {
     AddTerm(parent, marker.field, {.layout = marker.layout, .member = member},
@@ -485,8 +491,10 @@ void UniqueMarkers(std::vector<NullMarker>& markers) {
 }
 
 catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
-  const FilterContext& ctx, std::string_view name) {
-  auto wrapper = AcquireTokenizer(ctx.client_context, name);
+  const FilterContext& ctx, std::string_view name,
+  const SearchColumnInfo& column_info) {
+  auto wrapper =
+    AcquireTokenizer(ctx.client_context, name, FieldInput(column_info));
   if (!wrapper) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1293,12 +1301,17 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryTokenizeList(
 
 template<const std::string_view& Name>
 duckdb::unique_ptr<duckdb::Expression> BuildPassthrough(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
-  return MakeTSQueryCall(Name, std::move(args));
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>& names) {
+  auto call = MakeTSQueryCall(Name, std::move(args));
+  call->FunctionMutable().SetNamedArguments(
+    call->GetChildren().size() - names.size(), names);
+  return call;
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildAllTokens(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>&) {
   return MakeTSQueryCall(
     kTSQAllOf, MakeChildren(MakeTSQueryTokenizeList(std::move(args.at(0)))));
 }
@@ -1321,7 +1334,8 @@ duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>&) {
   const auto type = args.at(0)->GetReturnType().id();
   const bool is_text = type == duckdb::LogicalTypeId::VARCHAR ||
                        type == duckdb::LogicalTypeId::BLOB;
@@ -1344,7 +1358,8 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 }
 
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>& names);
 
 const irs::containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
   kSugarBuilders = {
@@ -1363,7 +1378,8 @@ absl::Status FromPredicate(BoolTarget filter, const FilterContext& ctx,
   auto tail = func.GetChildren() | std::views::drop(1) |
               std::views::transform([](const auto& e) { return e->Copy(); }) |
               std::ranges::to<std::vector>();
-  auto inner = build_inner(std::move(tail));
+  auto inner =
+    build_inner(std::move(tail), func.Function().GetNamedArguments());
   FromTSQueryMatch(filter, ctx, *func.GetChildren()[0], *inner);
   return absl::OkStatus();
 }
@@ -2265,7 +2281,7 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
       ERR_MSG("::tokenize('keyword'): inner expression has unsupported "
               "shape"));
   }
-  auto wrapper = ResolveTokenizerOrThrow(ctx, tokenizer);
+  auto wrapper = ResolveTokenizerOrThrow(ctx, tokenizer, column_info);
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   if (val) {
     // Don't recurse on a folded constant: its type still carries the
@@ -2675,12 +2691,10 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
       }
     } else if (cast_type.id() != info->logical_type.id()) {
       if (!irs::IsJson(info->layout)) {
-        if (term_dict::IsNumeric(cast_type.id())) {
-          return nullptr;
-        }
-        info->logical_type = cast_type;
-      } else if (cast_type.id() == duckdb::LogicalTypeId::DOUBLE ||
-                 cast_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
+        return nullptr;
+      }
+      if (cast_type.id() == duckdb::LogicalTypeId::DOUBLE ||
+          cast_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
         info->logical_type = cast_type;
       } else if (cast_type.id() != duckdb::LogicalTypeId::BLOB) {
         return nullptr;
@@ -3207,7 +3221,8 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     } else if (parts->tokenizer == irs::KeywordTokenizer::type_name()) {
       emit(sub_ctx.WithTokenizer(sub_ctx.identity));
     } else {
-      auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
+      auto wrapper =
+        ResolveTokenizerOrThrow(ctx, parts->tokenizer, column_info);
       emit(sub_ctx.WithTokenizer(*wrapper));
     }
   };

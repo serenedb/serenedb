@@ -222,6 +222,8 @@ db error: ERROR: No function matches the given name and argument types 'split_te
 	Candidate functions:
 	split_text("value" VARCHAR, "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
 	split_text("value" VARCHAR[], "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
+	split_text("value" BLOB, "case" VARCHAR := none, break VARCHAR := alpha) -> BLOB[]
+	split_text("value" BLOB[], "case" VARCHAR := none, break VARCHAR := alpha) -> BLOB[]
 
 
 statement error invalid value in "case" parameter
@@ -243,6 +245,8 @@ db error: ERROR: No function matches the given name and argument types 'split_te
 	Candidate functions:
 	split_text_csv("value" VARCHAR, "delimiter" VARCHAR) -> VARCHAR[]
 	split_text_csv("value" VARCHAR[], "delimiter" VARCHAR) -> VARCHAR[]
+	split_text_csv("value" BLOB, "delimiter" VARCHAR) -> BLOB[]
+	split_text_csv("value" BLOB[], "delimiter" VARCHAR) -> BLOB[]
 
 
 # --- ICU segmentation ---
@@ -358,6 +362,116 @@ SELECT encode_geopoint(['{"lat": 1, "lng": 2}'], 'lat', 'lng');
 encode_geopoint
 NULL
 
+# encode_geojson also reads a CRS84 GEOMETRY, as it does in a GEOMETRY column.
+
+query
+SELECT encode_geojson('POINT(2.5 1.5)'::GEOMETRY('OGC:CRS84')) = encode_geojson('{"type":"Point","coordinates":[2.5,1.5]}') AS same,
+       encode_geojson({'type': 'Point', 'coordinates': [2.5, 1.5]}) = encode_geojson('{"type":"Point","coordinates":[2.5,1.5]}') AS from_struct,
+       encode_geojson(NULL) IS NULL AS null_value;
+----
+same	from_struct	null_value
+t	t	t
+
+statement error
+SELECT encode_geojson('POINT(2.5 1.5)'::GEOMETRY);
+----
+db error: ERROR: encode_geojson(): GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+statement error
+SELECT encode_geojson('POINT(2.5 1.5)'::GEOMETRY('OGC:CRS84'), coding := 's2latlngf64');
+----
+db error: ERROR: encode_geojson: a LatLng coding does not take GEOMETRY
+HINT: Use the S2Point or the source coding.
+
+
+statement error
+SELECT encode_geopoint('POINT(2.5 1.5)'::GEOMETRY('OGC:CRS84'));
+----
+db error: ERROR: No function matches the given name and argument types 'encode_geopoint(GEOMETRY('OGC:CRS84'))'. You might need to add explicit type casts.
+	Candidate functions:
+	encode_geopoint("value" JSON, latitude UNION(str VARCHAR, list VARCHAR[]) := [], longitude UNION(str VARCHAR, list VARCHAR[]) := [], max_cells INTEGER := 20, min_level INTEGER := 4, max_level INTEGER := 23, level_mod INTEGER := 1, optimize_for_space BOOLEAN := false) -> BLOB[]
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_geojson AS encode_geojson();
+
+query
+SELECT ts_lexize('fn_geojson', 'POINT(2.5 1.5)'::GEOMETRY('OGC:CRS84')) = ts_lexize('fn_geojson', '{"type":"Point","coordinates":[2.5,1.5]}') AS constant_name,
+       ts_lexize(name, 'POINT(2.5 1.5)'::GEOMETRY('OGC:CRS84')) = ts_lexize('fn_geojson', '{"type":"Point","coordinates":[2.5,1.5]}') AS name_per_row
+FROM (VALUES ('fn_geojson')) t(name);
+----
+constant_name	name_per_row
+t	t
+
+statement error
+SELECT ts_lexize('fn_geojson', 'POINT(2.5 1.5)'::GEOMETRY);
+----
+db error: ERROR: ts_lexize(): GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+statement error
+SELECT ts_lexize('fn_collate', 'POINT(2.5 1.5)'::GEOMETRY('OGC:CRS84'));
+----
+db error: ERROR: collate_tokens: takes text or bytes, not GEOMETRY
+
+
+query
+SELECT ts_lexize('fn_geojson', NULL) IS NULL AS null_value;
+----
+null_value
+t
+
+
+# --- Bytes: a BYTEA value or list is read as bytes, as a dictionary reads a
+# --- BYTEA column, and a text template's tokens are then BYTEA too ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fn_bytes_words AS split_text(case := 'lower');
+
+query
+SELECT typeof(split_text('Quick Fox'::bytea)) AS bytes,
+       typeof(split_text('Quick Fox')) AS text,
+       list_transform(split_text('Quick Fox'::bytea, case := 'lower'), lambda t: decode(t)) AS tokens,
+       split_text('Quick Fox'::bytea, case := 'lower') = ts_lexize('fn_bytes_words', 'Quick Fox'::bytea) AS same_as_dictionary;
+----
+bytes	text	tokens	same_as_dictionary
+BLOB[]	VARCHAR[]	{quick,fox}	t
+
+query
+SELECT list_transform(split_text('\xff612062'::bytea), lambda t: hex(t)) AS tokens;
+----
+tokens
+{61,62}
+
+query
+SELECT list_transform(split_text(['a b'::bytea, 'c'::bytea]), lambda t: decode(t)) AS from_list,
+       list_transform(split_text(['a b'::bytea, 'c'::bytea]::BLOB[2]), lambda t: decode(t)) AS from_array,
+       split_text(NULL::bytea) IS NULL AS null_value;
+----
+from_list	from_array	null_value
+{a,b,c}	{a,b,c}	t
+
+query
+SELECT list_transform(stem_words(split_text('running dogs'::bytea), 'en_US.UTF-8'), lambda t: decode(t)) AS stems,
+       list_transform(filter_tokens(split_text('a bb ccc'::bytea), lambda x: octet_length(x) > 1), lambda t: decode(t)) AS by_lambda,
+       typeof(filter_tokens(split_text('a bb'::bytea), lambda x: true)) AS lambda_type,
+       list_transform(filter_tokens(split_text('a bb ccc'::bytea), min_length := 2), lambda t: decode(t)) AS by_length;
+----
+stems	by_lambda	lambda_type	by_length
+{run,dog}	{bb,ccc}	BLOB[]	{bb,ccc}
+
+# A call reads the bytes another call returns, as a pipeline step reads the
+# terms of the step before it.
+
+query
+SELECT list_transform(generate_ngrams(split_text_csv('ab', ''), 1, 1), lambda t: hex(t)) AS grams,
+       list_transform(generate_wildcard_ngrams('abc'::bytea), lambda t: hex(t)) AS wildcard_grams,
+       collate_tokens('abc'::bytea, 'en_US.UTF-8') = collate_tokens('abc', 'en_US.UTF-8') AS same_key;
+----
+grams	wildcard_grams	same_key
+{61,62}	{FF6162,616263,6263FF,63FF}	t
+
 
 # --- A list option takes a list or the string spelling of the dictionary form ---
 
@@ -390,6 +504,8 @@ db error: ERROR: No function matches the given name and argument types 'remove_s
 	Candidate functions:
 	remove_stopwords("value" VARCHAR, stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]
 	remove_stopwords("value" VARCHAR[], stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]
+	remove_stopwords("value" BLOB, stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> BLOB[]
+	remove_stopwords("value" BLOB[], stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> BLOB[]
 
 
 # --- A fixed-size ARRAY is a list, as the value and as a list option ---

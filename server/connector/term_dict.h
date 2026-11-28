@@ -93,6 +93,17 @@ inline duckdb::LogicalTypeId IndexedKind(const duckdb::LogicalType& type) {
   }
 }
 
+inline duckdb::LogicalTypeId ElementKind(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::LIST:
+      return duckdb::ListType::GetChildType(type).id();
+    case duckdb::LogicalTypeId::ARRAY:
+      return duckdb::ArrayType::GetChildType(type).id();
+    default:
+      return type.id();
+  }
+}
+
 constexpr bool IsIndexable(duckdb::LogicalTypeId id) noexcept {
   using enum duckdb::LogicalTypeId;
   switch (id) {

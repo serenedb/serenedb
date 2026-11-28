@@ -39,8 +39,6 @@ class ArenaAllocator;
 namespace irs {
 
 struct TokenTraits {
-  duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR;
-  duckdb::LogicalTypeId output = duckdb::LogicalTypeId::VARCHAR;
   bool unique = false;
   bool keyword = false;
   bool explicit_pos = false;

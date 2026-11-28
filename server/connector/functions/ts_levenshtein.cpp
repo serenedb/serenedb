@@ -24,7 +24,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
-#include <span>
 
 #include "ts_common.hpp"
 
@@ -53,11 +52,7 @@ constexpr std::string_view kSyntaxHint =
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func, const SearchColumnInfo& column) {
   const auto& children = func.GetChildren();
-  size_t positional = 0;
-  while (positional != children.size() &&
-         children[positional]->GetAlias().empty()) {
-    ++positional;
-  }
+  const auto positional = PositionalArgumentCount(func);
   SDB_ASSERT(positional >= 1 && positional <= 4);
   LevenshteinArgs out;
   out.bytes = ComparesBytes(column, func);
@@ -74,8 +69,10 @@ LevenshteinArgs ParseLevenshteinArgs(
     GetVarcharArg(*children[3], out.prefix,
                   {"ts_levenshtein prefix", kSyntaxHint});
   }
-  for (const auto& named : std::span{children}.subspan(positional)) {
-    const auto& alias = named->GetAlias();
+  const auto& names = func.Function().GetNamedArguments();
+  for (size_t i = 0; i < names.size(); ++i) {
+    const auto& alias = names[i];
+    const auto& named = children[positional + i];
     if (alias == "transpositions") {
       if (positional >= 3) {
         ThrowGivenTwice("transpositions");

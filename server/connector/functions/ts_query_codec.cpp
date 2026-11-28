@@ -90,8 +90,7 @@ constexpr size_t kMaxTSQueryStructuredTextSize = 64 * 1024;
 std::optional<std::string> RenderTSQueryExpression(
   duckdb::ClientContext& context, const duckdb::Expression& expr);
 std::optional<std::string> RenderTSQueryCall(
-  duckdb::ClientContext& context, std::string_view name,
-  std::span<const duckdb::unique_ptr<duckdb::Expression>> children);
+  duckdb::ClientContext& context, const duckdb::BoundFunctionExpression& call);
 
 bool IsTSQueryFamilyTypeName(std::string_view name) {
   return absl::EqualsIgnoreCase(name, kTSQueryTypeName) ||
@@ -466,8 +465,10 @@ std::optional<std::string> RenderCast(
 std::optional<std::string> RenderJoinedArgs(
   duckdb::ClientContext& context,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> children,
-  std::string_view open, std::string_view close) {
+  std::span<const duckdb::Identifier> names, std::string_view open,
+  std::string_view close) {
   std::string out{open};
+  const auto first_named = children.size() - names.size();
   for (size_t i = 0; i < children.size(); ++i) {
     auto rendered = RenderTSQueryExpression(context, *children[i]);
     if (!rendered) {
@@ -476,11 +477,11 @@ std::optional<std::string> RenderJoinedArgs(
     if (i != 0) {
       out += ", ";
     }
-    if (const auto& alias = children[i]->GetAlias(); !alias.empty()) {
-      absl::StrAppend(
-        &out,
-        duckdb::KeywordHelper::WriteOptionallyQuoted(alias.GetIdentifierName()),
-        " := ");
+    if (i >= first_named) {
+      absl::StrAppend(&out,
+                      duckdb::KeywordHelper::WriteOptionallyQuoted(
+                        names[i - first_named].GetIdentifierName()),
+                      " := ");
     }
     out += *rendered;
   }
@@ -500,12 +501,8 @@ void FoldStructuredConstants(duckdb::ClientContext& context,
                                duckdb::BoundCastExpression::IsCast(*expr);
   if (!IsTSQueryishType(type) || list_of_tsquery) {
     if (auto value = TryFold(context, *expr)) {
-      auto alias = expr->GetAlias();
       expr =
         duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*value));
-      if (!alias.empty()) {
-        expr->SetAlias(std::move(alias));
-      }
       return;
     }
   }
@@ -532,9 +529,7 @@ std::optional<std::string> RenderTSQueryExpression(
         break;
       }
       if (IsTSQueryishType(func.GetReturnType())) {
-        return RenderTSQueryCall(context,
-                                 func.Function().GetName().GetIdentifierName(),
-                                 func.GetChildren());
+        return RenderTSQueryCall(context, func);
       }
       break;
     }
@@ -551,10 +546,11 @@ std::optional<std::string> RenderTSQueryExpression(
 }
 
 std::optional<std::string> RenderTSQueryCall(
-  duckdb::ClientContext& context, std::string_view name,
-  std::span<const duckdb::unique_ptr<duckdb::Expression>> children) {
+  duckdb::ClientContext& context, const duckdb::BoundFunctionExpression& call) {
+  const auto name = call.Function().GetName().GetIdentifierName();
+  const auto& children = call.GetChildren();
   if (name == "list_value" || name == "array_value") {
-    return RenderJoinedArgs(context, children, "[", "]");
+    return RenderJoinedArgs(context, children, {}, "[", "]");
   }
   switch (const auto op = ClassifyTSQueryFunction(name); op) {
     case TSQueryOp::Unknown:
@@ -599,7 +595,8 @@ std::optional<std::string> RenderTSQueryCall(
       return absl::StrCat("(!!", *inner, ")");
     }
     default: {
-      auto args = RenderJoinedArgs(context, children, "(", ")");
+      auto args = RenderJoinedArgs(
+        context, children, call.Function().GetNamedArguments(), "(", ")");
       if (!args) {
         return std::nullopt;
       }
@@ -699,9 +696,8 @@ duckdb::Value MakeTSQueryValue(const duckdb::LogicalType& type,
 }
 
 std::optional<duckdb::Value> TryFoldTSQueryCall(
-  duckdb::ClientContext& context, std::string_view name,
-  std::span<const duckdb::unique_ptr<duckdb::Expression>> children) {
-  auto rendered = RenderTSQueryCall(context, name, children);
+  duckdb::ClientContext& context, const duckdb::BoundFunctionExpression& call) {
+  auto rendered = RenderTSQueryCall(context, call);
   if (!rendered || !IsStructuredText(*rendered)) {
     return std::nullopt;
   }

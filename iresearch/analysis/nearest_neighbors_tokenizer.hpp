@@ -47,6 +47,12 @@ class NearestNeighborsTokenizer final
     int32_t top_k{1};
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    TextOrBytes(type_name(), input);
+    return duckdb::LogicalTypeId::VARCHAR;
+  }
 
   static constexpr std::string_view type_name() noexcept {
     return "find_nearest_words";

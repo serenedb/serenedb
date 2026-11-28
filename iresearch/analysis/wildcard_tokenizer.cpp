@@ -34,11 +34,24 @@ namespace irs::analysis {
 
 Tokenizer::ptr WildcardTokenizer::Make(Options opts,
                                        duckdb::SharedObjectCache& cache) {
+  const bool binary_terms = opts.base_analyzer ? opts.base_analyzer->terms ==
+                                                   duckdb::LogicalTypeId::BLOB
+                                               : opts.bytes;
   Tokenizer::ptr base;
   if (opts.base_analyzer) {
     base = CreateTokenizer(std::move(*opts.base_analyzer), cache);
   }
-  return std::make_unique<WildcardTokenizer>(std::move(base), opts.ngram_size);
+  return std::make_unique<WildcardTokenizer>(std::move(base), opts.ngram_size,
+                                             opts.bytes, binary_terms);
+}
+
+duckdb::LogicalTypeId WildcardTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
+  opts.bytes = TextOrBytes(type_name(), input) == duckdb::LogicalTypeId::BLOB;
+  if (opts.base_analyzer) {
+    BindNode(*opts.base_analyzer, input, ctx);
+  }
+  return duckdb::LogicalTypeId::BLOB;
 }
 
 namespace {
@@ -228,7 +241,8 @@ void WildcardTokenizer::EmitTerms(TokenSink& sink, size_t from) {
 }
 
 WildcardTokenizer::WildcardTokenizer(Tokenizer::ptr base_analyzer,
-                                     size_t ngram_size)
+                                     size_t ngram_size, bool bytes,
+                                     bool binary_terms)
   : _analyzer{std::move(base_analyzer)},
     _ngram{NGramTokenizer::Options{
       ngram_size,
@@ -237,7 +251,9 @@ WildcardTokenizer::WildcardTokenizer(Tokenizer::ptr base_analyzer,
       NGramTokenizer::InputType::UTF8,
       {},
       {},
-    }} {
+    }},
+    _bytes{bytes},
+    _binary_terms{binary_terms} {
   if (!_analyzer) {
     _analyzer = std::make_unique<KeywordTokenizer>();
   }

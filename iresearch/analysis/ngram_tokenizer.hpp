@@ -73,6 +73,15 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
   size_t max_gram() const noexcept { return _options.max_gram; }
   bool preserve_original() const noexcept { return _options.preserve_original; }
 
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    const auto terms = TextOrBytes(type_name(), input);
+    return opts.stream_bytes_type == InputType::Binary
+             ? duckdb::LogicalTypeId::BLOB
+             : terms;
+  }
+
   TokenTraits Traits() const noexcept final {
     return {
       .explicit_pos = !DenseFill(),

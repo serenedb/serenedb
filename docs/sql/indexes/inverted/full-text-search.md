@@ -55,8 +55,10 @@ The `##` operator builds a **proximity phrase** by chaining parts left to right:
 
 Each side of a `##` is a single **phrase part**. A part may be:
 
-- a **bare word** — but only a *single* token (a multi-word string is not a phrase part; use `ts_phrase` for that), or
+- a **bare string**, the same part as [`ts_phrase`](../../functions/search/full-text.md#ts_phrase) of it: the column's dictionary analyzes it, so with a dictionary that splits and lowercases words `'Quick Brown' ## 'fox'` matches `quick brown fox`, or
 - one of [`ts_phrase`](../../functions/search/full-text.md#ts_phrase), [`ts_starts_with`](../../functions/search/full-text.md#ts_starts_with), [`ts_like`](../../functions/search/full-text.md#ts_like), [`ts_regexp`](../../functions/search/full-text.md#ts_regexp), [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein), [`ts_any`](../../functions/search/full-text.md#ts_any) or [`ts_between`](../../functions/search/full-text.md#ts_between).
+
+A `ts_phrase` part keeps all its segments and gaps, so `ts_phrase('quick', 1, 'fox') ## 'dog'` matches `quick brown fox dog`. A part is never sloppy: `slop := N` or `::slop(N)` on a part fails with `## part must not carry a slop modifier`. The strings of a `ts_any` part go through the column's dictionary too, and each one stands for a single position: a string the dictionary splits into several, such as `'quick fox'`, fails with `## ts_any phrase part term 'quick fox' spans several positions`.
 
 These part types **mix freely**: any of them can occupy any position in a single chain, in any combination, with an independent gap between any pair — for example `ts_starts_with('qu') ## 1 ## ts_any(['fox', 'dog'])` chains a prefix part, a gap and an alternatives part.
 
@@ -89,7 +91,7 @@ A phrase without `position` is slower than with it, and the more rows contain al
 - `Verify: table filter`: the phrase is listed under `Table Filter` and checked together with the query's other filters, and the `Index Filter` looks up its words. This is the cheaper form when other conditions reject many rows. A phrase gets it when every row has to match it and the query doesn't rank by its score: no ranking, a constant score, or the phrase or a group around it scored with [`::score('constant(1)')` or `::score(NULL)`](../../functions/search/scoring.md#score-modifier).
 - `Verify: inline`: the phrase stays in the `Index Filter` and is checked as the index finds the rows. This applies to a phrase ranked by its score, under `OR` or `NOT`, in a query ranked by vector distance or calling [`ts_offsets`](../../functions/search/highlighting.md), in `ts_dict_agg`, and with a `ts_levenshtein` part while [`sdb_levenshtein_max_terms`](./maintenance.md#session-settings) isn't `0`.
 
-Without `position` and without the column's text, a phrase of two or more words fails with `ts_phrase on a column without positions needs the column's text in the index`. On a column indexed without a dictionary, which holds each value as one term, a phrase of two or more parts fails with `ts_phrase on a column without a text search dictionary matches only whole values`. Both messages start with the call that holds the phrase: `ts_phrase`, `##` or `to_tsquery`.
+Without `position` and without the column's text, a phrase of two or more words fails with `ts_phrase on a column without positions needs the column's text in the index`. On a list of JSON values only `position` answers a phrase: without it, the phrase fails with `ts_phrase on a list of JSON values needs positions`, even when the column's text is in the index. On a column indexed without a dictionary, which holds each value as one term, a phrase of two or more parts fails with `ts_phrase on a column without a text search dictionary matches only whole values`. Each message starts with the call that holds the phrase: `ts_phrase`, `##` or `to_tsquery`.
 
 ## Prefix, wildcard and regex
 

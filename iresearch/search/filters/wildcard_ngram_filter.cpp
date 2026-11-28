@@ -24,6 +24,7 @@
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
 #include <absl/base/internal/endian.h>
+#include <simdutf.h>
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -101,24 +102,52 @@ size_t SymbolCount(bytes_view literal, bool bytes) {
   return bytes ? literal.size() : utf8_utils::Length(literal);
 }
 
+struct Literal {
+  bytes_view bytes;
+  bool begin = false;
+  bool end = false;
+};
+
 ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
                              ValueAnalyzer& value_analyzer,
-                             ValueTokens<>& tokens, bytes_view literal,
+                             ValueTokens<>& tokens, Literal literal,
                              bool bytes) {
-  SDB_ASSERT(!literal.empty());
-  if (SymbolCount(literal, bytes) >= ngram.min_gram()) {
-    return SplitGrams(ngram, value_analyzer, tokens, ViewCast<char>(literal));
+  SDB_ASSERT(!literal.bytes.empty());
+  if (SymbolCount(literal.bytes, bytes) >= ngram.min_gram()) {
+    return SplitGrams(ngram, value_analyzer, tokens,
+                      ViewCast<char>(literal.bytes));
   }
   ByPhraseOptions part;
-  if (literal.size() != 1 && literal.back() == kBoundary) {
-    part.push_back<ByTermOptions>(ByTermOptions{bstring{literal}});
+  if (literal.end && literal.bytes.size() > 1) {
+    part.push_back<ByTermOptions>(ByTermOptions{bstring{literal.bytes}});
   } else {
     auto& prefix = part.push_back<ByPrefixOptions>();
-    if (literal.size() != 1 || literal.back() != kBoundary) {
-      prefix.term = literal;
+    if (literal.bytes.size() > size_t{literal.begin} + size_t{literal.end}) {
+      prefix.term = literal.bytes;
     }
   }
   return part;
+}
+
+Literal WholeCharacters(Literal literal) {
+  const size_t head = literal.begin;
+  auto body = literal.bytes.substr(
+    head, literal.bytes.size() - head - size_t{literal.end});
+  size_t cut = 0;
+  while (cut != body.size() && (body[cut] & 0xC0) == 0x80) {
+    ++cut;
+  }
+  body.remove_prefix(cut);
+  const auto* chars = reinterpret_cast<const char*>(body.data());
+  const auto whole = simdutf::trim_partial_utf8(chars, body.size());
+  if (!simdutf::validate_utf8(chars, whole)) {
+    return {};
+  }
+  const bool begin = literal.begin && cut == 0;
+  const bool end = literal.end && whole == body.size();
+  const size_t from = begin ? 0 : head + cut;
+  const size_t to = end ? literal.bytes.size() : head + cut + whole;
+  return {literal.bytes.substr(from, to - from), begin, end};
 }
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
@@ -126,8 +155,14 @@ bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    bool has_pos, bool bytes,
                    std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
+    Literal literal{query.literal, query.begin, query.end};
+    if (!bytes) {
+      literal = WholeCharacters(literal);
+    }
     const auto& part = grams.emplace_back(
-      LiteralGrams(ngram, value_analyzer, tokens, query.literal, bytes));
+      literal.bytes.empty()
+        ? ByPhraseOptions{}
+        : LiteralGrams(ngram, value_analyzer, tokens, literal, bytes));
     return part.size() == 1 || has_pos;
   }
   bool exact = true;
@@ -288,7 +323,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
     return;
   }
   std::optional<analysis::NGramTokenizer> byte_ngram;
-  if (bytes) {
+  if (analyzer.ByteInput()) {
     byte_ngram.emplace(analysis::NGramTokenizer::Options{
       ngram.min_gram(),
       ngram.max_gram(),
@@ -302,7 +337,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   ValueTokens tokens;
   const bool decided =
     SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
-                  tokens, has_pos, bytes, grams) &&
+                  tokens, has_pos, analyzer.ByteInput(), grams) &&
     plan.exact;
   if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;

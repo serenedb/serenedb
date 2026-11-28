@@ -249,20 +249,17 @@ duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
 
 class IndexTokenizers {
  public:
-  using Bound = irs::containers::FlatHashMap<irs::field_id, ColumnTokenizer>;
-
   IndexTokenizers() = default;
   IndexTokenizers(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   const InvertedIndexConfig& config);
 
   ColumnTokenizer Acquire(irs::field_id field_id) const;
-  ColumnTokenizer Acquire(irs::field_id field_id,
-                          duckdb::ClientContext& context) const;
-  Bound AcquireAll(duckdb::ClientContext& context) const;
+  duckdb::LogicalTypeId Terms(irs::field_id field_id,
+                              duckdb::LogicalTypeId values) const;
 
  private:
   struct Field {
-    TokenizerRef tokenizer;
+    TokenizerBindingRef binding;
     irs::IndexFeatures features = irs::IndexFeatures::None;
     irs::field_id tokenizer_column = irs::field_limits::invalid();
   };

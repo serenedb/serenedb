@@ -810,22 +810,23 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
   for (const auto& e : claim.conjuncts) {
     to_index(bound(e));
   }
+  if (conjuncts.empty()) {
+    return out;
+  }
+  const auto tokenizers = scan.relation.ResolveTokenizers(context);
   const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
     const auto it = claim.columns->find(MakeBindingKey(ref.Binding()));
     if (it == claim.columns->end()) {
       return std::nullopt;
     }
-    return optimizer::ResolveSearchColumnById(context, scan, it->second.column,
-                                              it->second.column_stored);
+    return optimizer::ResolveSearchColumnById(
+      scan, tokenizers, it->second.column, it->second.column_stored);
   };
   const ExpressionGetter expr_getter =
     [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
     return std::nullopt;
   };
-  if (conjuncts.empty()) {
-    return out;
-  }
   auto root = std::make_unique<irs::BooleanFilter>();
   FilterScorers scorers;
   const auto status =

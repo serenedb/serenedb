@@ -143,7 +143,8 @@ duckdb::LogicalType MakeTSQueryType();
 bool IsSearchStub(const duckdb::BoundFunctionExpression& call);
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  duckdb::ClientContext& context, std::string_view name);
+  duckdb::ClientContext& context, std::string_view name,
+  const duckdb::LogicalType& input);
 
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
   duckdb::BindScalarFunctionInput& input, std::string_view name);

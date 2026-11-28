@@ -29,6 +29,7 @@
 #include <memory>
 #include <utility>
 
+#include "bound_config.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "text_chain.hpp"
@@ -51,9 +52,7 @@ std::unique_ptr<Cfg> Child(Cfg cfg) {
   return std::make_unique<Cfg>(std::move(cfg));
 }
 
-Ptr MakeChild(Cfg cfg) {
-  return irs::analysis::CreateTokenizer(std::move(cfg), ::tests::Cache());
-}
+Ptr MakeChild(const Cfg& cfg) { return ::tests::MakeBound(cfg); }
 
 duckdb::text::Locale Loc(const char* name) {
   return duckdb::text::Locale::FromName(name);
@@ -1044,9 +1043,6 @@ void AddModels(std::vector<Spec>& out) {
 }
 
 void AddGeo(std::vector<Spec>& out) {
-  const auto wkb = [](irs::analysis::Tokenizer& a) {
-    GeoTokenizer::Cast(a).SetWkbInput(true);
-  };
   Add(out, {.name = "geopoint[array_json]",
             .config = [] { return Cfg{GeoPointTokenizer::Options{}}; },
             .dict = GeoDict(),
@@ -1064,7 +1060,7 @@ void AddGeo(std::vector<Spec>& out) {
             .cost = 2});
   Add(out, {.name = "geopoint[wkb]",
             .config = [] { return Cfg{GeoPointTokenizer::Options{}}; },
-            .setup = wkb,
+            .input = duckdb::LogicalTypeId::GEOMETRY,
             .dict = GeoDict(),
             .native = GeoWkbValues(),
             .cost = 2});
@@ -1127,7 +1123,7 @@ void AddGeo(std::vector<Spec>& out) {
                 return Cfg{GeoJsonTokenizer::Options{.type = Type::Shape,
                                                      .coding = Coding::Source}};
               },
-            .setup = wkb,
+            .input = duckdb::LogicalTypeId::GEOMETRY,
             .dict = GeoDict(),
             .native = GeoWkbValues(),
             .cost = 2});
@@ -1466,14 +1462,11 @@ duckdb::Connection Connect() {
 irs::analysis::Tokenizer::ptr Make(const Spec& spec,
                                    duckdb::ClientContext& ctx) {
   auto tokenizer =
-    irs::analysis::CreateTokenizer(spec.config(), ::tests::Cache());
+    ::tests::MakeBound(spec.config(), duckdb::LogicalType{spec.input}, ctx);
   if (!tokenizer) {
     return tokenizer;
   }
   tokenizer->Bind(ctx);
-  if (spec.setup) {
-    spec.setup(*tokenizer);
-  }
   return tokenizer;
 }
 

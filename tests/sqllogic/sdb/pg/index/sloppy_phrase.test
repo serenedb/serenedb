@@ -524,3 +524,96 @@ SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox jumps', slop := 2
 ----
 a
 11
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sloppy_seg_dict AS split_text(case := 'lower') WITH (frequency, position);
+
+statement ok
+CREATE TABLE sloppy_seg (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO sloppy_seg VALUES (1, 'quick fox dog'), (2, 'quick dog'), (3, 'quick brown fox dog');
+
+statement ok
+CREATE INDEX sloppy_seg_idx ON sloppy_seg USING inverted(id, body sloppy_seg_dict);
+
+query
+SELECT 'one' AS form, list(id ORDER BY id) AS ids FROM sloppy_seg_idx WHERE body @@ (ts_phrase('quick fox') ## 'dog')
+UNION ALL SELECT 'two', list(id ORDER BY id) FROM sloppy_seg_idx WHERE body @@ (ts_phrase('quick', 'fox') ## 'dog')
+UNION ALL SELECT 'gap', list(id ORDER BY id) FROM sloppy_seg_idx WHERE body @@ (ts_phrase('quick', 1, 'fox') ## 'dog')
+UNION ALL SELECT 'gap alone', list(id ORDER BY id) FROM sloppy_seg_idx WHERE body @@ ts_phrase('quick', 1, 'fox', 'dog')
+UNION ALL SELECT 'call', list(id ORDER BY id) FROM sloppy_seg_idx WHERE body @@ tsquery_phrase(ts_phrase('quick', 'fox'), ts_phrase('dog'))
+ORDER BY form;
+----
+form	ids
+call	{1}
+gap	{3}
+gap alone	{3}
+one	{1}
+two	{1}
+
+query error
+SELECT id FROM sloppy_seg_idx WHERE body @@ (ts_phrase('quick fox', slop := 1) ## 'dog');
+----
+db error: ERROR: ## part must not carry a slop modifier
+HINT: Use ts_phrase(..., slop := N) or ts_phrase(...)::slop(N) for a sloppy phrase.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sloppy_stem_dict AS split_text(case := 'lower') | stem_words('en_US.UTF-8') WITH (frequency, position);
+
+statement ok
+CREATE TABLE sloppy_stem (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO sloppy_stem VALUES (1, 'The fox jumps over the dog'), (2, 'Quick dog');
+
+statement ok
+CREATE INDEX sloppy_stem_idx ON sloppy_stem USING inverted(id, body sloppy_stem_dict);
+
+query
+SELECT 'phrase' AS form, list(id ORDER BY id) AS ids FROM sloppy_stem_idx WHERE body @@ ts_phrase('jumps over')
+UNION ALL SELECT 'words', list(id ORDER BY id) FROM sloppy_stem_idx WHERE body @@ ('jumps' ## 'over')
+UNION ALL SELECT 'case', list(id ORDER BY id) FROM sloppy_stem_idx WHERE body @@ ('Quick' ## 'dog')
+UNION ALL SELECT 'any', list(id ORDER BY id) FROM sloppy_stem_idx WHERE body @@ (ts_any(['Quick', 'slow']) ## 'dog')
+ORDER BY form;
+----
+form	ids
+any	{2}
+case	{2}
+phrase	{1}
+words	{1}
+
+query error
+SELECT id FROM sloppy_stem_idx WHERE body @@ (ts_any(['quick fox']) ## 'dog');
+----
+db error: ERROR: ## ts_any phrase part term 'quick fox' spans several positions
+HINT: A phrase position holds one token; use ts_phrase for a run of words.
+
+
+query error
+SELECT id FROM sloppy_stem_idx WHERE body @@ (ts_any(['!!']) ## 'dog');
+----
+db error: ERROR: ## ts_any phrase part produced no tokens after analysis
+HINT: All its terms were stripped (e.g. stopwords). Provide at least one searchable term.
+
+
+query error
+SELECT id FROM sloppy_seg_idx WHERE body @@ (ts_phrase('quick', slpo := 1) ## 'dog');
+----
+db error: ERROR: ts_phrase has no argument named slpo
+HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INTEGER[].
+
+
+query error
+SELECT id FROM sloppy_seg_idx WHERE body @@ ts_phrase('quick', 1, body);
+----
+db error: ERROR: ts_phrase argument 2 must be a constant
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query error
+SELECT id FROM sloppy_seg_idx WHERE body @@ ts_phrase('quick', id::VARCHAR);
+----
+db error: ERROR: ts_phrase argument 1 must be a constant
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).

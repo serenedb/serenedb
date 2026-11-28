@@ -58,8 +58,6 @@ class GeoTokenizer : private util::Noncopyable {
   template<TokenLayout Layout, bool Wkb>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 
-  void SetWkbInput(bool wkb) noexcept { _wkb_input = wkb; }
-
   virtual ~GeoTokenizer() = default;
 
   virtual bool reset(simdjson::ondemand::value json) = 0;
@@ -73,7 +71,7 @@ class GeoTokenizer : private util::Noncopyable {
 #endif
 
  protected:
-  explicit GeoTokenizer(const S2RegionTermIndexer::Options& options);
+  GeoTokenizer(const S2RegionTermIndexer::Options& options, bool wkb);
 
   size_t ScratchMemoryUsage() const noexcept {
     return _json_cap + _covering.capacity() * sizeof(S2CellId);
@@ -119,8 +117,13 @@ class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
     irs::geo::GeoOptions options;
     std::vector<std::string> latitude;
     std::vector<std::string> longitude;
+    bool wkb = false;
   };
   static analysis::Tokenizer::ptr Make(Options opts);
+
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   static constexpr std::string_view type_name() noexcept {
     return "encode_geopoint";
@@ -130,11 +133,7 @@ class GeoPointTokenizer final : public TypedTokenizer<GeoPointTokenizer>,
 
   using GeoTokenizer::PrepareBatch;
 
-  TokenTraits Traits() const noexcept final {
-    return {.output = duckdb::LogicalTypeId::BLOB};
-  }
-
-  void Unbind() noexcept final { SetWkbInput(false); }
+  TokenTraits Traits() const noexcept final { return {}; }
 
   size_t MemoryUsage() const noexcept final { return ScratchMemoryUsage(); }
 
@@ -180,8 +179,13 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
     irs::geo::GeoOptions options;
     Type type{Type::Shape};
     Coding coding{Coding::Source};
+    bool wkb = false;
   };
   static analysis::Tokenizer::ptr Make(Options opts);
+
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   static constexpr std::string_view type_name() noexcept {
     return "encode_geojson";
@@ -192,13 +196,8 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
   using GeoTokenizer::PrepareBatch;
 
   TokenTraits Traits() const noexcept final {
-    return {
-      .output = duckdb::LogicalTypeId::BLOB,
-      .store = _coding != Coding::Source,
-    };
+    return {.store = _coding != Coding::Source};
   }
-
-  void Unbind() noexcept final { SetWkbInput(false); }
 
   size_t MemoryUsage() const noexcept final {
     return ScratchMemoryUsage() + _cache.capacity() * sizeof(S2LatLng) +

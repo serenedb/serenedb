@@ -38,6 +38,8 @@ With `GROUP = N` above zero the Nth capture group of each match becomes the toke
 
 The regex is case-sensitive unless the pattern says otherwise: `[A-Z]+` with `GROUP = 0` on `HelloWORLD` yields `H` and `WORLD`, and `(?i)` folds case. RE2 matches on UTF-8 semantics, so `\p{L}+` with `GROUP = 0` on `café naïve` yields `café` and `naïve`, while offsets and token lengths stay byte-based. Matching runs over the whole value with an advancing start position rather than over the remaining suffix, so anchors and boundary assertions see the true value boundaries: `^x` with `GROUP = 0` on `xxaxx` emits exactly one token, and `$` matches only the real end of the value. A pattern that can match the empty string advances one whole UTF-8 character per empty match, so a token never begins or ends inside a multi-byte character; in split mode that yields the text between the empty matches, so `x*` on `ab` gives `a` and `b`, and `x*` on `é` gives the single token `é`.
 
+`\C` is the one construct that matches a single byte rather than a character, so a pattern that holds it can cut a multi-byte character in half. Its tokens are then `BLOB` terms: the function form and `ts_lexize` return `BLOB[]`, `ts_lexize` takes the dictionary name only as a constant, [`ts_dict_raw_agg`](../term-dictionary.md#ts_dict_agg) lists them where `ts_dict_agg` rejects the column, and a later step of a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) reads them as bytes.
+
 The table below shows the same idea from both directions, plus capture-group extraction:
 
 | Mode | `PATTERN` | `GROUP` | Input | Tokens |

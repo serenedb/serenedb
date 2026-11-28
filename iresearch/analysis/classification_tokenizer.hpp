@@ -52,6 +52,12 @@ class ClassificationTokenizer final
   }
 
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    TextOrBytes(type_name(), input);
+    return duckdb::LogicalTypeId::VARCHAR;
+  }
 
   explicit ClassificationTokenizer(const Options& options,
                                    model_ptr model) noexcept;

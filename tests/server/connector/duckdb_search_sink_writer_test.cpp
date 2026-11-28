@@ -184,7 +184,10 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
     static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
       search::Features{}, irs::analysis::TokenizerConfig{
                             .config = irs::KeywordTokenizer::Options{}});
-    auto tokenizer = gKeywordTokenizer->Acquire(sdb::test::EngineContext());
+    auto& context = sdb::test::EngineContext();
+    auto tokenizer =
+      gKeywordTokenizer->Bind(context, duckdb::LogicalType::VARCHAR)
+        ->Acquire(context);
     return {.analyzer = std::move(tokenizer),
             .features = irs::IndexFeatures::None};
   }
@@ -200,7 +203,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   ::tests::IndexWriter::ptr _data_writer;
 };
 
-TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
+TEST(TokenizerPoolTest, AGeoLeaseKeepsTheInputItWasBoundFor) {
   auto dict = std::make_shared<catalog::Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{
@@ -227,17 +230,22 @@ TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
     return ok && consumer.count > 0;
   };
 
-  auto lease = dict->Acquire(sdb::test::EngineContext());
-  auto* instance = lease.get();
-  ASSERT_TRUE(fill(*lease));
+  auto& context = sdb::test::EngineContext();
+  const auto geometry = dict->Bind(context, duckdb::LogicalType::GEOMETRY());
+  auto wkb = geometry->Acquire(context);
+  auto* wkb_instance = wkb.get();
+  ASSERT_FALSE(fill(*wkb));
+  wkb.reset();
 
-  irs::analysis::GeoTokenizer::Cast(*lease).SetWkbInput(true);
-  ASSERT_FALSE(fill(*lease));
-  lease.reset();
+  auto text =
+    dict->Bind(context, duckdb::LogicalType::VARCHAR)->Acquire(context);
+  ASSERT_NE(wkb_instance, text.get());
+  ASSERT_TRUE(fill(*text));
+  text.reset();
 
-  auto release = dict->Acquire(sdb::test::EngineContext());
-  ASSERT_EQ(instance, release.get());
-  ASSERT_TRUE(fill(*release));
+  auto again = geometry->Acquire(context);
+  ASSERT_EQ(wkb_instance, again.get());
+  ASSERT_FALSE(fill(*again));
 }
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {

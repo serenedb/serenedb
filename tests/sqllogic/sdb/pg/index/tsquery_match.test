@@ -3313,3 +3313,38 @@ SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('fn:wildcard(a_b*)') ORDER
 id
 3
 5
+
+# An expression whose SQL text is just under the 64 KiB folding limit matches
+# like a shorter or a longer one.
+statement ok
+CREATE TABLE tsq_fold(id INTEGER PRIMARY KEY, w VARCHAR);
+
+statement ok
+CREATE INDEX tsq_fold_idx ON tsq_fold USING inverted(id, w);
+
+statement ok
+INSERT INTO tsq_fold VALUES (1, 'fox'), (2, 'dog');
+
+query
+SELECT id FROM tsq_fold WHERE w @@ ts_any([ts_phrase(repeat('a', 65000)), ts_phrase('fox')]) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_fold WHERE w @@ ts_any([ts_phrase(repeat('a', 65492)), ts_phrase('fox')]) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_fold WHERE w @@ ts_any([ts_phrase(repeat('a', 65495)), ts_phrase('fox')]) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_fold WHERE w @@ ts_any([ts_phrase(repeat('a', 65600)), ts_phrase('fox')]) ORDER BY id;
+----
+id
+1

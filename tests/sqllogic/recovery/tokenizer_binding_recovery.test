@@ -1,0 +1,42 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tbr_hex AS (lambda x: hex(x));
+
+
+statement ok
+CREATE TABLE tbr(id INTEGER PRIMARY KEY, h BYTEA);
+
+
+statement ok
+CREATE INDEX tbr_idx ON tbr USING inverted(id, h tbr_hex);
+
+
+statement ok
+INSERT INTO tbr VALUES (1, '\x5c783431'::bytea), (2, '\x41'::bytea);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+statement ok
+INSERT INTO tbr VALUES (3, '\xff'::bytea);
+
+
+connection after_crash
+query
+SELECT list_sort(ts_dict_agg(h)) AS terms FROM tbr_idx;
+----
+terms
+{41,5C783431,FF}

@@ -419,7 +419,8 @@ bool WithSearchGetters(PlannedScan& scan, duckdb::ClientContext& context,
     return scan.IdOf(ref.Binding());
   };
 
-  return fn(SearchGetters{getter, expr_getter, analyzed_fields, column_id});
+  return fn(
+    SearchGetters{getter, expr_getter, analyzed_fields, column_id, dicts});
 }
 
 namespace {
@@ -1319,7 +1320,7 @@ bool ClaimSearchConjuncts(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   connector::ScanBindData& scan, const SearchGetters& getters,
   duckdb::ClientContext& context) {
-  auto& [getter, expr_getter, analyzed_fields, column_id] = getters;
+  auto& [getter, expr_getter, analyzed_fields, column_id, _] = getters;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
@@ -2101,10 +2102,9 @@ duckdb::unique_ptr<duckdb::Expression> ColumnFormOf(
 }
 
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
-  duckdb::ClientContext& context, const connector::ScanBindData& scan,
+  const connector::ScanBindData& scan, const catalog::IndexTokenizers& dicts,
   connector::ColumnId col_id, bool column_stored) {
-  auto column_info =
-    ColumnInfoOf(scan, scan.relation.ResolveTokenizers(context), col_id);
+  auto column_info = ColumnInfoOf(scan, dicts, col_id);
   if (!column_info) {
     return std::nullopt;
   }

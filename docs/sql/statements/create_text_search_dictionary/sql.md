@@ -17,7 +17,7 @@ The parentheses around a lambda are needed whenever another stage follows it, be
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `EXPRESSION` | string | **required** | Scalar expression over the value (`VARCHAR`). It returns `VARCHAR` or `BLOB` — one token per value — or a list of them, which is one token per element. Built-in functions only, no subqueries, no parameters, no volatile functions |
+| `EXPRESSION` | string | **required** | Scalar expression over the value: `VARCHAR` when the dictionary tokenizes text, `BLOB` when it tokenizes bytes. It returns `VARCHAR` or `BLOB` — one token per value — or a list of them, which is one token per element. Built-in functions only, no subqueries, no parameters, no volatile functions, nothing that depends on session settings |
 
 The option is internal: a `sql` stage is written as a call or a lambda, never as `sql(...)`, which fails with `unknown stage "sql"` because there is neither a template nor a function of that name.
 
@@ -60,7 +60,11 @@ The expressions above are written as they read; inside the statement each single
 
 A `NULL` result rejects the value, which then contributes no tokens at all; `ts_lexize` and the tokenizer functions return `NULL` for a rejected value, while a value that is accepted but produces no tokens returns an empty array. A `NULL` element inside a list is dropped on its own and the surrounding elements are still emitted. An empty list accepts the value and produces no tokens. `NULL` rows never reach the expression. Watch for `NULL` constants in null-propagating functions: `replace(input, NULL, 'x')` is `NULL` for every value, so every value is rejected.
 
-A `BLOB`-returning expression types the tokens as `BLOB`, and their bytes are indexed as raw byte terms — the template performs no UTF-8 validation or conversion of its own. `ts_lexize` then returns `BLOB[]`, and the dictionary name has to be a constant: `ts_lexize` refuses a non-constant name for a dictionary that produces `BLOB` tokens.
+A `BLOB`-returning expression types the tokens as `BLOB`, and their bytes are indexed as raw byte terms — the template performs no UTF-8 validation or conversion of its own. `ts_lexize` then returns `BLOB[]`, and the dictionary name has to be a constant: `ts_lexize` refuses a non-constant name for a dictionary that produces `BLOB` tokens. A step of a [`pipeline`](./pipeline/index.md) after it reads those bytes.
+
+The expression is bound for the type of the value it reads. On a `BYTEA` column, and after a step that emits bytes, its argument is `BLOB`: `(lambda x: hex(x))` indexes the column's raw bytes, while an expression that only takes text, such as `(lambda x: upper(x))`, refuses the index because `upper` has no `BLOB` form. `CREATE TEXT SEARCH DICTIONARY` binds the expression for `VARCHAR`, then for `BLOB`, and refuses the dictionary only when it binds for neither. An index keeps the expression as it was bound when the index was created.
+
+- `sql: the expression depends on the session` — the result would follow from a setting rather than from the value alone, as `x::VARCHAR` on `BLOB` does through `bytea_output` and a cast to `TIMESTAMPTZ` does through `TimeZone`.
 
 An error raised while the expression runs — a failed cast, an invalid regular expression argument — is not caught by the template. It propagates out of the statement that was analyzing the value, whether that is `INSERT`, `CREATE INDEX` or `ts_lexize`.
 

@@ -248,12 +248,13 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictListAggregate(
 
 duckdb::unique_ptr<duckdb::Expression> MakeTsDictAggregate(
   PlanIndex& index, duckdb::ClientContext& context, PlannedScan& scan,
-  irs::field_id field_id, irs::DictLayout layout, irs::field_id display_id,
-  TsDictColumn kind, std::string_view agg_name, duckdb::TableIndex table_index,
-  const duckdb::Identifier& alias) {
+  irs::field_id field_id, irs::DictLayout layout, bool bytes,
+  irs::field_id display_id, TsDictColumn kind, std::string_view agg_name,
+  duckdb::TableIndex table_index, const duckdb::Identifier& alias) {
   auto& req = scan.Bind().ts_dict.For(field_id);
   req.display_id = display_id;
   req.layout = layout;
+  req.bytes = bytes;
   const duckdb::LogicalType col_type{SpecOf(kind).type};
   const auto get_column = EnsureTsDictColumn(scan, req, kind);
   using enum connector::TsDictTermUses;
@@ -324,16 +325,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   const auto& index = scan.Bind().relation.inverted_config;
   const auto* info = index->FindColumnInfo(col_id);
   const auto& col_type = col_ref->GetReturnType();
-  const auto element = [&] {
-    switch (col_type.id()) {
-      case duckdb::LogicalTypeId::LIST:
-        return duckdb::ListType::GetChildType(col_type).id();
-      case duckdb::LogicalTypeId::ARRAY:
-        return duckdb::ArrayType::GetChildType(col_type).id();
-      default:
-        return col_type.id();
-    }
-  }();
+  const auto element = connector::term_dict::ElementKind(col_type);
   if (!info || !info->IsTermDict() ||
       (element != duckdb::LogicalTypeId::VARCHAR &&
        element != duckdb::LogicalTypeId::BLOB)) {
@@ -345,29 +337,22 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
-  if (kind == TsDictColumn::Term && element == duckdb::LogicalTypeId::BLOB) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG(fn, "(): column has no text term dictionary"),
-                    ERR_HINT("its terms are BYTEA, which ts_dict_raw_agg "
-                             "returns"));
-  }
+  const bool bytes = element == duckdb::LogicalTypeId::BLOB;
   if (kind == TsDictColumn::Term) {
-    const auto tokenizer =
-      scan.Bind().relation.ResolveTokenizers(context).Acquire(
-        index->TermField(col_id));
-    const auto output = tokenizer.analyzer->Traits().output;
+    const auto output = scan.Bind().relation.ResolveTokenizers(context).Terms(
+      index->TermField(col_id), element);
     if (output != duckdb::LogicalTypeId::VARCHAR) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG(fn, "(): column has no text term dictionary"),
-                      ERR_HINT("its dictionary produces ",
-                               duckdb::LogicalTypeIdToString(output),
-                               " tokens, which ts_dict_raw_agg returns"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(fn, "(): column has no text term dictionary"),
+        ERR_HINT("its terms are ", duckdb::LogicalTypeIdToString(output),
+                 ", which ts_dict_raw_agg returns"));
     }
   }
   return MakeTsDictAggregate(
     plan, context, scan, index->TermField(col_id),
-    connector::term_dict::LayoutOf(col_type, info->HasJsonLeafFields()), col_id,
-    kind, agg_name, col_ref->Binding().table_index, agg.GetAlias());
+    connector::term_dict::LayoutOf(col_type, info->HasJsonLeafFields()), bytes,
+    col_id, kind, agg_name, col_ref->Binding().table_index, agg.GetAlias());
 }
 
 void CollectTsDictScans(duckdb::LogicalOperator& op,
@@ -455,7 +440,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InjectTsDictGroupBy(
       continue;
     }
     auto& req = ss.ts_dict.requests[r];
-    const auto get_column = EnsureTsDictColumn(scan, req, TsDictColumn::Term);
+    const auto get_column =
+      EnsureTsDictColumn(scan, req, TsDictColumn::TermRaw);
     req.term_uses |= connector::TsDictTermUses::Full;
     const auto anchor =
       child->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION
@@ -463,12 +449,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InjectTsDictGroupBy(
         : get_ti;
     const auto source =
       index.Expose(anchor, scan, get_column,
-                   TsDictColName(ss, req.display_id, TsDictColumn::Term),
-                   duckdb::LogicalType::VARCHAR);
+                   TsDictColName(ss, req.display_id, TsDictColumn::TermRaw),
+                   duckdb::LogicalType::BLOB);
     add_entry({
       .source = source,
-      .source_type = duckdb::LogicalType::VARCHAR,
-      .kind = TsDictColumn::Term,
+      .source_type = duckdb::LogicalType::BLOB,
+      .kind = TsDictColumn::TermRaw,
       .req_index = r,
     });
   }
@@ -1096,7 +1082,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
   const KeywordDictAgg& match, PlanIndex& plan, duckdb::ClientContext& context,
   const duckdb::Identifier& alias, PlannedScan& target) {
   return MakeTsDictAggregate(plan, context, target, match.field_id,
-                             irs::DictLayout::String, match.col_id,
+                             irs::DictLayout::String, false, match.col_id,
                              TsDictColumn::Term, match.agg,
                              match.binding.table_index, alias);
 }
@@ -1672,7 +1658,7 @@ namespace {
 // emitted terms (no postings touched -- it filters the dictionary rows).
 void RewriteFieldRefsToTerm(duckdb::unique_ptr<duckdb::Expression>& expr,
                             irs::field_id field_id, const PlannedScan& scan,
-                            duckdb::idx_t term_column) {
+                            TsDictColumn kind, duckdb::idx_t term_column) {
   const auto& bind_data = scan.Bind();
   duckdb::ExpressionIterator::VisitExpressionClassMutable(
     expr, duckdb::ExpressionClass::BOUND_COLUMN_REF,
@@ -1682,9 +1668,8 @@ void RewriteFieldRefsToTerm(duckdb::unique_ptr<duckdb::Expression>& expr,
       if (col_id != connector::kInvalidColumnId &&
           bind_data.relation.inverted_config->TermField(col_id) == field_id) {
         ref_expr = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-          duckdb::Identifier{
-            TsDictColName(bind_data, field_id, TsDictColumn::Term)},
-          duckdb::LogicalType::VARCHAR,
+          duckdb::Identifier{TsDictColName(bind_data, field_id, kind)},
+          duckdb::LogicalType{SpecOf(kind).type},
           duckdb::ColumnBinding{scan.Get().table_index,
                                 duckdb::ProjectionIndex{term_column}});
       }
@@ -1802,7 +1787,7 @@ bool TsDictFacetPushdown::WhereOk() {
   }
   const bool claimable =
     WithSearchGetters(*_found, _context, [&](const SearchGetters& getters) {
-      auto& [getter, expr_getter, analyzed_fields, column_id] = getters;
+      auto& [getter, expr_getter, analyzed_fields, column_id, _] = getters;
       size_t computed_residuals = 0;
       for (auto& expr : _where->expressions) {
         if (expr->HasParameter()) {
@@ -2194,11 +2179,25 @@ class TsDictFilterClaim {
       return;
     }
     auto& req = _bind_data.ts_dict.requests.front();
-    const auto term_column = EnsureTsDictColumn(_scan, req, TsDictColumn::Term);
+    if (!req.bytes) {
+      const auto output =
+        _getters.tokenizers.Terms(req.field_id, duckdb::LogicalTypeId::VARCHAR);
+      if (output != duckdb::LogicalTypeId::VARCHAR) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("ts_dict_agg() WHERE evaluates scalar "
+                  "post-filters over text terms only"),
+          ERR_HINT("the column's dictionary produces ",
+                   duckdb::LogicalTypeIdToString(output), " tokens"));
+      }
+    }
+    const auto kind = req.bytes ? TsDictColumn::TermRaw : TsDictColumn::Term;
+    const auto term_column = EnsureTsDictColumn(_scan, req, kind);
     req.term_uses |= connector::TsDictTermUses::Full;
     for (size_t i = 0; i < _filters.size(); ++i) {
       if (_routes[i] == TsDictRoute::PostFilter) {
-        RewriteFieldRefsToTerm(_filters[i], req.field_id, _scan, term_column);
+        RewriteFieldRefsToTerm(_filters[i], req.field_id, _scan, kind,
+                               term_column);
       }
     }
   }

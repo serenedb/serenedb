@@ -467,3 +467,28 @@ ORDER BY id;
 id
 1
 3
+
+statement ok
+CREATE TABLE pj_list (id INTEGER PRIMARY KEY, tags JSON[]);
+
+statement ok
+INSERT INTO pj_list VALUES (1, ['"red fox"'::json, '"quick"'::json]), (2, ['"fox red"'::json]);
+
+statement ok
+CREATE INDEX pj_list_text_idx ON pj_list USING inverted(id, tags pj_nopos) INCLUDE (tags);
+
+statement ok
+CREATE INDEX pj_list_pos_idx ON pj_list USING inverted(id, tags pj_pos);
+
+statement error
+SELECT id FROM pj_list_text_idx WHERE tags @@ ts_phrase('red fox');
+----
+db error: ERROR: ts_phrase on a list of JSON values needs positions
+HINT: Add `position` to the dictionary, or query with a single-term ts_phrase / ts_like.
+
+
+query
+SELECT id FROM pj_list_pos_idx WHERE tags @@ ts_phrase('red fox') ORDER BY id;
+----
+id
+1

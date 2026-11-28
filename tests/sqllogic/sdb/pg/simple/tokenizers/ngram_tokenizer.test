@@ -122,7 +122,7 @@ CREATE TEXT SEARCH DICTIONARY repro_ngram_binary AS
 
 
 query
-SELECT ts_lexize('repro_ngram_binary', 'abc');
+SELECT list_transform(ts_lexize('repro_ngram_binary', 'abc'), lambda t: hex(t)) AS grams;
 ----
-ts_lexize
-{a,b,c}
+grams
+{61,62,63}

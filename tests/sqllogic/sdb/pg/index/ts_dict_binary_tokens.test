@@ -17,21 +17,21 @@ statement error
 SELECT ts_dict_agg(w) FROM beast_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_max(w) FROM beast_idx
 ----
 db error: ERROR: ts_dict_max(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_agg(c) FROM beast_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 query
@@ -43,13 +43,161 @@ grams	counts
 {3637FF,37FF,FF3637}	{2,2,2}
 
 query
+SELECT list_sort(ts_dict_count(w)) AS counts FROM beast_idx
+----
+counts
+{2,2,2}
+
+statement error
+SELECT ts_dict_count(w) FROM beast_idx WHERE length(w) = 3
+----
+db error: ERROR: ts_dict_agg() WHERE evaluates scalar post-filters over text terms only
+HINT: the column's dictionary produces BLOB tokens
+
+
+query
 SELECT list_sort(ts_dict_agg(k)) AS channels FROM beast_idx
 ----
 channels
 {feastables,mrbeast}
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY beast_grams AS generate_ngrams(2, 2, input_type := 'binary')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY beast_bytes AS split_text_csv('')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY beast_md5 AS (lambda x: unhex(md5(x)))
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY beast_hashes AS split_text() | (lambda x: unhex(md5(x)))
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY beast_mixed AS [keyword(), (lambda x: unhex(md5(x)))]
+
+statement ok
+CREATE TABLE beast_b (id INTEGER PRIMARY KEY, g VARCHAR, b VARCHAR, m VARCHAR, h VARCHAR, u VARCHAR) WITH (compaction_interval = 0)
+
+statement ok
+CREATE INDEX beast_b_idx ON beast_b USING inverted (id, g beast_grams, b beast_bytes, m beast_md5, h beast_hashes, u beast_mixed)
+
+statement ok
+INSERT INTO beast_b VALUES (1, 'hé', 'é', 'quick', 'quick fox', 'quick'), (2, 'ha', 'a', 'lazy', 'lazy dog', 'lazy')
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(g), lambda x: hex(x))) AS grams,
+       list_sort(list_transform(ts_dict_raw_agg(b), lambda x: hex(x))) AS bytes
+FROM beast_b_idx
+----
+grams	bytes
+{6861,68C3,C3A9}	{61,A9,C3}
+
+query
+SELECT list_sort(ts_dict_count(g)) AS grams FROM beast_b_idx
+----
+grams
+{1,1,1}
+
+statement error
+SELECT ts_dict_agg(g) FROM beast_b_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_agg(b) FROM beast_b_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_agg(m) FROM beast_b_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_agg(h) FROM beast_b_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_agg(u) FROM beast_b_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_count(g) FROM beast_b_idx WHERE octet_length(g) = 2
+----
+db error: ERROR: ts_dict_agg() WHERE evaluates scalar post-filters over text terms only
+HINT: the column's dictionary produces BLOB tokens
+
+
+statement error
+SELECT ts_dict_count(b) FROM beast_b_idx WHERE octet_length(b) = 1
+----
+db error: ERROR: ts_dict_agg() WHERE evaluates scalar post-filters over text terms only
+HINT: the column's dictionary produces BLOB tokens
+
+
+statement error
+SELECT ts_dict_count(m) FROM beast_b_idx WHERE octet_length(m) = 16
+----
+db error: ERROR: ts_dict_agg() WHERE evaluates scalar post-filters over text terms only
+HINT: the column's dictionary produces BLOB tokens
+
+
+statement error
+SELECT ts_dict_count(h) FROM beast_b_idx WHERE octet_length(h) = 16
+----
+db error: ERROR: ts_dict_agg() WHERE evaluates scalar post-filters over text terms only
+HINT: the column's dictionary produces BLOB tokens
+
+
+statement error
+SELECT ts_dict_count(u) FROM beast_b_idx WHERE octet_length(u) = 16
+----
+db error: ERROR: ts_dict_agg() WHERE evaluates scalar post-filters over text terms only
+HINT: the column's dictionary produces BLOB tokens
+
+
+query
+SELECT pg_typeof(ts_lexize('beast_grams', 'hé')) AS grams,
+       pg_typeof(ts_lexize('beast_bytes', 'é')) AS bytes,
+       pg_typeof(ts_lexize('beast_hashes', 'fox')) AS hashes,
+       pg_typeof(ts_lexize('beast_mixed', 'fox')) AS mixed
+----
+grams	bytes	hashes	mixed
+bytea[]	bytea[]	bytea[]	bytea[]
+
+statement ok
+DROP TABLE beast_b
+
+statement ok
 DROP TABLE beast_t
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_mixed
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_hashes
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_md5
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_bytes
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_grams
 
 statement ok
 DROP TEXT SEARCH DICTIONARY beast_collate

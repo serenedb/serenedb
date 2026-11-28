@@ -69,8 +69,9 @@ bool ParseWkbPoint(duckdb::string_t wkb, S2LatLng& out) noexcept {
 
 }  // namespace
 
-GeoTokenizer::GeoTokenizer(const S2RegionTermIndexer::Options& options)
-  : _options{options} {
+GeoTokenizer::GeoTokenizer(const S2RegionTermIndexer::Options& options,
+                           bool wkb)
+  : _options{options}, _wkb_input{wkb} {
   *_coverer.mutable_options() = options;
 }
 
@@ -179,8 +180,25 @@ irs::analysis::Tokenizer::ptr GeoPointTokenizer::Make(Options opts) {
   return std::make_unique<GeoPointTokenizer>(opts);
 }
 
+duckdb::LogicalTypeId GeoPointTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& /*ctx*/) {
+  switch (input.id()) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      opts.wkb = false;
+      break;
+    case duckdb::LogicalTypeId::GEOMETRY:
+      opts.wkb = true;
+      break;
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG(type_name(), ": takes JSON text or GEOMETRY, ",
+                              "not ", input.ToString()));
+  }
+  return duckdb::LogicalTypeId::BLOB;
+}
+
 GeoPointTokenizer::GeoPointTokenizer(const Options& options)
-  : GeoTokenizer{S2Options(options.options, true)},
+  : GeoTokenizer{S2Options(options.options, true), options.wkb},
     _from_array{options.latitude.empty()},
     _latitude{options.latitude},
     _longitude{options.longitude} {
@@ -295,8 +313,32 @@ irs::analysis::Tokenizer::ptr GeoJsonTokenizer::Make(Options opts) {
   return std::make_unique<GeoJsonTokenizer>(opts);
 }
 
+duckdb::LogicalTypeId GeoJsonTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& /*ctx*/) {
+  switch (input.id()) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      opts.wkb = false;
+      break;
+    case duckdb::LogicalTypeId::GEOMETRY:
+      if (opts.coding != Coding::Source && opts.coding != Coding::S2Point) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG(type_name(), ": a LatLng coding does not take GEOMETRY"),
+          ERR_HINT("Use the S2Point or the source coding."));
+      }
+      opts.wkb = true;
+      break;
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG(type_name(), ": takes GeoJSON text or GEOMETRY, ",
+                              "not ", input.ToString()));
+  }
+  return duckdb::LogicalTypeId::BLOB;
+}
+
 GeoJsonTokenizer::GeoJsonTokenizer(const Options& options)
-  : GeoTokenizer{S2Options(options.options, options.type != Type::Shape)},
+  : GeoTokenizer{S2Options(options.options, options.type != Type::Shape),
+                 options.wkb},
     _type{options.type},
     _coding{options.coding} {
   if (_coding != Coding::Source) {

@@ -151,13 +151,6 @@ class InetTermWriter {
             "object or array"));
 }
 
-void SetByteInput(irs::analysis::Tokenizer& tokenizer) {
-  if (tokenizer.type() == irs::Type<irs::analysis::WildcardTokenizer>::id()) {
-    irs::utils::downCast<irs::analysis::WildcardTokenizer>(tokenizer)
-      .SetByteInput(true);
-  }
-}
-
 }  // namespace
 
 std::optional<SearchSinkInsertBaseImpl::DictionaryValues>
@@ -843,9 +836,6 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       auto& tokenizer = ResolveTokenizer(field_id);
       _field.PrepareForStringValue(
         tokenizer, {.layout = _layout, .member = irs::DictMember::Strings});
-      if (child_kind == duckdb::LogicalTypeId::BLOB) {
-        SetByteInput(*tokenizer.analyzer);
-      }
     } else if (term_dict::IsNumeric(child_kind)) {
       _field.PrepareForNumericValue(
         {.layout = _layout, .member = irs::DictMember::Numbers});
@@ -869,12 +859,6 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     case duckdb::LogicalTypeId::GEOMETRY: {
       auto& tokenizer = ResolveTokenizer(field_id);
       _field.PrepareForStringValue(tokenizer, irs::StringLayout::kStrings);
-      if (kind == duckdb::LogicalTypeId::GEOMETRY) {
-        irs::analysis::GeoTokenizer::Cast(*tokenizer.analyzer)
-          .SetWkbInput(true);
-      } else if (kind == duckdb::LogicalTypeId::BLOB) {
-        SetByteInput(*tokenizer.analyzer);
-      }
       append_stored();
       if (_field.keyword) {
         WriteKeywordColumn(_field, vec, count);
@@ -1055,15 +1039,16 @@ SearchTableInsertSink MakeSearchTableInsertSink(
   for (const auto& key : config->constraint_keys) {
     constraint_keys.emplace_back(context, shard.GetId(), key);
   }
-  auto tokenizers =
-    catalog::IndexTokenizers{context, catalog, *config}.AcquireAll(context);
+  auto tokenizers = [dicts =
+                       catalog::IndexTokenizers{context, catalog, *config}](
+                      irs::field_id id) { return dicts.Acquire(id); };
   auto entry_of = [config](irs::field_id field_id) {
     const auto* entry = config->FindEntry(field_id);
     return entry ? entry : AllStoredEntry();
   };
   trx.SetFieldOptions(config);
   return {.sink = std::make_unique<SearchSinkInsertBaseImpl>(
-            trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
+            trx, std::move(tokenizers), std::move(entry_of),
             catalog::PkColumnKind::None, std::move(indexed_exprs), config.get(),
             std::move(constraint_keys)),
           .version = version};

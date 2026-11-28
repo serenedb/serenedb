@@ -77,6 +77,8 @@ struct TokenizerConfig {
     SqlTokenizer::Options, ShingleTokenizer::Options, IcuTextTokenizer::Options,
     HtmlStripTokenizer::Options, FilterTokensTokenizer::Options>
     config;
+  duckdb::LogicalTypeId input = duckdb::LogicalTypeId::INVALID;
+  duckdb::LogicalTypeId terms = duckdb::LogicalTypeId::INVALID;
 };
 
 TokenizerConfig Clone(const TokenizerConfig& cfg);
@@ -95,6 +97,8 @@ inline std::unique_ptr<TokenizerConfig> CloneChild(
 
 inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
   TokenizerConfig out;
+  out.input = cfg.input;
+  out.terms = cfg.terms;
   std::visit(
     [&]<typename Options>(const Options& opts) {
       if constexpr (std::is_same_v<Options, PipelineTokenizer::Options> ||
@@ -109,6 +113,7 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
                                           WildcardTokenizer::Options>) {
         Options copy;
         copy.ngram_size = opts.ngram_size;
+        copy.bytes = opts.bytes;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
         out.config = std::move(copy);
       } else if constexpr (std::is_same_v<Options, ShingleTokenizer::Options>) {
@@ -143,5 +148,11 @@ inline Tokenizer::ptr CreateTokenizer(TokenizerConfig cfg,
     },
     std::move(cfg.config));
 }
+
+void BindNode(TokenizerConfig& node, const duckdb::LogicalType& input,
+              BindContext& ctx);
+
+TokenizerConfig BindInput(const TokenizerConfig& definition,
+                          const duckdb::LogicalType& input, BindContext& ctx);
 
 }  // namespace irs::analysis

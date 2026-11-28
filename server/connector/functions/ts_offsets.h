@@ -37,14 +37,14 @@ namespace sdb::connector {
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
-  ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer);
+  ColumnId column_id, const catalog::TokenizerBindingRef& dict_tokenizer);
 
 struct OffsetsBindData final : duckdb::FunctionData {
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
   catalog::IndexTokenizers tokenizers;
   ColumnId column_id{};
 
-  catalog::TokenizerRef dict_tokenizer;
+  catalog::TokenizerBindingRef dict_tokenizer;
 
   size_t limit = 0;
   std::shared_ptr<const irs::Filter> filter;

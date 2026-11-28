@@ -62,7 +62,7 @@ duckdb::unique_ptr<duckdb::Expression> ColumnFormOf(
   duckdb::unique_ptr<duckdb::Expression> conjunct);
 
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
-  duckdb::ClientContext& context, const connector::ScanBindData& scan,
+  const connector::ScanBindData& scan, const catalog::IndexTokenizers& dicts,
   connector::ColumnId col_id, bool column_stored);
 
 }  // namespace sdb::optimizer

@@ -157,7 +157,7 @@ db error: ERROR: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a 
 
 
 # (l) kw_dict on GEOMETRY('OGC:CRS84') expression source: term_dict accepts
-#     (String, non-empty opclass), ValidateTokenizerVsColumn rejects. The
+#     (String, non-empty opclass), ValidateColumn rejects. The
 #     DuckDB parser normalizes the single-identifier paren `(g)` to a bare
 #     column reference, so the error label collapses to 'g'.
 statement error

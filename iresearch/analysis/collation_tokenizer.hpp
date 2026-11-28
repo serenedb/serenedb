@@ -38,6 +38,13 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   };
   static ptr Make(Options opts);
 
+  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    TextOrBytes(type_name(), input);
+    return duckdb::LogicalTypeId::BLOB;
+  }
+
   static constexpr std::string_view type_name() noexcept {
     return "collate_tokens";
   }
@@ -46,7 +53,6 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
 
   TokenTraits Traits() const noexcept final {
     return {
-      .output = duckdb::LogicalTypeId::BLOB,
       .unique = true,
       .offsets = true,
     };

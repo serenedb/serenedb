@@ -43,6 +43,9 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
     std::vector<std::unique_ptr<TokenizerConfig>> children;
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   static constexpr std::string_view type_name() noexcept { return "union"; }
 
@@ -53,9 +56,7 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
     return irs::Type<UnionTokenizer>::id();
   }
 
-  TokenTraits Traits() const noexcept final {
-    return {.output = _output, .explicit_pos = true};
-  }
+  TokenTraits Traits() const noexcept final { return {.explicit_pos = true}; }
 
   using Tokenizer::Fill;
 
@@ -110,7 +111,6 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
 
   std::vector<Tokenizer::ptr> _subs;
   std::unique_ptr<SubSink> _sub_sink;
-  duckdb::LogicalTypeId _output = duckdb::LogicalTypeId::VARCHAR;
 };
 
 inline auto SerdeFields(UnionTokenizer::Options& options) {

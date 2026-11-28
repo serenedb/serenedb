@@ -28,7 +28,7 @@ CREATE TEXT SEARCH DICTIONARY any_text_dict AS
 #       For this block: INTERVAL, STRUCT(a INTEGER), MAP(VARCHAR, INTEGER),
 #       VARIANT.
 #
-#   (2) ValidateTokenizerVsColumn (line 704) -- rejects types that are
+#   (2) ValidateColumn -- rejects types that are
 #       Supported by term_dict but are not VARCHAR / BLOB / LIST / ARRAY of
 #       VARCHAR / BLOB; the keyword / ngram / text analyzers can only consume
 #       string-shaped bytes. Wording:

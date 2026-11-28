@@ -43,6 +43,17 @@ SELECT normalize_tokens(['Café', 'ÉCOLE'], 'en_US.UTF-8', case := 'lower', acc
 tokens
 {cafe,ecole}
 
+# DOCS_TEST: bytes
+
+# DOCS_TEST_BODY
+
+query
+SELECT typeof(split_text('Quick Fox'::bytea, case := 'lower')) AS type,
+       list_transform(split_text('Quick Fox'::bytea, case := 'lower'), lambda t: decode(t)) AS decoded;
+----
+type	decoded
+BLOB[]	{quick,fox}
+
 # DOCS_TEST: shingle
 
 # DOCS_TEST_BODY

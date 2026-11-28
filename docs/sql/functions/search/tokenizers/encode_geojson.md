@@ -9,7 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The `encode_geojson` template is a geospatial analyzer: instead of breaking text into word tokens, it reads a geometry and emits the [S2](http://s2geometry.io/) cell-ID terms that cover it. Those terms are what the [inverted index](../../../indexes/inverted/index.md) stores and matches, so a `JSON` or `GEOMETRY` column indexed through `encode_geojson` can be queried with spatial predicates such as containment, intersection and distance.
 
-**As a function:** `encode_geojson(value, type := 'shape', coding := 'source', max_cells := 20, min_level := 4, max_level := 23, level_mod := 1, optimize_for_space := false)` — the value first, then the options in the order below. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
+**As a function:** `encode_geojson(value, type := 'shape', coding := 'source', max_cells := 20, min_level := 4, max_level := 23, level_mod := 1, optimize_for_space := false)` — the value first, as GeoJSON or as a `GEOMETRY('OGC:CRS84')`, then the options in the order below. A `GEOMETRY` without that coordinate reference system fails with `encode_geojson(): GEOMETRY type has no CRS attached`, as it does in an index. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
 
 <SqlLogicTest id="sql/functions/search/tokenizers/encode_geojson/function_form" />
 
@@ -60,7 +60,7 @@ With `CODING = 's2point'` the same geometries are stored as compact S2 points �
 
 <SqlLogicTest id="sql/functions/search/tokenizers/encode_geojson/example_002" />
 
-`ts_lexize` shows the cell-ID terms a geometry expands into. It always takes GeoJSON text, even for a dictionary attached to a `GEOMETRY` column. The terms are `BLOB`s, so the example projects them through `hex()`, and the dictionary name has to be a constant — `ts_lexize` refuses a non-constant name for a dictionary that produces `BLOB` terms. Here a single point in central Berlin gives one ancestor cell per level, coarsest first:
+`ts_lexize` shows the cell-ID terms a geometry expands into, from GeoJSON text or from a `GEOMETRY('OGC:CRS84')` value, as the function form does. The terms are `BLOB`s, so the example projects them through `hex()`, and for GeoJSON text the dictionary name has to be a constant — `ts_lexize` refuses a non-constant name for a dictionary that produces `BLOB` terms from text. Here a single point in central Berlin gives one ancestor cell per level, coarsest first:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/encode_geojson/example_003" />
 

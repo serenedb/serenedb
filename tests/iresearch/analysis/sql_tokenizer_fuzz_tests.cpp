@@ -32,6 +32,7 @@
 #include <string_view>
 #include <vector>
 
+#include "bound_config.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -558,7 +559,6 @@ const std::vector<std::string>& AdversarialExpressions() {
 }
 
 enum class Stage : uint8_t {
-  ParseFailed,
   BindFailed,
   Bound,
   UnexpectedException,
@@ -573,17 +573,8 @@ struct Built {
 Built Build(const std::string& expression) {
   Built out;
   try {
-    out.tokenizer =
-      SqlTokenizer::Make({.expression = expression}, tests::Cache());
-  } catch (const irs::SqlException& e) {
-    out.stage = Stage::ParseFailed;
-    out.error = e.what();
-    return out;
-  } catch (const std::exception& e) {
-    out.error = std::format("parse threw {}", e.what());
-    return out;
-  }
-  try {
+    out.tokenizer = tests::MakeBound(irs::analysis::TokenizerConfig{
+      SqlTokenizer::Options{.expression = expression}});
     out.tokenizer->Bind(tests::EngineContext());
   } catch (const irs::SqlException& e) {
     out.stage = Stage::BindFailed;
@@ -676,7 +667,6 @@ bool BindClassError(std::string_view error) {
 
 struct Stats {
   size_t expressions = 0;
-  size_t parsed = 0;
   size_t bound = 0;
   size_t type_rejected = 0;
   size_t values = 0;
@@ -688,9 +678,6 @@ struct Stats {
 
 void Account(Stats& stats, const Built& built) {
   ++stats.expressions;
-  if (built.stage != Stage::ParseFailed) {
-    ++stats.parsed;
-  }
   if (built.stage == Stage::Bound) {
     ++stats.bound;
   }
@@ -786,11 +773,14 @@ std::optional<std::string> CheckBound(const std::string& expression,
                                       irs::analysis::Tokenizer& tokenizer,
                                       uint64_t seed, size_t value_count,
                                       Stats& stats) {
-  const auto traits = tokenizer.Traits();
-  if (traits.output != duckdb::LogicalTypeId::VARCHAR &&
-      traits.output != duckdb::LogicalTypeId::BLOB) {
-    return std::format("bound tokenizer declares output type {}",
-                       static_cast<int>(traits.output));
+  const auto terms =
+    tests::Bound(irs::analysis::TokenizerConfig{
+                   SqlTokenizer::Options{.expression = expression}})
+      .terms;
+  if (terms != duckdb::LogicalTypeId::VARCHAR &&
+      terms != duckdb::LogicalTypeId::BLOB) {
+    return std::format("bound tokenizer declares term type {}",
+                       static_cast<int>(terms));
   }
   if (auto err = SqlOracle::Shared().Prepare(expression);
       err && BindClassError(*err)) {
@@ -812,12 +802,11 @@ std::optional<std::string> CheckBound(const std::string& expression,
 
 void PrintSummary(const char* what, const Stats& stats, double seconds) {
   std::printf(
-    "[   FUZZ   ] %s: %zu expressions, %zu parsed, %zu bound (%zu type "
+    "[   FUZZ   ] %s: %zu expressions, %zu bound (%zu type "
     "rejections), %zu values compared (%zu rejected, %zu errors), %zu probed, "
     "%.1fs\n",
-    what, stats.expressions, stats.parsed, stats.bound, stats.type_rejected,
-    stats.values, stats.rejected_values, stats.error_values, stats.probed,
-    seconds);
+    what, stats.expressions, stats.bound, stats.type_rejected, stats.values,
+    stats.rejected_values, stats.error_values, stats.probed, seconds);
   std::vector<std::pair<size_t, std::string>> reasons;
   for (const auto& [reason, count] : stats.bind_reasons) {
     reasons.emplace_back(count, reason);

@@ -27,6 +27,14 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
+namespace {
+
+duckdb::LogicalTypeId CommonTerms(duckdb::LogicalTypeId a,
+                                  duckdb::LogicalTypeId b) noexcept {
+  return a == b ? a : duckdb::LogicalTypeId::BLOB;
+}
+
+}  // namespace
 
 UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
   : _subs{std::move(options)} {
@@ -39,12 +47,23 @@ UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
                               " produces a per-document store blob, which a "
                               "union cannot deliver"));
     }
-    if (i == 0) {
-      _output = traits.output;
-    } else if (traits.output != _output) {
-      _output = duckdb::LogicalTypeId::BLOB;
-    }
   }
+}
+
+duckdb::LogicalTypeId UnionTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
+  if (opts.children.empty()) {
+    return TextOrBytes(type_name(), input);
+  }
+  auto terms = duckdb::LogicalTypeId::VARCHAR;
+  for (auto& child : opts.children) {
+    if (!child) {
+      THROW_SQL_ERROR(ERR_MSG("union: null child analyzer config"));
+    }
+    BindNode(*child, input, ctx);
+    terms = CommonTerms(terms, child->terms);
+  }
+  return terms;
 }
 
 Tokenizer::ptr UnionTokenizer::Make(Options opts,

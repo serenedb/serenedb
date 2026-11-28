@@ -62,6 +62,9 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     return "generate_shingles";
   }
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   ShingleTokenizer(Tokenizer::ptr base, Options&& options);
 

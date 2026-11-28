@@ -2305,22 +2305,35 @@ constexpr bool kCsvFraming =
   F == Framing::CsvField || F == Framing::CsvPlainField ||
   F == Framing::CsvQuotedField;
 
+template<Framing F>
+IRS_FORCE_INLINE uint8_t* FinishField(const SerializationContext& ctx,
+                                      uint8_t* d, size_t n) {
+  if constexpr (F == Framing::BinaryField) {
+    absl::big_endian::Store32(d, static_cast<int32_t>(n));
+    return d + 4 + n;
+  } else if constexpr (kCsvFraming<F>) {
+    bool quote = true;
+    const std::string_view field{reinterpret_cast<const char*>(d), n};
+    if constexpr (F == Framing::CsvPlainField) {
+      quote = field == ctx.copy_null;
+    } else if constexpr (F == Framing::CsvField) {
+      quote = CsvNeedsQuotes(ctx, field);
+    }
+    return d + (quote ? duckdb::CsvQuoteInPlace(reinterpret_cast<char*>(d), n,
+                                                ctx.csv_quote, ctx.csv_escape)
+                      : n);
+  } else {
+    return d + n;
+  }
+}
+
 template<Framing F, typename Core>
 IRS_FORCE_INLINE void RenderCsvValue(SerializationContext& ctx, const RUVF& v,
                                      duckdb::idx_t idx) {
   if constexpr (SizedCore<Core>) {
     ctx.writer->Write(2 * Core::kMaxBytes + 2, [&](uint8_t* d) {
-      const auto n = RenderSized<Core>(d, ctx, v, idx);
-      const std::string_view field{reinterpret_cast<const char*>(d), n};
-      bool quote = true;
-      if constexpr (F == Framing::CsvPlainField) {
-        quote = field == ctx.copy_null;
-      } else if constexpr (F == Framing::CsvField) {
-        quote = CsvNeedsQuotes(ctx, field);
-      }
-      return quote ? duckdb::CsvQuoteInPlace(reinterpret_cast<char*>(d), n,
-                                             ctx.csv_quote, ctx.csv_escape)
-                   : n;
+      return static_cast<size_t>(
+        FinishField<F>(ctx, d, RenderSized<Core>(d, ctx, v, idx)) - d);
     });
   } else {
     const auto mark = ctx.writer->Position();
@@ -2805,36 +2818,44 @@ struct MultiDimArrayCore {
   }
 };
 
-template<typename TextCore, typename TextRecCore, typename BinaryCore>
-SerializationFunction SelectFieldSerializer(VarFormat format,
-                                            SerializationContext& context) {
+template<typename TextCore, typename BinaryCore, typename Make>
+IRS_FORCE_INLINE auto SelectFraming(VarFormat format,
+                                    const SerializationContext& context,
+                                    const Make& make) {
   if (format == VarFormat::Binary) {
-    return SerializeField<Framing::BinaryField, BinaryCore>;
+    return make.template operator()<Framing::BinaryField, BinaryCore>();
   }
   if ((format == VarFormat::CopyCsv || format == VarFormat::CopyCsvQuoted) &&
       context.csv_quote == '\0') {
-    return SerializeField<Framing::CopyTextField, TextCore>;
+    return make.template operator()<Framing::CopyTextField, TextCore>();
   }
   if (format == VarFormat::CopyCsvQuoted) {
-    return SerializeField<Framing::CsvQuotedField, TextCore>;
+    return make.template operator()<Framing::CsvQuotedField, TextCore>();
   }
   if (format == VarFormat::CopyCsv) {
     if constexpr (SizedCore<TextCore>) {
       if (!CsvScanNeeded<TextCore>(context)) {
-        return SerializeField<Framing::CsvPlainField, TextCore>;
+        return make.template operator()<Framing::CsvPlainField, TextCore>();
       }
     }
-    return SerializeField<Framing::CsvField, TextCore>;
+    return make.template operator()<Framing::CsvField, TextCore>();
   }
   if (format == VarFormat::CopyText) {
     if constexpr (!CopyDelimsOf<TextCore>().empty()) {
       if (EscapesCopyDelim<TextCore>(context)) {
-        return SerializeField<Framing::CopyTextField,
-                              CopyDelimVariantOf<TextCore>>;
+        return make.template
+        operator()<Framing::CopyTextField, CopyDelimVariantOf<TextCore>>();
       }
     }
-    return SerializeField<Framing::CopyTextField, TextCore>;
+    return make.template operator()<Framing::CopyTextField, TextCore>();
   }
+  SDB_ASSERT(format == VarFormat::Text);
+  return make.template operator()<Framing::BinaryField, TextCore>();
+}
+
+template<typename TextCore, typename TextRecCore, typename BinaryCore>
+SerializationFunction SelectFieldSerializer(VarFormat format,
+                                            SerializationContext& context) {
   if (context.in_record) {
     if constexpr (!CopyDelimsOf<TextRecCore>().empty()) {
       if (EscapesCopyDelim<TextRecCore>(context)) {
@@ -2843,7 +2864,10 @@ SerializationFunction SelectFieldSerializer(VarFormat format,
     }
     return RecordTextField<TextRecCore>;
   }
-  return SerializeField<Framing::BinaryField, TextCore>;
+  return SelectFraming<TextCore, BinaryCore>(
+    format, context, []<Framing F, typename Core>() -> SerializationFunction {
+      return SerializeField<F, Core>;
+    });
 }
 
 template<Framing F>
@@ -2855,28 +2879,6 @@ IRS_FORCE_INLINE uint8_t* WriteNullField(const SerializationContext& ctx,
   } else {
     std::memcpy(d, ctx.copy_null.data(), ctx.copy_null.size());
     return d + ctx.copy_null.size();
-  }
-}
-
-template<Framing F>
-IRS_FORCE_INLINE uint8_t* FinishField(const SerializationContext& ctx,
-                                      uint8_t* d, size_t n) {
-  if constexpr (F == Framing::BinaryField) {
-    absl::big_endian::Store32(d, static_cast<int32_t>(n));
-    return d + 4 + n;
-  } else if constexpr (kCsvFraming<F>) {
-    bool quote = true;
-    const std::string_view field{reinterpret_cast<const char*>(d), n};
-    if constexpr (F == Framing::CsvPlainField) {
-      quote = field == ctx.copy_null;
-    } else if constexpr (F == Framing::CsvField) {
-      quote = CsvNeedsQuotes(ctx, field);
-    }
-    return d + (quote ? duckdb::CsvQuoteInPlace(reinterpret_cast<char*>(d), n,
-                                                ctx.csv_quote, ctx.csv_escape)
-                      : n);
-  } else {
-    return d + n;
   }
 }
 
@@ -2933,33 +2935,9 @@ ColumnSerializer SizedColumn(const SerializationContext& ctx) {
 template<typename TextCore, typename BinaryCore>
 ColumnSerializer SelectSizedColumn(VarFormat format,
                                    const SerializationContext& context) {
-  if (format == VarFormat::Binary) {
-    return SizedColumn<Framing::BinaryField, BinaryCore>(context);
-  }
-  if ((format == VarFormat::CopyCsv || format == VarFormat::CopyCsvQuoted) &&
-      context.csv_quote == '\0') {
-    return SizedColumn<Framing::CopyTextField, TextCore>(context);
-  }
-  if (format == VarFormat::CopyCsvQuoted) {
-    return SizedColumn<Framing::CsvQuotedField, TextCore>(context);
-  }
-  if (format == VarFormat::CopyCsv) {
-    if (!CsvScanNeeded<TextCore>(context)) {
-      return SizedColumn<Framing::CsvPlainField, TextCore>(context);
-    }
-    return SizedColumn<Framing::CsvField, TextCore>(context);
-  }
-  if (format == VarFormat::CopyText) {
-    if constexpr (!CopyDelimsOf<TextCore>().empty()) {
-      if (EscapesCopyDelim<TextCore>(context)) {
-        return SizedColumn<Framing::CopyTextField,
-                           CopyDelimVariantOf<TextCore>>(context);
-      }
-    }
-    return SizedColumn<Framing::CopyTextField, TextCore>(context);
-  }
-  SDB_ASSERT(format == VarFormat::Text);
-  return SizedColumn<Framing::BinaryField, TextCore>(context);
+  return SelectFraming<TextCore, BinaryCore>(
+    format, context,
+    [&]<Framing F, typename Core>() { return SizedColumn<F, Core>(context); });
 }
 
 struct RawBody {
@@ -3080,24 +3058,9 @@ ColumnSerializer StringColumn() {
 template<typename TextBody>
 ColumnSerializer SelectStringColumn(VarFormat format,
                                     const SerializationContext& context) {
-  if (format == VarFormat::Binary) {
-    return StringColumn<Framing::BinaryField, RawBody>();
-  }
-  if ((format == VarFormat::CopyCsv || format == VarFormat::CopyCsvQuoted) &&
-      context.csv_quote == '\0') {
-    return StringColumn<Framing::CopyTextField, TextBody>();
-  }
-  if (format == VarFormat::CopyCsvQuoted) {
-    return StringColumn<Framing::CsvQuotedField, TextBody>();
-  }
-  if (format == VarFormat::CopyCsv) {
-    return StringColumn<Framing::CsvField, TextBody>();
-  }
-  if (format == VarFormat::CopyText) {
-    return StringColumn<Framing::CopyTextField, TextBody>();
-  }
-  SDB_ASSERT(format == VarFormat::Text);
-  return StringColumn<Framing::BinaryField, TextBody>();
+  return SelectFraming<TextBody, RawBody>(
+    format, context,
+    []<Framing F, typename Body>() { return StringColumn<F, Body>(); });
 }
 
 ColumnSerializer GetColumnSerialization(const duckdb::LogicalType& type,

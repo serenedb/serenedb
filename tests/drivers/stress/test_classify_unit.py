@@ -236,7 +236,7 @@ def test_a_permanent_code_without_a_permanent_marker_stays_unclassified():
 def test_the_injected_append_failure_arrives_as_40001_not_58030():
     armed = (C.CATALOG_APPEND_FAILS,)
     c = classify(C.SERIALIZATION_FAILURE,
-                 "Failed to commit: catalog log: could not append the transaction",
+                 "Failed to commit: catalog WAL: could not append the transaction",
                  faults_armed=armed)
     assert c.verdict is Verdict.EXPECTED
     assert c.label == "injected_append_failure"
@@ -244,7 +244,7 @@ def test_the_injected_append_failure_arrives_as_40001_not_58030():
 
 def test_the_append_failure_is_not_excused_when_the_fault_is_not_armed():
     c = classify(C.SERIALIZATION_FAILURE,
-                 "Failed to commit: catalog log: could not append the transaction",
+                 "Failed to commit: catalog WAL: could not append the transaction",
                  faults_armed=())
     assert c.verdict is Verdict.FINDING
 

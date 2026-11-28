@@ -30,7 +30,7 @@ The server reads and writes index files with the credentials of a persistent sec
 
 The secret has to be persistent: the server opens tables and indexes at startup and maintains them in the background, outside any session. See [AWS Credentials](./aws_credentials.md) for the keys to use and for S3-compatible endpoints. For Azure, create a persistent secret of `TYPE azure` whose scope covers the container and prefix, for example with a `CONNECTION_STRING`; the container has to exist.
 
-Rotate credentials that expire, such as an S3 `SESSION_TOKEN` or an Azure shared access signature, by replacing the secret with `CREATE OR REPLACE PERSISTENT SECRET` before they expire. A request the store refuses with the old credentials is sent again with the replaced secret, for files that are already open and for background flushes and merges as well. A flush that cannot write its files, for example because the credentials expired before the secret was replaced, fails: its rows stay readable and in the log, and the next flush writes them. A server starts with the secret as it was last replaced.
+Rotate credentials that expire, such as an S3 `SESSION_TOKEN` or an Azure shared access signature, by replacing the secret with `CREATE OR REPLACE PERSISTENT SECRET` before they expire. A request the store refuses with the old credentials is sent again with the replaced secret, for files that are already open and for background flushes and merges as well. A flush that cannot write its files, for example because the credentials expired before the secret was replaced, fails: its rows stay readable and in the write-ahead log (WAL), and the next flush writes them. A server starts with the secret as it was last replaced.
 
 ## Caching
 

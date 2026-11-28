@@ -55,7 +55,7 @@ Cut RecordCut(duckdb::ClientContext& context,
   const auto commits = CommitGate().Close(context);
   auto& transactions = catalog::Transactions::Get();
   auto* log = transactions.GetLog();
-  SDB_ENSURE(log, "cannot start a backup of a server without a log");
+  SDB_ENSURE(log, "cannot start a backup of a server without a WAL");
   if (const auto status = transactions.TruncateLog(checkpoints); !status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("cannot start a backup: the checkpoint failed: ",

@@ -151,7 +151,7 @@
     {"cat":"function","q":"Return the current value of the configuration setting.","expect":["/docs/sql/functions/utility"]},
     {"cat":"function","q":"Reduce a list of tokens to a MinHash signature and return it as a LIST(BLOB). Two documents that share most of their tokens share most of their signature, so the number of matching components estimates the Jaccard similarity of their token sets.","expect":["/docs/sql/functions/search/full-text"]},
     {"cat":"function","q":"ISO Year number (Starts on Monday of week containing Jan 4th).","expect":["/docs/sql/functions/datepart"]},
-    {"cat":"setting","q":"Not used: persistent secrets are stored in the server's log with the rest of the catalog.","expect":["/docs/configuration/overview"]},
+    {"cat":"setting","q":"Not used: persistent secrets are stored with the rest of the catalog, in the server's snapshot and WAL.","expect":["/docs/configuration/overview"]},
     {"cat":"function","q":"Moves every vertex by dx along X, dy along Y and, when given, dz along Z. Without dz the Z coordinates are left as they are.","expect":["/docs/sql/functions/geometry"]},
     {"cat":"function","q":"Returns the value for a given key or NULL if the key is not contained in the map. The type of the key provided in the second parameter must match the type of the map's keys else an error is thrown. Alias: map[key].","expect":["/docs/sql/functions/map"]},
     {"cat":"function","q":"BIGINT of combined ISO Year number and 2-digit version of ISO Week number.","expect":["/docs/sql/functions/datepart"]},

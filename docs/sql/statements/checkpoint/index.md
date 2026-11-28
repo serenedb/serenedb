@@ -9,7 +9,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `CHECKPOINT` statement writes a snapshot of the catalog and of every table, including the rows, deletes and updates tables still hold in memory, then removes the log files the snapshot covers, so that a restart replays less. It does not write rows to segments: [`VACUUM (FLUSH_*)`](../vacuum/index.md) does. In an attached DuckDB database file, it writes the file's own write-ahead log into the database file.
+The `CHECKPOINT` statement writes a snapshot of the catalog and of every table, including the rows, deletes and updates tables still hold in memory, then removes the write-ahead log (WAL) files the snapshot covers, so that a restart replays less. It does not write rows to segments: [`VACUUM (FLUSH_*)`](../vacuum/index.md) does. In an attached DuckDB database file, it writes the file's own write-ahead log into the database file.
 
 ## Examples
 
@@ -43,7 +43,7 @@ An in-memory DuckDB database attached with `ATTACH ':memory:'` supports checkpoi
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
 
-The server writes a new snapshot on its own once the log written since the last one reaches [`max_wal_size`](../../../configuration/overview.md); see [Durability](../../indexes/inverted/maintenance.md#durability). This statement is for manual checkpoint actions.
+The server writes a new snapshot on its own once the WAL written since the last one reaches [`max_wal_size`](../../../configuration/overview.md); see [Durability](../../indexes/inverted/maintenance.md#durability). This statement is for manual checkpoint actions.
 
 ## Behavior
 

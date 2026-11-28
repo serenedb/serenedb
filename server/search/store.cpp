@@ -1527,7 +1527,7 @@ std::shared_ptr<const irs::SegmentReaderImpl> Store::ReplayPiece(
     }
   }
   SDB_ENSURE(PieceDocs(piece.trx) == rows, "table ", _id, ": ", rows,
-             " rows of its log indexed into ", PieceDocs(piece.trx),
+             " rows of its WAL indexed into ", PieceDocs(piece.trx),
              " documents");
   return piece.trx.SealPiece(piece.id);
 }

@@ -2198,7 +2198,7 @@ void Writes::Apply(duckdb::ClientContext& context, Tick tick,
       } catch (const std::exception& e) {
         SDB_FATAL(
           SEARCH, "commit: applying to table ", store_id,
-          " failed after the log took it: ", duckdb::ErrorData{e}.RawMessage());
+          " failed after the WAL took it: ", duckdb::ErrorData{e}.RawMessage());
       }
       w.transactions.clear();
     }
@@ -2209,7 +2209,7 @@ void Writes::Apply(duckdb::ClientContext& context, Tick tick,
     } catch (const std::exception& e) {
       SDB_FATAL(
         SEARCH, "commit: publishing the layout of table ", store->GetId(),
-        " failed after the log took it: ", duckdb::ErrorData{e}.RawMessage());
+        " failed after the WAL took it: ", duckdb::ErrorData{e}.RawMessage());
     }
   }
 }

@@ -96,7 +96,7 @@ def test_info_timeline(tmp_path: Path) -> None:
 
     second = _run_until_ready(datadir)
     assert "Created server directory" not in second.output(), second.output()
-    assert "replayed the log" not in second.output(), second.output()
+    assert "replayed the WAL" not in second.output(), second.output()
 
 
 def test_trace_logging_shuts_down_cleanly(tmp_path: Path) -> None:
@@ -126,7 +126,7 @@ def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("recovery: replayed the log into 1 of 1 table(s) in "
+    assert ("recovery: replayed the WAL into 1 of 1 table(s) in "
             in restarted.output()), restarted.output()
 
 
@@ -147,7 +147,7 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("recovery: replayed the log into 1 of 2 table(s) in "
+    assert ("recovery: replayed the WAL into 1 of 2 table(s) in "
             in restarted.output()), restarted.output()
 
 

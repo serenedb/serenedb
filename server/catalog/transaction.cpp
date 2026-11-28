@@ -109,7 +109,7 @@ void RequireLog(const ReplicationLsnEntry& entry) {
   if (!entry.ParentCatalog().Cast<BaseCatalog>().Durable()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG(entry.name.GetIdentifierName(),
-                            " advanced in a catalog without a log"));
+                            " advanced in a catalog without a WAL"));
   }
 }
 
@@ -566,7 +566,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       SDB_IF_FAILURE("catalog_append_fails") {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_IO_ERROR),
-          ERR_MSG("catalog log: could not append the transaction"));
+          ERR_MSG("catalog WAL: could not append the transaction"));
       }
     }
     {
@@ -672,7 +672,7 @@ void Transactions::MaintainLog(Lsn end) {
   SDB_IF_FAILURE("compact_inside_drop") { rewrite = true; }
   if (rewrite && !search::IsBackupActive()) {
     if (const auto status = TruncateLog(); !status.ok()) {
-      SDB_WARN(GENERAL, "rewriting the log failed: ", status.message());
+      SDB_WARN(GENERAL, "rewriting the WAL failed: ", status.message());
     }
     return;
   }
@@ -686,7 +686,7 @@ void Transactions::MaintainLog(Lsn end) {
         try {
           _log->PrepareNext();
         } catch (const std::exception& e) {
-          SDB_WARN(GENERAL, "preparing the next log file failed: ",
+          SDB_WARN(GENERAL, "preparing the next WAL file failed: ",
                    duckdb::ErrorData{e}.RawMessage());
         }
       })
@@ -725,7 +725,7 @@ void Transactions::MaintainInBackground(bool snapshot_due) {
       };
       if (snapshot) {
         if (const auto status = TruncateLog(); !status.ok()) {
-          SDB_WARN(GENERAL, "log truncation failed: ", status.message());
+          SDB_WARN(GENERAL, "WAL truncation failed: ", status.message());
         }
       } else {
         absl::MutexLock round{&_truncate_mutex};

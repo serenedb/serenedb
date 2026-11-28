@@ -507,7 +507,7 @@ void BaseCatalog::ReplayCreate(duckdb::ClientContext& context,
       return;
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                      ERR_MSG("the log creates an unsupported entry of type ",
+                      ERR_MSG("the WAL creates an unsupported entry of type ",
                               duckdb::CatalogTypeToString(info->type)));
   }
 }

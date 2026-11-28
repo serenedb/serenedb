@@ -212,9 +212,9 @@ class SnapshotWriter {
   static uint32_t Size(size_t payload) {
     if (payload > kMaxRecordBytes) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-                      ERR_MSG("a log snapshot record would take ", payload,
+                      ERR_MSG("a snapshot record would take ", payload,
                               " bytes, more than the ", kMaxRecordBytes,
-                              " a log record can hold"));
+                              " a WAL record can hold"));
     }
     return static_cast<uint32_t>(payload);
   }
@@ -558,9 +558,9 @@ Log::Range Log::Reserve(size_t payload_size) {
   SDB_ASSERT(payload_size != 0);
   if (payload_size > kMaxRecordBytes) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-                    ERR_MSG("the log record of this commit would take ",
+                    ERR_MSG("the WAL record of this commit would take ",
                             payload_size, " bytes, more than the ",
-                            kMaxRecordBytes, " a log record can hold"));
+                            kMaxRecordBytes, " a WAL record can hold"));
   }
   absl::MutexLock lock{&_mutex};
   const auto bytes = sizeof(Header) + payload_size;

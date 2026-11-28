@@ -130,7 +130,7 @@ bool RecoverSearchStorages(
         if (const auto status = table->CleanupUnsafe().res; !status.ok()) {
           cleaned.store(false, std::memory_order_relaxed);
           SDB_WARN(SEARCH, "cleanup of table '", table->GetId(),
-                   "' after log replay failed: ", status.message());
+                   "' after WAL replay failed: ", status.message());
         }
       }));
   }
@@ -138,7 +138,7 @@ bool RecoverSearchStorages(
   if (!tables.empty()) {
     const auto duration =
       absl::FromChrono(std::chrono::steady_clock::now() - begin);
-    SDB_INFO(SEARCH, "recovery: replayed the log into ",
+    SDB_INFO(SEARCH, "recovery: replayed the WAL into ",
              replayed_tables.load(std::memory_order_relaxed), " of ",
              tables.size(), " table(s) in ", absl::FormatDuration(duration));
   }

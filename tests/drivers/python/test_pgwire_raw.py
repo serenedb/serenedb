@@ -2006,6 +2006,33 @@ def test_copy_from_stdin_extended(conn):
         conn.run_ok("drop table if exists smoke_copy_ext")
 
 
+def test_copy_from_stdin_answers_a_hidden_table_as_a_missing_one(conn):
+    conn.run_ok("drop table if exists copy_hidden_t")
+    conn.run_ok("drop role if exists copy_hidden_reader")
+    conn.run_ok("create table copy_hidden_t(a int, b text, c int)")
+    conn.run_ok("create role copy_hidden_reader")
+    try:
+        conn.run_ok("set role copy_hidden_reader")
+        responses = []
+        for table in ("copy_hidden_t", "copy_hidden_missing"):
+            conn.parse("", f"copy {table} from stdin")
+            conn.bind("", "")
+            conn.execute("")
+            assert conn.read_msg()[0] == "1"
+            assert conn.read_msg()[0] == "2"
+            t, payload = conn.read_msg()
+            assert t == "G"
+            responses.append(payload)
+            conn.send("c")
+            conn.sync()
+            assert errors(conn.drain_to_ready())
+        assert responses[0] == responses[1]
+    finally:
+        conn.run_ok("reset role")
+        conn.run_ok("drop table if exists copy_hidden_t")
+        conn.run_ok("drop role if exists copy_hidden_reader")
+
+
 def test_copy_from_stdin_quoted_upper_case_format(conn):
     conn.run_ok("drop table if exists smoke_copy_fmt_case")
     conn.run_ok("create table smoke_copy_fmt_case(a int, b text)")

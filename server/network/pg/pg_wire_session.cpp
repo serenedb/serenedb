@@ -30,6 +30,7 @@
 #include <array>
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -233,8 +234,7 @@ inline duckdb::optional_ptr<duckdb::TableCatalogEntry> FindCopyTable(
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table;
   context.RunFunctionInTransaction(
     [&] {
-      auto entry = duckdb::Catalog::GetEntry(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
         duckdb::OnEntryNotFound::RETURN_NULL);
       if (entry && entry->type == duckdb::TableCatalogEntry::Type) {

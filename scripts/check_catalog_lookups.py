@@ -46,7 +46,6 @@ ALLOWED = {
     f"{SERVER}/connector/scan/scan_bind.cpp": 1,
     f"{SERVER}/connector/view_fast_path.cpp": 1,
     f"{SERVER}/docs/builder/docs_loader.cpp": 1,
-    f"{SERVER}/network/pg/pg_wire_session.cpp": 1,
     f"{SERVER}/pg/catalog/engine/scan_function.cpp": 1,
     f"{SERVER}/replication/sync_session.cpp": 1,
 }

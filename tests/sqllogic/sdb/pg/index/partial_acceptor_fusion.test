@@ -1,0 +1,297 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE partial_fusion (id INTEGER PRIMARY KEY, body VARCHAR, other VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY partial_fusion_words AS split_text() WITH (frequency, position, offset);
+
+statement ok
+CREATE INDEX partial_fusion_idx ON partial_fusion USING inverted (id, body partial_fusion_words, other partial_fusion_words);
+
+statement ok
+INSERT INTO partial_fusion VALUES
+  (1, 'quick fox', 'none'),
+  (2, 'kiwi', 'none'),
+  (3, 'banana', 'kiwi'),
+  (4, 'apple', 'none'),
+  (5, 'cherry', 'none'),
+  (6, NULL, 'none'),
+  (7, 'kiwi banana', 'none'),
+  (8, 'quick sleepy fox', 'none'),
+  (9, 'quick fox kiwi', 'none');
+
+statement ok
+VACUUM (FLUSH_TABLE) partial_fusion;
+
+query
+EXPLAIN SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')]);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────╮
+│ Index: partial_fusion_idx                                           │
+│ Lookup: search                                                      │
+│ Index Filter:                                                       │
+│ ╭─ Or ───────────────────────────────╮                              │
+│ ╰──────────────────┬─────────────────╯                              │
+│                    ├─────────────────────────────────╮              │
+│ ╭─ Phrase ─────────┴─────────────────╮  ╭─ Automaton ┴────────────╮ │
+│ │ Field: body(string)                │  │ Field: body(string)     │ │
+│ │ Parts:                             │  │ Pattern: %ki%|%wi%|%iw% │ │
+│ │ Term:quick(0, 0); Term:fox(1, 1);  │  ╰─────────────────────────╯ │
+│ ╰────────────────────────────────────╯                              │
+│ Projections: id                                                     │
+│ ~1 row                                                              │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, bm25(partial_fusion_idx.tableoid) FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')]);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: partial_fusion_idx                                                                                         │
+│ Lookup: search                                                                                                    │
+│ Index Filter:                                                                                                     │
+│ ╭─ Or ───────────────────────────────╮                                                                            │
+│ ╰──────────────────┬─────────────────╯                                                                            │
+│                    ├───────────────────────────────┬────────────────────────┬────────────────────────╮            │
+│ ╭─ Phrase ─────────┴─────────────────╮  ╭─ Automaton ─────────╮  ╭─ Automaton ─────────╮  ╭─ Automaton ─────────╮ │
+│ │ Field: body(string)                │  │ Field: body(string) │  │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Parts:                             │  │ Pattern: %ki%       │  │ Pattern: %wi%       │  │ Pattern: %iw%       │ │
+│ │ Term:quick(0, 0); Term:fox(1, 1);  │  ╰─────────────────────╯  ╰─────────────────────╯  ╰─────────────────────╯ │
+│ ╰────────────────────────────────────╯                                                                            │
+│ Score: bm25(k1=1.2, b=0.75)                                                                                       │
+│ Projections: id, sdb_inverted_index_score                                                                         │
+│ ~1 row                                                                                                            │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_phrase('banana'), ts_like('%ki%')]);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────╮
+│ Index: partial_fusion_idx                                                                │
+│ Lookup: search                                                                           │
+│ Index Filter:                                                                            │
+│ ╭─ Or ────────────────╮                                                                  │
+│ ╰──────────┬──────────╯                                                                  │
+│            ├────────────────────────────────┬───────────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ─────────┴─────────────────╮  ╭─ Automaton ─────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                │  │ Field: body(string) │ │
+│ │ Values: 'banana'    │  │ Parts:                             │  │ Pattern: %ki%       │ │
+│ ╰─────────────────────╯  │ Term:quick(0, 0); Term:fox(1, 1);  │  ╰─────────────────────╯ │
+│                          ╰────────────────────────────────────╯                          │
+│ Projections: id                                                                          │
+│ ~1 row                                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_phrase('banana'), ts_like('%ki%')])
+ORDER BY id;
+----
+id
+1
+2
+3
+7
+9
+
+query
+EXPLAIN SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%')]);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────╮
+│ Index: partial_fusion_idx                                                                │
+│ Lookup: search                                                                           │
+│ Index Filter:                                                                            │
+│ ╭─ Or ───────────────────────────────╮                                                   │
+│ ╰──────────────────┬─────────────────╯                                                   │
+│                    ├───────────────────────────────┬────────────────────────╮            │
+│ ╭─ Phrase ─────────┴─────────────────╮  ╭─ Automaton ─────────╮  ╭─ Automaton ─────────╮ │
+│ │ Field: body(string)                │  │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Parts:                             │  │ Pattern: %ki%       │  │ Pattern: %wi%       │ │
+│ │ Term:quick(0, 0); Term:fox(1, 1);  │  ╰─────────────────────╯  ╰─────────────────────╯ │
+│ ╰────────────────────────────────────╯                                                   │
+│ Projections: id                                                                          │
+│ ~1 row                                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%')])
+ORDER BY id;
+----
+id
+1
+2
+7
+9
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')])
+ORDER BY id;
+----
+id
+1
+2
+7
+9
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_regexp('k.*i'), ts_like('%an%'), ts_like('%na%')])
+ORDER BY id;
+----
+id
+1
+2
+3
+7
+9
+
+statement error
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_regexp('('), ts_like('%ki%'), ts_like('%wi%')]);
+----
+db error: ERROR: invalid regular expression: missing ): (
+
+
+query
+SELECT ts_offsets('partial_fusion_words', 'quick fox kiwi banana',
+                  ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')])) AS offsets;
+----
+offsets
+{0,9,10,14}
+
+query
+SELECT ts_highlight('partial_fusion_words', 'quick fox kiwi banana',
+                    ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')])) AS highlighted;
+----
+highlighted
+<b>quick fox kiwi</b> banana
+
+query
+SELECT ts_offsets('partial_fusion_words', 'kiwi kiwi quick fox',
+                  ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')]), 1) AS offsets;
+----
+offsets
+{0,4}
+
+query
+SELECT id, ts_offsets(body) AS indexed_offsets,
+       ts_offsets('partial_fusion_words', body,
+                  ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')])) AS standalone_offsets
+FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')])
+ORDER BY id;
+----
+id	indexed_offsets	standalone_offsets
+1	{0,9}	{0,9}
+2	{0,4}	{0,4}
+7	{0,4}	{0,4}
+9	{0,9,10,14}	{0,9,10,14}
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%')::boost(3), ts_like('%wi%')::boost(2), ts_like('%iw%')::boost(4)])
+ORDER BY id;
+----
+id
+1
+2
+7
+9
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')], 2)
+ORDER BY id;
+----
+id
+2
+7
+9
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')])
+   OR other @@ ts_like('%ki%')
+ORDER BY id;
+----
+id
+1
+2
+3
+7
+9
+
+query
+SELECT bm25(partial_fusion_idx.tableoid) AS score FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')])
+  AND (id = 2)::score(NULL);
+----
+score
+3
+
+query
+SELECT bm25(partial_fusion_idx.tableoid) AS score FROM partial_fusion_idx
+WHERE body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%')::boost(3), ts_like('%wi%')::boost(2), ts_like('%iw%')::boost(4)])
+  AND (id = 2)::score(NULL);
+----
+score
+9
+
+query
+SELECT id, bm25(partial_fusion_idx.tableoid) AS score FROM partial_fusion_idx
+WHERE body @@ ts_like('%a%')
+  AND NOT (body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')]))
+ORDER BY id;
+----
+id	score
+3	1
+4	1
+
+query
+SELECT id FROM partial_fusion_idx
+WHERE NOT (body @@ ts_any([ts_phrase('quick fox'), ts_like('%ki%'), ts_like('%wi%'), ts_like('%iw%')]))
+ORDER BY id;
+----
+id
+3
+4
+5
+8
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY partial_fusion_ngram AS
+  generate_wildcard_ngrams(split_text_csv(' '), 3) WITH (frequency, position);
+
+statement ok
+CREATE TABLE partial_fusion_ngram_docs (id INT PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX partial_fusion_ngram_idx ON partial_fusion_ngram_docs USING inverted (id, body partial_fusion_ngram);
+
+statement ok
+INSERT INTO partial_fusion_ngram_docs VALUES
+  (1, 'quick brown fox'), (2, 'quick grey fox'), (3, 'slow brown fox');
+
+statement ok
+VACUUM (FLUSH_TABLE) partial_fusion_ngram_docs;
+
+query
+SELECT id, ts_offsets(body) = ts_offsets('partial_fusion_ngram', body,
+  ts_any([ts_phrase('quick brown'), ts_like('%qui%'), ts_like('%ick%'), ts_like('%uic%')])) AS same_offsets
+FROM partial_fusion_ngram_idx
+WHERE body @@ ts_any([ts_phrase('quick brown'), ts_like('%qui%'), ts_like('%ick%'), ts_like('%uic%')])
+ORDER BY id;
+----
+id	same_offsets
+1	t
+2	t

@@ -51,8 +51,11 @@
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/utils/conjunction_acceptor.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
@@ -718,6 +721,7 @@ struct OrAcceptorFusionRule {
 
   static std::optional<AcceptorInfo> InfoOf(const Filter& child);
   static bool AppendParts(bstring& key, const Filter& child);
+  static bool ApplyPartial(BooleanFilter& node, const OptimizeContext& ctx);
 };
 
 struct AndAcceptorFusionRule {
@@ -855,6 +859,128 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
                        part(Kind::Prefix), part(kind));
 }
 
+bool OrAcceptorFusionRule::ApplyPartial(BooleanFilter& node,
+                                        const OptimizeContext& ctx) {
+  using GroupKey = std::pair<field_id, DictRef>;
+  struct Group {
+    GroupKey identity;
+    size_t count = 0;
+    size_t seekable = 0;
+    bool has_filter = false;
+    bool eligible = false;
+    bstring pattern;
+    Filter::ptr fused;
+  };
+
+  const auto terms = node.Terms(Occur::Should);
+  const auto filters = node.Filters(Occur::Should);
+  const auto total = node.Size(Occur::Should);
+  if (total < 3 || filters.empty()) {
+    return false;
+  }
+  containers::FlatHashMap<GroupKey, size_t> group_indices;
+  absl::InlinedVector<Group, 4> groups;
+  const auto group_for = [&](GroupKey key) -> Group& {
+    const auto [it, inserted] = group_indices.try_emplace(key, groups.size());
+    if (inserted) {
+      groups.push_back(Group{.identity = key});
+    }
+    return groups[it->second];
+  };
+  const auto should_group = [&](const Filter& child) {
+    return ctx.fuse_seekable_acceptors ||
+           (child.type() != Type<ByTerm>::id() &&
+            child.type() != Type<ByPrefix>::id());
+  };
+
+  if (ctx.fuse_seekable_acceptors) {
+    for (const auto& term : terms) {
+      auto& group = group_for({term.field, term.dict});
+      ++group.count;
+      ++group.seekable;
+    }
+  }
+  for (const auto& child : filters) {
+    if (const auto info = InfoOf(*child); info && should_group(*child)) {
+      auto& group = group_for({info->field, info->dict});
+      ++group.count;
+      group.seekable += child->type() == Type<ByTerm>::id() ||
+                        child->type() == Type<ByPrefix>::id();
+      group.has_filter = true;
+    }
+  }
+  const size_t min_group_size = ctx.fuse_seekable_acceptors ? 2 : 3;
+  for (auto& group : groups) {
+    group.eligible =
+      group.has_filter && group.count >= min_group_size &&
+      group.count != total &&
+      (group.seekable != group.count || ctx.fuse_seekable_acceptors);
+  }
+  if (ctx.fuse_seekable_acceptors) {
+    for (const auto& term : terms) {
+      auto& group = groups[group_indices.at({term.field, term.dict})];
+      if (group.eligible) {
+        AppendUnionPart(group.pattern, RegexpAcceptor::PartKind::Term,
+                        term.term);
+      }
+    }
+  }
+  for (const auto& child : filters) {
+    if (const auto info = InfoOf(*child); info && should_group(*child)) {
+      auto& group = groups[group_indices.at({info->field, info->dict})];
+      if (group.eligible && !AppendParts(group.pattern, *child)) {
+        group.eligible = false;
+      }
+    }
+  }
+
+  bool changed = false;
+  for (auto& group : groups) {
+    if (!group.eligible) {
+      continue;
+    }
+    AutomatonOptions options;
+    try {
+      options = AutomatonOptions{group.pattern, PatternKind::Union};
+    } catch (const SqlException& error) {
+      if (error.error().errcode != ERRCODE_INVALID_REGULAR_EXPRESSION) {
+        throw;
+      }
+      continue;
+    }
+    if (!options.source->ok()) {
+      continue;
+    }
+    auto fused = std::make_unique<AutomatonFilter>();
+    *fused->mutable_field_id() = group.identity.first;
+    *fused->mutable_dict() = group.identity.second;
+    *fused->mutable_options() = std::move(options);
+    group.fused = std::move(fused);
+    changed = true;
+  }
+  if (!changed) {
+    return false;
+  }
+
+  auto& bucket = node.Bucket(Occur::Should);
+  if (ctx.fuse_seekable_acceptors) {
+    std::erase_if(bucket.terms, [&](const TermClause& term) {
+      return groups[group_indices.at({term.field, term.dict})].fused != nullptr;
+    });
+  }
+  std::erase_if(bucket.filters, [&](const Filter::ptr& child) {
+    const auto info = InfoOf(*child);
+    return info && should_group(*child) &&
+           groups[group_indices.at({info->field, info->dict})].fused != nullptr;
+  });
+  for (auto& group : groups) {
+    if (group.fused) {
+      bucket.filters.emplace_back(std::move(group.fused));
+    }
+  }
+  return true;
+}
+
 bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
                                  const OptimizeContext& ctx) {
   auto& node = irs::utils::downCast<BooleanFilter>(*slot);
@@ -881,14 +1007,14 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
     boost = head->boost;
     scorer = filters.front()->GetScorer();
   } else {
-    return false;
+    return !ctx.scored && ApplyPartial(node, ctx);
   }
 
   size_t seekable = terms.size();
   for (const auto& term : terms) {
     if (term.field != field || term.dict != dict ||
         (scores && term.scorer != scorer)) {
-      return false;
+      return !ctx.scored && ApplyPartial(node, ctx);
     }
     if (scores && term.boost != boost) {
       return false;
@@ -898,7 +1024,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
     const auto info = InfoOf(*child);
     if (!info || info->field != field || info->dict != dict ||
         (scores && child->GetScorer() != scorer)) {
-      return false;
+      return !ctx.scored && ApplyPartial(node, ctx);
     }
     if (scores && (info->boost != boost ||
                    (info->merge && *info->merge != node.MergeType()))) {

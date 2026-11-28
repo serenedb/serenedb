@@ -48,6 +48,7 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "filter_test_case_base.hpp"
@@ -2559,6 +2560,15 @@ bool FusedAccepts(const irs::AutomatonFilter& fused, std::string_view term) {
   return predicate && predicate->Accepts(B(term));
 }
 
+void AddQuickFoxPhrase(irs::BooleanFilter& root) {
+  auto& phrase = AddChild<irs::ByPhrase>(root, irs::Occur::Should);
+  *phrase.mutable_field_id() = kFieldTestField;
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::bstring{B("quick")};
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::bstring{B("fox")};
+}
+
 irs::ByRange& AddRange(irs::BooleanFilter& root, irs::Occur occur,
                        irs::field_id field) {
   auto& range = AddChild<irs::ByRange>(root, occur);
@@ -3707,6 +3717,355 @@ TEST(OrAcceptorFusion_test, fuses_mixed_acceptors) {
   EXPECT_TRUE(FusedAccepts(*fused, "apple"));
   EXPECT_FALSE(FusedAccepts(*fused, "kiwis"));
   EXPECT_FALSE(FusedAccepts(*fused, "cherry"));
+}
+
+TEST(OrAcceptorFusion_test, fuses_unscored_acceptors_beside_phrase) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "kiwi");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "b_n%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%le");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ora%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  EXPECT_EQ(1, node.MinShouldMatch());
+  ASSERT_EQ(1, node.Terms(irs::Occur::Should).size());
+  EXPECT_EQ(B("kiwi"), node.Terms(irs::Occur::Should).front().term);
+  const auto children = node.Filters(irs::Occur::Should);
+  ASSERT_EQ(2, children.size());
+  const irs::AutomatonFilter* fused = nullptr;
+  bool found_phrase = false;
+  for (const auto& child : children) {
+    if (child->type() == irs::Type<irs::ByPhrase>::id()) {
+      found_phrase = true;
+    } else {
+      fused = FusedOf(child);
+    }
+  }
+  ASSERT_TRUE(found_phrase);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_FALSE(FusedAccepts(*fused, "kiwi"));
+  EXPECT_TRUE(FusedAccepts(*fused, "banana"));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "orange"));
+  EXPECT_FALSE(FusedAccepts(*fused, "cherry"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_single_pattern_beside_seekable_terms) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "banana");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  ASSERT_EQ(1, node.Terms(irs::Occur::Should).size());
+  EXPECT_EQ(B("banana"), node.Terms(irs::Occur::Should).front().term);
+  const auto children = node.Filters(irs::Occur::Should);
+  ASSERT_EQ(2, children.size());
+  bool found_pattern = false;
+  for (const auto& child : children) {
+    if (const auto* automaton = FusedOf(child)) {
+      found_pattern = true;
+      EXPECT_EQ(irs::PatternKind::Wildcard, automaton->options().kind);
+      EXPECT_TRUE(FusedAccepts(*automaton, "kiwi"));
+      EXPECT_FALSE(FusedAccepts(*automaton, "banana"));
+    }
+  }
+  EXPECT_TRUE(found_pattern);
+}
+
+TEST(OrAcceptorFusion_test, keeps_two_patterns_beside_phrase) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%wi%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto children =
+    irs::utils::downCast<irs::BooleanFilter>(*filter).Filters(
+      irs::Occur::Should);
+  ASSERT_EQ(3, children.size());
+  size_t patterns = 0;
+  for (const auto& child : children) {
+    if (const auto* automaton = FusedOf(child)) {
+      EXPECT_EQ(irs::PatternKind::Wildcard, automaton->options().kind);
+      ++patterns;
+    }
+  }
+  EXPECT_EQ(2, patterns);
+}
+
+TEST(OrAcceptorFusion_test, fuses_unscored_groups_by_field) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%wi%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%iw%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%ban%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%app%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%ora%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldPrefix, "%zz%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  const auto children = node.Filters(irs::Occur::Should);
+  ASSERT_EQ(4, children.size());
+  const irs::AutomatonFilter* first = nullptr;
+  const irs::AutomatonFilter* second = nullptr;
+  const irs::AutomatonFilter* single = nullptr;
+  bool found_phrase = false;
+  for (const auto& child : children) {
+    if (child->type() == irs::Type<irs::ByPhrase>::id()) {
+      found_phrase = true;
+    } else if (const auto* fused = FusedOf(child)) {
+      if (fused->field_id() == kFieldTestField) {
+        first = fused;
+      } else if (fused->field_id() == kFieldName) {
+        second = fused;
+      } else if (fused->field_id() == kFieldPrefix) {
+        single = fused;
+      }
+    }
+  }
+  ASSERT_TRUE(found_phrase);
+  ASSERT_NE(nullptr, first);
+  ASSERT_NE(nullptr, second);
+  ASSERT_NE(nullptr, single);
+  EXPECT_TRUE(FusedAccepts(*first, "kiwi"));
+  EXPECT_FALSE(FusedAccepts(*first, "banana"));
+  EXPECT_TRUE(FusedAccepts(*second, "banana"));
+  EXPECT_FALSE(FusedAccepts(*second, "kiwi"));
+  EXPECT_EQ(irs::PatternKind::Wildcard, single->options().kind);
+  EXPECT_TRUE(FusedAccepts(*single, "pizza"));
+}
+
+TEST(OrAcceptorFusion_test, fuses_unscored_unicode_and_byte_patterns) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "_");
+  auto& bytes =
+    Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "__");
+  bytes.mutable_options()->bytes = true;
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%zz%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto children =
+    irs::utils::downCast<irs::BooleanFilter>(*filter).Filters(
+      irs::Occur::Should);
+  ASSERT_EQ(2, children.size());
+  const irs::AutomatonFilter* fused = nullptr;
+  for (const auto& child : children) {
+    if (const auto* candidate = FusedOf(child)) {
+      fused = candidate;
+    }
+  }
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused, "ab"));
+  EXPECT_TRUE(FusedAccepts(*fused, "\xF0\x9F\x98\x80"));
+  EXPECT_FALSE(FusedAccepts(*fused, "abc"));
+  EXPECT_FALSE(FusedAccepts(*fused,
+                            "\xC3\xB8"
+                            "a"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_unfusable_group_beside_fused_group) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  auto& existing = AddChild<irs::AutomatonFilter>(*root, irs::Occur::Should);
+  *existing.mutable_field_id() = kFieldTestField;
+  *existing.mutable_options() = irs::AutomatonOptions{
+    B("a%b"), irs::MakePatternSource(B("a%b"), irs::PatternKind::Wildcard)};
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%wi%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%ban%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%app%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%ora%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto children =
+    irs::utils::downCast<irs::BooleanFilter>(*filter).Filters(
+      irs::Occur::Should);
+  ASSERT_EQ(5, children.size());
+  size_t first_field = 0;
+  bool existing_matches = false;
+  bool wildcard_matches = false;
+  const irs::AutomatonFilter* second_field = nullptr;
+  for (const auto& child : children) {
+    if (const auto* automaton = FusedOf(child)) {
+      first_field += automaton->field_id() == kFieldTestField;
+      if (automaton->field_id() == kFieldTestField) {
+        existing_matches |= FusedAccepts(*automaton, "ab");
+        wildcard_matches |= FusedAccepts(*automaton, "kiwi");
+      } else if (automaton->field_id() == kFieldName) {
+        second_field = automaton;
+      }
+    }
+  }
+  EXPECT_EQ(3, first_field);
+  EXPECT_TRUE(existing_matches);
+  EXPECT_TRUE(wildcard_matches);
+  ASSERT_NE(nullptr, second_field);
+  EXPECT_TRUE(FusedAccepts(*second_field, "banana"));
+  EXPECT_TRUE(FusedAccepts(*second_field, "apple"));
+}
+
+TEST(OrAcceptorFusion_test, preserves_group_when_union_cannot_compile) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  auto& invalid = AddChild<irs::ByRegexp>(*root, irs::Occur::Should);
+  *invalid.mutable_field_id() = kFieldTestField;
+  invalid.mutable_options()->pattern = irs::bstring{B("(")};
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%wi%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%ban%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%app%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldName, "%ora%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  EXPECT_NO_THROW(irs::RunRules(filter, {}));
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto children =
+    irs::utils::downCast<irs::BooleanFilter>(*filter).Filters(
+      irs::Occur::Should);
+  ASSERT_EQ(5, children.size());
+  size_t unchanged = 0;
+  const irs::AutomatonFilter* fused = nullptr;
+  for (const auto& child : children) {
+    if (child->type() == irs::Type<irs::ByRegexp>::id() ||
+        child->type() == irs::Type<irs::ByWildcard>::id()) {
+      ++unchanged;
+    } else if (const auto* candidate = FusedOf(child)) {
+      fused = candidate;
+    }
+  }
+  EXPECT_EQ(3, unchanged);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused, "banana"));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_THROW(irs::Optimize(filter), irs::SqlException);
+}
+
+TEST(OrAcceptorFusion_test, fuses_unscored_groups_by_dictionary) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%wi%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%iw%");
+  for (const auto* pattern : {"%ban%", "%app%", "%ora%"}) {
+    auto& child = Append<irs::ByWildcard>(*root, irs::Occur::Should,
+                                          kFieldTestField, pattern);
+    *child.mutable_dict() = irs::StringListLayout::kStrings;
+  }
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  const auto children = node.Filters(irs::Occur::Should);
+  ASSERT_EQ(3, children.size());
+  const irs::AutomatonFilter* first = nullptr;
+  const irs::AutomatonFilter* second = nullptr;
+  for (const auto& child : children) {
+    if (const auto* fused = FusedOf(child)) {
+      if (fused->dict() == irs::StringLayout::kStrings) {
+        first = fused;
+      } else if (fused->dict() == irs::StringListLayout::kStrings) {
+        second = fused;
+      }
+    }
+  }
+  ASSERT_NE(nullptr, first);
+  ASSERT_NE(nullptr, second);
+  EXPECT_TRUE(FusedAccepts(*first, "kiwi"));
+  EXPECT_FALSE(FusedAccepts(*first, "banana"));
+  EXPECT_TRUE(FusedAccepts(*second, "banana"));
+  EXPECT_FALSE(FusedAccepts(*second, "kiwi"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_partial_seekable_acceptors_by_default) {
+  const auto make = [] {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    AddQuickFoxPhrase(*root);
+    Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
+    Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ban");
+    AsDisjunction(*root);
+    return root;
+  };
+
+  irs::Filter::ptr normal = make();
+  irs::Optimize(normal);
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), normal->type());
+  EXPECT_EQ(3, irs::utils::downCast<irs::BooleanFilter>(*normal).Size(
+                 irs::Occur::Should));
+
+  irs::Filter::ptr requested = make();
+  irs::Optimize(requested, {.fuse_seekable_acceptors = true});
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), requested->type());
+  EXPECT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*requested)
+                 .Size(irs::Occur::Should));
+}
+
+TEST(OrAcceptorFusion_test, keeps_scored_acceptors_beside_phrase) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%wi%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%iw%");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  EXPECT_EQ(4, node.Size(irs::Occur::Should));
+}
+
+TEST(OrAcceptorFusion_test, keeps_min_match_acceptors_beside_phrase) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddQuickFoxPhrase(*root);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%ki%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%wi%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "%iw%");
+  root->SetMinShouldMatch(2);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  EXPECT_EQ(2, node.MinShouldMatch());
+  EXPECT_EQ(4, node.Size(irs::Occur::Should));
 }
 
 TEST(OrAcceptorFusion_test, keeps_contiguous_only_by_default) {

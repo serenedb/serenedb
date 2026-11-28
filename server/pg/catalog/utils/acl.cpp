@@ -299,49 +299,49 @@ void VisitRoleReferences(
           !shown(object)) {
         return;
       }
-      if (object.type == MACRO_ENTRY || object.type == TABLE_MACRO_ENTRY) {
-        const auto& macro = object.Cast<duckdb::MacroCatalogEntry>();
-        for (const auto& overload : macro.macros) {
-          if (const auto deptype = use(macro.OverloadPermissions(*overload))) {
-            const auto oid = macro.OverloadOid(*overload);
-            visitor({db->oid, kPgProcTable, oid, 0, deptype}, [&] {
-              return DescribeObject(context, kPgProcTable, oid, 0);
-            });
-          }
-        }
-        return;
-      }
       const auto classid = duckdb::ObjectKindOf(object.type).pg_class;
-      if (const auto deptype = use(object.permissions)) {
-        visitor({db->oid, classid, object.oid, 0, deptype},
-                [&] { return DescribeObject(context, object); });
-        if (deptype == 'o') {
-          return;
-        }
-      }
-      const auto column = [&](int32_t attnum) {
-        visitor({db->oid, classid, object.oid, attnum, 'a'}, [&] {
-          return DescribeObject(context, classid, object.oid, attnum);
+      duckdb::idx_t overload = 0;
+      const duckdb::Identifier* column = nullptr;
+      bool named = false;
+      bool owned = false;
+      duckdb::AnyRoleReference(
+        object, [&](const duckdb::RoleReference& reference) {
+          if (reference.role != role) {
+            return false;
+          }
+          const char deptype =
+            reference.use == duckdb::RoleUse::Owner ? 'o' : 'a';
+          if (reference.overload_oid) {
+            if (reference.overload_oid != overload) {
+              overload = reference.overload_oid;
+              visitor({db->oid, kPgProcTable, overload, 0, deptype}, [&] {
+                return DescribeObject(context, kPgProcTable, overload, 0);
+              });
+            }
+          } else if (!reference.column) {
+            if (!named) {
+              named = true;
+              owned = deptype == 'o';
+              visitor({db->oid, classid, object.oid, 0, deptype},
+                      [&] { return DescribeObject(context, object); });
+            }
+          } else if (!owned && reference.column.get() != column) {
+            column = reference.column.get();
+            const auto attnum =
+              object.type == VIEW_ENTRY
+                ? ViewAttnum(context, object.Cast<duckdb::ViewCatalogEntry>(),
+                             *column)
+                : Attnum(object.Cast<duckdb::TableCatalogEntry>()
+                           .GetColumns()
+                           .GetColumn(*column));
+            if (attnum) {
+              visitor({db->oid, classid, object.oid, attnum, 'a'}, [&] {
+                return DescribeObject(context, classid, object.oid, attnum);
+              });
+            }
+          }
+          return false;
         });
-      };
-      if (object.type == VIEW_ENTRY) {
-        auto& view = object.Cast<duckdb::ViewCatalogEntry>();
-        for (const auto& acl : view.column_acls) {
-          if (!names(acl.acl)) {
-            continue;
-          }
-          if (const auto attnum = ViewAttnum(context, view, acl.column)) {
-            column(attnum);
-          }
-        }
-      } else if (object.type == TABLE_ENTRY) {
-        for (const auto& definition :
-             object.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
-          if (names(definition.Acl())) {
-            column(Attnum(definition));
-          }
-        }
-      }
     };
     database.ScanEntries(transaction, entry);
     const auto record =

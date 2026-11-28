@@ -65,6 +65,33 @@ db error: ERROR: Table with name oie_missing does not exist!
 
 
 statement ok
+CREATE ROLE oie_heir;
+
+
+statement ok
+ALTER TABLE IF EXISTS oie_seq OWNER TO oie_heir;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname = 'oie_seq';
+----
+owner
+oie_heir
+
+
+statement error
+ALTER SEQUENCE IF EXISTS oie_clickclack OWNER TO oie_heir;
+----
+db error: ERROR: "oie_clickclack" is not a sequence
+
+
+statement error
+ALTER VIEW IF EXISTS oie_seq OWNER TO oie_heir;
+----
+db error: ERROR: "oie_seq" is not a view
+
+
+statement ok
 DROP TABLE oie_clickclack;
 
 
@@ -78,3 +105,7 @@ DROP SEQUENCE oie_seq;
 
 statement ok
 DROP ROLE oie_mop;
+
+
+statement ok
+DROP ROLE oie_heir;

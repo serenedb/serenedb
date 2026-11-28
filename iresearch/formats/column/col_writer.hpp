@@ -86,8 +86,6 @@ class ColWriter final {
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
-  bool HasAnn(field_id column_id) const noexcept;
-
   void SetIdxWriter(IdxWriter& idx) noexcept;
 
   NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);

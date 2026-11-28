@@ -141,7 +141,7 @@ class ColumnWriter final {
   }
 
   bool LayoutMatches(const ColumnReader& column) const noexcept;
-  codecs::CodecType ForcedCodec() const;
+  codecs::CodecType ForcedCodec(duckdb::PhysicalType physical) const;
   bool ValidityCopyable(const ColumnReader& column, uint64_t first,
                         uint64_t end) const noexcept;
   void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,

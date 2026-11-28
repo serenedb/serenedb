@@ -494,8 +494,6 @@ void ClusterCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
 
 void ClusterCatalog::DropOwned(duckdb::CatalogTransaction transaction,
                                const duckdb::AlterOwnedInfo& info) {
-  const auto bootstrap =
-    duckdb::DBConfig::GetConfig(transaction.GetContext()).bootstrap_role;
   std::vector<duckdb::unique_ptr<duckdb::AlterInfo>> alters;
   for (const auto type : {duckdb::CatalogType::DATABASE_ENTRY,
                           duckdb::CatalogType::TABLESPACE_ENTRY}) {
@@ -526,7 +524,7 @@ void ClusterCatalog::DropOwned(duckdb::CatalogTransaction transaction,
   }
   _roles.Scan(transaction, [&](duckdb::CatalogEntry& member) {
     for (const auto& edge : member.Cast<RoleCatalogEntry>().MemberOf()) {
-      if (edge.grantor == bootstrap ||
+      if (edge.grantor == pg::kRootUser ||
           !absl::c_linear_search(info.role_ids, edge.grantor)) {
         continue;
       }
@@ -1080,8 +1078,8 @@ ClusterCatalog& ClusterOf() {
 
 duckdb::shared_ptr<const duckdb::SecuritySnapshot> RolesOf(
   duckdb::ClientContext* context) {
-  if (context && context->security) {
-    return context->security;
+  if (context && context->security.snapshot) {
+    return context->security.snapshot;
   }
   auto& cluster = context ? ClusterOf(*context->db) : ClusterOf();
   auto& db = cluster.GetDatabase();

@@ -62,7 +62,6 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
-#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/types/register.h"
 #include "query/config.h"
@@ -121,8 +120,6 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
     };
   config.create_client_context = CreateClientContext;
   config.create_secret_storage = catalog::CreateSecretStorage;
-  config.bootstrap_role = pg::kRootUser;
-  config.database_owner_role = pg::kPgDatabaseOwnerRole;
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
   config.AddExtensionOption(

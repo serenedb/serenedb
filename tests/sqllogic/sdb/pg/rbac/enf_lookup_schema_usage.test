@@ -142,6 +142,71 @@ REVOKE USAGE ON SCHEMA es FROM elu_reader;
 
 
 statement ok
+CREATE SCHEMA elu_unusable;
+
+
+statement ok
+CREATE TABLE elu_unusable.elu_victim (a INTEGER);
+
+
+statement ok
+CREATE FUNCTION elu_unusable.elu_victim_fn() RETURNS INTEGER LANGUAGE SQL AS 'SELECT 1';
+
+
+statement ok
+GRANT CREATE ON SCHEMA elu_unusable TO elu_reader;
+
+
+statement ok
+GRANT SELECT ON elu_unusable.elu_victim TO elu_reader;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+SET search_path = elu_unusable, public;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+DROP TABLE IF EXISTS elu_victim;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+ALTER TABLE IF EXISTS elu_victim RENAME TO elu_renamed;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+DROP FUNCTION IF EXISTS elu_victim_fn;
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'elu_unusable'::regnamespace;
+----
+relname
+elu_victim
+
+
+query
+SELECT proname FROM pg_proc WHERE pronamespace = 'elu_unusable'::regnamespace;
+----
+proname
+elu_victim_fn
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+DROP TABLE elu_victim;
+----
+db error: ERROR: Table with name elu_victim does not exist!<slt:ignore>
+
+
+statement ok
+DROP SCHEMA elu_unusable CASCADE;
+
+
+statement ok
 DROP SCHEMA elu_private CASCADE;
 
 

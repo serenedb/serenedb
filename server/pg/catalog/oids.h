@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cstdint>
+#include <duckdb/catalog/acl.hpp>
 #include <duckdb/common/constants.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <span>
@@ -42,7 +43,7 @@ inline constexpr duckdb::idx_t kMaxSystem = 262144;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 
-inline constexpr duckdb::idx_t kRootUser = kMinSystem;
+inline constexpr duckdb::idx_t kRootUser = duckdb::BOOTSTRAP_ROLE_OID;
 
 inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
 inline constexpr duckdb::idx_t kPgAmIResearch = kMinSystem + 301;

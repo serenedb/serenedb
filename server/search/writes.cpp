@@ -134,7 +134,7 @@ void AddChanged(StoreWrites& w, Tick snapshot,
 
 duckdb::RoleAccess WriterAccess(duckdb::ClientContext& context,
                                 std::optional<duckdb::idx_t> writer) {
-  if (!writer || *writer == context.current_role_id) {
+  if (!writer || *writer == context.security.current_role_id) {
     return duckdb::Role(context);
   }
   return duckdb::Role(context, *writer);
@@ -1314,8 +1314,8 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
   }
   const LockedWrites locked{_writes, w};
   const auto& role = duckdb::Role(context);
-  w.writer = !w.writer || *w.writer == context.current_role_id
-               ? context.current_role_id
+  w.writer = !w.writer || *w.writer == context.security.current_role_id
+               ? context.security.current_role_id
                : duckdb::ACL_ID_PUBLIC;
   if (w.keyed_generation != w.rows_generation) {
     w.buffered_keys.Clear();
@@ -1831,7 +1831,7 @@ void Writes::VerifyReferences(duckdb::ClientContext& context,
   _reference_checks.push_back({.table = &table,
                                .spec = spec,
                                .referenced = std::move(referenced),
-                               .role = context.current_role_id});
+                               .role = context.security.current_role_id});
 }
 
 void Writes::VerifyUniqueKey(duckdb::ClientContext& context,

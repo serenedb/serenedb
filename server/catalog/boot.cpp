@@ -299,7 +299,7 @@ void InitCatalog(bool default_database, bool initialized) {
         servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());
       });
   }
-  context.RefreshSecurity();
+  context.security.Refresh(context);
   for (auto& server : servers) {
     try {
       context.RunFunctionInTransaction([&] { server.get().Attach(context); });

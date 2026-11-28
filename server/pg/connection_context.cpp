@@ -215,8 +215,8 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _progress{std::make_shared<pg::ProgressSource>()},
     _slot{catalog::Transactions::Get().Join()} {
   session_user = _user;
-  session_role = identity.role;
-  SetCurrentRole(identity.role);
+  security.session_role = identity.role;
+  security.SetCurrentRole(*this, identity.role);
   PublishSuperuser();
   _progress->pid = _backend_pid;
   _progress->datid = static_cast<int64_t>(_database_id);

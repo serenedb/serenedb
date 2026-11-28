@@ -139,24 +139,24 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
-  duckdb::idx_t GetRoleId() const { return current_role_id; }
+  duckdb::idx_t GetRoleId() const { return security.current_role_id; }
   duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
-  duckdb::idx_t GetSessionRoleId() const { return session_role; }
+  duckdb::idx_t GetSessionRoleId() const { return security.session_role; }
 
   std::string EffectiveUserName();
   std::string SessionUserName();
 
   void SetEffectiveRole(duckdb::idx_t role) {
-    SetCurrentRole(role);
+    security.SetCurrentRole(*this, role);
     session_user = EffectiveUserName();
     PublishSuperuser();
   }
   void SetSessionRole(duckdb::idx_t role) {
-    session_role = role;
+    security.session_role = role;
     SetEffectiveRole(role);
   }
   void ResetIdentity() {
-    session_role = _login_role_id;
+    security.session_role = _login_role_id;
     SetEffectiveRole(_login_role_id);
   }
   void ApplyRoleSettings();

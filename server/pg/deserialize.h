@@ -62,6 +62,7 @@ struct DeserializeContext {
   duckdb::optional_ptr<duckdb::ClientContext> client;
   std::optional<XmlOption> xml_option;
   std::exception_ptr column_error;
+  bool string_t_fields = false;
   duckdb::JSONTreeParser json{duckdb::JSON_TYPE_READ_FLAGS};
 
   duckdb::Calendar* CalendarFor(std::string_view tz_name);

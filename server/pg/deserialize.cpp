@@ -828,7 +828,13 @@ struct BoolText {
   }
 };
 
-// All fixed-width numbers (int*/uint*/float/double) parse through fast_float.
+const char* ReadLimit(const DeserializeContext& ctx, std::string_view data) {
+  return data.data() +
+         (ctx.string_t_fields
+            ? std::max<size_t>(data.size(), duckdb::string_t::INLINE_LENGTH)
+            : data.size());
+}
+
 // PG's numeric input accepts surrounding whitespace, a leading '+', and (for
 // floats) inf/nan: the flags cover the leading whitespace + plus, `general`
 // keeps inf/nan, and the field must otherwise be fully consumed (trailing
@@ -836,12 +842,26 @@ struct BoolText {
 template<typename T>
 struct NumberText {
   template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
     static constexpr fast_float::parse_options kOptions{
       fast_float::chars_format::general |
       fast_float::chars_format::allow_leading_plus |
       fast_float::chars_format::skip_white_space};
     T value;
+    if constexpr (std::is_integral_v<T>) {
+      if (duckdb::FastInteger(data.data(), data.size(), ReadLimit(ctx, data),
+                              value)) {
+        sink.Fixed(value);
+        return true;
+      }
+    } else if constexpr (std::is_same_v<T, double>) {
+      if (duckdb::FastDouble(data.data(), data.size(), ReadLimit(ctx, data),
+                             value, '.')) {
+        sink.Fixed(value);
+        return true;
+      }
+    }
     auto res = fast_float::from_chars_advanced(
       data.data(), data.data() + data.size(), value, kOptions);
     if (res.ec != std::errc{}) {
@@ -1117,7 +1137,8 @@ struct UhugeintText {
 template<typename Phys>
 struct DecimalText {
   template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
     const auto& decimal =
       sink.Type().GetTypeInfo().template Cast<duckdb::DecimalTypeInfo>();
     const auto width = decimal.width;
@@ -1126,7 +1147,7 @@ struct DecimalText {
     bool parsed = false;
     if constexpr (sizeof(Phys) <= sizeof(int64_t)) {
       parsed =
-        duckdb::FastDecimal(data.data(), data.size(), data.data() + data.size(),
+        duckdb::FastDecimal(data.data(), data.size(), ReadLimit(ctx, data),
                             result, '.', width, scale);
     }
     if (!parsed) {

@@ -66,6 +66,7 @@ class PostgresDecoder final : public duckdb::ValueDecoder {
       _decode{
         pg::GetDeserialization<pg::ColumnSink>(type, pg::VarFormat::Text)} {
     pg::FillDeserializeContext(context, _dctx);
+    _dctx.string_t_fields = true;
   }
 
   bool Decode(duckdb::Vector& text, duckdb::Vector& out, duckdb::idx_t count,

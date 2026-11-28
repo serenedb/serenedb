@@ -493,7 +493,9 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
           op != TSQueryOp::Unknown && op != TSQueryOp::Boost) {
         call = &func;
       } else if (func.GetReturnType().id() == duckdb::LogicalTypeId::FLOAT) {
-        _reads_scores = _reads_scores || optimizer::IsScorerFunctionName(name);
+        if (const auto* anchor = optimizer::ScoreAnchor(func)) {
+          _score_anchors.push_back(anchor->Binding());
+        }
       }
     }
     const auto outer = _mode;
@@ -513,7 +515,9 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
       duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*folded));
   }
 
-  bool ReadsScores() const noexcept { return _reads_scores; }
+  std::span<const duckdb::ColumnBinding> ScoreAnchors() const noexcept {
+    return _score_anchors;
+  }
 
  private:
   enum class Mode : uint8_t {
@@ -531,14 +535,15 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
 
   duckdb::ClientContext& _context;
   Mode _mode = Mode::Check;
-  bool _reads_scores = false;
+  std::vector<duckdb::ColumnBinding> _score_anchors;
 };
 
 class ScoredPredicateGuard final : public duckdb::LogicalOperatorVisitor {
  public:
-  explicit ScoredPredicateGuard(duckdb::LogicalOperator& plan,
-                                duckdb::ClientContext& context)
-    : _claims{plan, context} {}
+  explicit ScoredPredicateGuard(
+    duckdb::LogicalOperator& plan, duckdb::ClientContext& context,
+    std::span<const duckdb::ColumnBinding> score_anchors)
+    : _claims{plan, context, score_anchors} {}
 
   void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
     Guard(**slot, false);
@@ -560,7 +565,7 @@ class ScoredPredicateGuard final : public duckdb::LogicalOperatorVisitor {
           scorer && *scorer == irs::Unscored::type_name()) {
         return;
       }
-      if (TryGetMergeModifier(type)) {
+      if (TryGetMergeModifier(type) && _claims.Scored(*operand)) {
         KeepBranches(*operand);
       }
       Guard(*operand, true);
@@ -569,9 +574,10 @@ class ScoredPredicateGuard final : public duckdb::LogicalOperatorVisitor {
     if (expr.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
       return;
     }
-    if (modified ||
-        (expr.GetExpressionType() != duckdb::ExpressionType::OPERATOR_NOT &&
-         (ContainsIndexOnlyPredicate(expr) || _claims.Answers(expr)))) {
+    if (_claims.Scored(expr) &&
+        (modified ||
+         (expr.GetExpressionType() != duckdb::ExpressionType::OPERATOR_NOT &&
+          (ContainsIndexOnlyPredicate(expr) || _claims.Answers(expr))))) {
       expr.SetRewriteGuard(duckdb::RewriteGuard::SCORED);
     }
   }
@@ -584,8 +590,8 @@ void PrepareSearchRewrites(duckdb::OptimizerExtensionInput& input,
   if (plan) {
     TSQueryFoldVisitor fold{input.context};
     fold.VisitOperator(*plan);
-    if (fold.ReadsScores()) {
-      ScoredPredicateGuard{*plan, input.context}.VisitOperator(*plan);
+    if (const auto anchors = fold.ScoreAnchors(); !anchors.empty()) {
+      ScoredPredicateGuard{*plan, input.context, anchors}.VisitOperator(*plan);
     }
   }
 }

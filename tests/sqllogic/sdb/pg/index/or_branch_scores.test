@@ -379,6 +379,17 @@ QUERY PLAN
 
 
 query
+SELECT a.id, BM25(a.tableoid) AS score FROM obs_idx a JOIN obs_idx b ON a.id = b.id
+WHERE (a.body @@ 'dot'::tsquery::score('constant(1)') AND (a.kind = 'a')::score('constant(1)') AND b.tag @@ 'dog')
+   OR (a.body @@ 'zzz'::tsquery::score('constant(1)') AND (a.kind = 'a')::score('constant(1)') AND b.tag @@ 'dog')
+ORDER BY a.id;
+----
+id	score
+1	4
+3	2
+
+
+query
 SELECT id FROM obs_idx
 WHERE (body @@ 'dot' OR body @@ 'zzz' OR false)::min_match(2)
 ORDER BY id;

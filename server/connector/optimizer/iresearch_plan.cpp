@@ -501,6 +501,19 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
                                     client_context));
 }
 
+bool IsScorerFunctionName(std::string_view name) {
+  using S = catalog::ScorerOptions;
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
+    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
+    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
+    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
+    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
+    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
+    S::Constant::Owner::type_name(),
+  };
+  return kScorerNames.contains(name);
+}
+
 struct AnnFunctionInfo {
   irs::VectorMetric metric;
   duckdb::OrderType order;
@@ -1685,22 +1698,32 @@ void TakeColumnConjuncts(
 
 }  // namespace
 
-bool IsScorerFunctionName(std::string_view name) {
-  using S = catalog::ScorerOptions;
-  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
-    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
-    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
-    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
-    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
-    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
-    S::Constant::Owner::type_name(),
-  };
-  return kScorerNames.contains(name);
+const duckdb::BoundColumnRefExpression* ScoreAnchor(
+  const duckdb::BoundFunctionExpression& call) {
+  return IsScorerFunctionName(call.Function().GetName().GetIdentifierName())
+           ? AnchorOf(call)
+           : nullptr;
 }
 
 SearchClaims::SearchClaims(duckdb::LogicalOperator& plan,
-                           duckdb::ClientContext& context)
-  : _index{plan}, _context{context} {}
+                           duckdb::ClientContext& context,
+                           std::span<const duckdb::ColumnBinding> score_anchors)
+  : _index{plan}, _context{context} {
+  for (const auto anchor : score_anchors) {
+    if (const auto column = _index.Column(anchor)) {
+      _scored.insert(column.scan);
+    }
+  }
+}
+
+bool SearchClaims::Scored(const duckdb::Expression& predicate) {
+  return !_scored.empty() &&
+         !duckdb::ExpressionIterator::AnyExpression<
+           duckdb::BoundColumnRefExpression>(
+           predicate, [&](const duckdb::BoundColumnRefExpression& ref) {
+             return !_scored.contains(_index.Column(ref.Binding()).scan);
+           });
+}
 
 bool SearchClaims::Answers(const duckdb::Expression& predicate) {
   const auto [it, inserted] = _answers.try_emplace(predicate, false);

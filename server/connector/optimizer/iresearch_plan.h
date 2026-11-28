@@ -25,8 +25,8 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/logical_operator.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <optional>
-#include <string_view>
 
 #include "connector/optimizer/plan_index.h"
 #include "connector/scan/scan_bind.h"
@@ -34,6 +34,7 @@
 
 namespace duckdb {
 
+class BoundFunctionExpression;
 class ClientContext;
 class DatabaseInstance;
 class LogicalGet;
@@ -49,13 +50,16 @@ void IResearchPushdownComplexFilter(
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
 
-bool IsScorerFunctionName(std::string_view name);
+const duckdb::BoundColumnRefExpression* ScoreAnchor(
+  const duckdb::BoundFunctionExpression& call);
 
 class SearchClaims {
  public:
   explicit SearchClaims(duckdb::LogicalOperator& plan,
-                        duckdb::ClientContext& context);
+                        duckdb::ClientContext& context,
+                        std::span<const duckdb::ColumnBinding> score_anchors);
 
+  bool Scored(const duckdb::Expression& predicate);
   bool Answers(const duckdb::Expression& predicate);
 
  private:
@@ -63,6 +67,7 @@ class SearchClaims {
 
   PlanIndex _index;
   duckdb::ClientContext& _context;
+  irs::containers::FlatHashSet<const PlannedScan*> _scored;
   duckdb::expression_map_t<bool> _answers;
 };
 

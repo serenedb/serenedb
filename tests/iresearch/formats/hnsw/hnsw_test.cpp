@@ -603,13 +603,13 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
     static_cast<const irs::HnswIndex&>(*segment.Ann(kVec)).Header();
 
   const auto name = irs::FileName(segment.Meta().name, irs::kIdxFormatExt);
+  const auto committed = dir.Committed();
+  ASSERT_EQ(1U, committed.size());
+  const auto sizes = irs::SizesOf(committed.front(), irs::kIdxFile);
   auto bytes = dir.ReadWhole(name);
-  duckdb::MemoryReader trailer{irs::bytes_view{bytes}.substr(
-    bytes.size() - irs::format_utils::kTrailerLen)};
-  trailer.Read<uint32_t>();
-  const auto footer_len = trailer.Read<uint32_t>();
+  ASSERT_EQ(sizes.file, bytes.size());
   absl::c_fill_n(bytes,
-                 bytes.size() - irs::format_utils::kTrailerLen - footer_len,
+                 bytes.size() - irs::format_utils::kFooterCrcLen - sizes.footer,
                  irs::byte_type{0});
   tests::IndexDir zeroed{irs::DuckDBEngine::Instance().instance(),
                          TestEnv::MemoryRoot()};
@@ -619,7 +619,7 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
     out->Close();
   }
   const irs::IdxReader idx{zeroed.Fs(), zeroed.Root(), segment.Meta().name,
-                           true, nullptr};
+                           sizes, nullptr};
   const auto& header =
     static_cast<const irs::HnswIndex&>(*idx.Ann(kVec)).Header();
   EXPECT_EQ(kDim, header.d);
@@ -778,45 +778,49 @@ TEST(HnswGraphFormatTest, AGraphWithoutLevelsIsCorrupted) {
   constexpr std::string_view kSegment = "corrupted";
   tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                       TestEnv::MemoryRoot()};
+  irs::FileSizes sizes;
   {
     auto out = dir.Create(irs::FileName(kSegment, irs::kIdxFormatExt));
-    irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& footer) {
-      footer.WriteList(
-        irs::kIdxFieldHnsw, "hnsw", 1,
-        [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
-          list.WriteObject([](duckdb::BinarySerializer& obj) {
-            obj.WriteProperty<uint64_t>(0, "id", kVec);
-            obj.WriteProperty<uint64_t>(1, "offset", 0);
-            obj.WriteProperty<uint32_t>(3, "d", kDim);
-            obj.WriteProperty<uint8_t>(
-              4, "metric", static_cast<uint8_t>(irs::VectorMetric::L2Sqr));
-            obj.WriteProperty<uint8_t>(
-              5, "quant", static_cast<uint8_t>(irs::VectorQuantization::None));
-            obj.WriteProperty<uint32_t>(6, "ef_construction", 64);
-            obj.WriteProperty<uint32_t>(7, "record_size", 0);
-            obj.WriteProperty<uint64_t>(8, "rows", 1);
-            obj.WriteProperty<bool>(9, "rotated", false);
-            obj.WriteObject(irs::kHnswMetaGraphCompression, "graph_compression",
-                            [](duckdb::BinarySerializer& graph) {
-                              for (const auto& [field, tag] :
-                                   {std::pair{irs::kHnswGraphLevels, "levels"},
-                                    std::pair{irs::kHnswGraphBase, "base"},
-                                    std::pair{irs::kHnswGraphUpper, "upper"}}) {
-                                graph.WriteObject(
-                                  field, tag,
-                                  [](duckdb::BinarySerializer& frames) {
-                                    irs::compression::WriteFrames(
-                                      frames, irs::compression::Frames{});
-                                  });
-                              }
-                            });
+    sizes.footer = irs::format_utils::WriteFooter(
+      *out, [](duckdb::BinarySerializer& footer) {
+        footer.WriteList(
+          irs::kIdxFieldHnsw, "hnsw", 1,
+          [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+            list.WriteObject([](duckdb::BinarySerializer& obj) {
+              obj.WriteProperty<uint64_t>(0, "id", kVec);
+              obj.WriteProperty<uint64_t>(1, "offset", 0);
+              obj.WriteProperty<uint32_t>(3, "d", kDim);
+              obj.WriteProperty<uint8_t>(
+                4, "metric", static_cast<uint8_t>(irs::VectorMetric::L2Sqr));
+              obj.WriteProperty<uint8_t>(
+                5, "quant",
+                static_cast<uint8_t>(irs::VectorQuantization::None));
+              obj.WriteProperty<uint32_t>(6, "ef_construction", 64);
+              obj.WriteProperty<uint32_t>(7, "record_size", 0);
+              obj.WriteProperty<uint64_t>(8, "rows", 1);
+              obj.WriteProperty<bool>(9, "rotated", false);
+              obj.WriteObject(
+                irs::kHnswMetaGraphCompression, "graph_compression",
+                [](duckdb::BinarySerializer& graph) {
+                  for (const auto& [field, tag] :
+                       {std::pair{irs::kHnswGraphLevels, "levels"},
+                        std::pair{irs::kHnswGraphBase, "base"},
+                        std::pair{irs::kHnswGraphUpper, "upper"}}) {
+                    graph.WriteObject(field, tag,
+                                      [](duckdb::BinarySerializer& frames) {
+                                        irs::compression::WriteFrames(
+                                          frames, irs::compression::Frames{});
+                                      });
+                  }
+                });
+            });
           });
-        });
-    });
+      });
+    sizes.file = out->Position();
     out->Close();
   }
   ASSERT_SQL_ERROR(
-    (irs::IdxReader{dir.Fs(), dir.Root(), kSegment, true, nullptr}),
+    (irs::IdxReader{dir.Fs(), dir.Root(), kSegment, sizes, nullptr}),
     ERRCODE_DATA_CORRUPTED);
 }
 

@@ -350,30 +350,30 @@ bool ColWriter::Commit(uint64_t target_row,
   for (auto& entry : _columns) {
     footer.columns.push_back(std::move(entry.meta));
   }
-  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& out) {
-    out.WriteOptionalList(
-      kColFieldColumns, "columns", footer.columns.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          SerializeColumnMeta(obj, footer.columns[i]);
+  const auto footer_len =
+    format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& out) {
+      out.WriteOptionalList(
+        kColFieldColumns, "columns", footer.columns.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeColumnMeta(obj, footer.columns[i]);
+          });
         });
-      });
-    out.WriteOptionalList(
-      kColFieldNormColumns, "norm_columns", footer.norms.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          SerializeNormColumn(obj, footer.norms[i]);
+      out.WriteOptionalList(
+        kColFieldNormColumns, "norm_columns", footer.norms.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeNormColumn(obj, footer.norms[i]);
+          });
         });
-      });
-    out.WriteOptionalList(
-      kColFieldRowGroupStarts, "row_group_starts",
-      footer.row_group_starts.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        list.WriteElement(footer.row_group_starts[i]);
-      });
-  });
-  _tracker.Written(_out->Position());
-  auto file = format_utils::CloseOutput(*_out);
+      out.WriteOptionalList(
+        kColFieldRowGroupStarts, "row_group_starts",
+        footer.row_group_starts.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteElement(footer.row_group_starts[i]);
+        });
+    });
+  auto file = format_utils::CloseOutput(*_out, _tracker, kColFile, footer_len);
   _out.reset();
   _reader =
     std::make_unique<ColReader>(*_db, std::move(file), std::move(footer));

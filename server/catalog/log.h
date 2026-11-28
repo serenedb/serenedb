@@ -136,7 +136,6 @@ class Log {
 
   static std::string ChunkName(uint64_t number);
   static bool Exists(duckdb::FileSystem& fs, const std::string& dir);
-  static bool IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir);
   static void Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply);
   static void Move(duckdb::FileSystem& fs, const std::string& from,
                    const std::string& to);

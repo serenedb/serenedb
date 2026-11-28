@@ -37,6 +37,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 
 namespace irs {
@@ -83,9 +84,13 @@ class FileTracker : private util::Noncopyable {
   std::string_view Name() const noexcept { return _name; }
   uint8_t Kinds() const noexcept { return _kinds; }
   uint64_t Bytes() const noexcept { return _bytes; }
+  const SegmentFileSizes& Files() const noexcept { return _files; }
 
   void Add(uint8_t kind) noexcept { _kinds |= kind; }
-  void Written(uint64_t bytes) noexcept { _bytes += bytes; }
+  void Closed(uint8_t kind, FileSizes sizes) noexcept {
+    _files[KindIndex(kind)] = sizes;
+    _bytes += sizes.file;
+  }
   void Remove() noexcept;
 
  private:
@@ -93,6 +98,7 @@ class FileTracker : private util::Noncopyable {
   std::string _root;
   std::string _name;
   std::shared_ptr<ReleasedSegments> _released;
+  SegmentFileSizes _files;
   uint64_t _bytes = 0;
   uint8_t _kinds = 0;
 };

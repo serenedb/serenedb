@@ -30,7 +30,8 @@
 
 namespace sdb::catalog {
 
-inline constexpr std::string_view kEngineDir = "engine_v1";
+inline constexpr std::string_view kEngineDir = "engine_v2";
+inline constexpr std::string_view kEarlierEngineDir = "engine_v1";
 inline constexpr std::string_view kStoreDir = "store";
 
 duckdb::FileSystem& StorageFileSystem();

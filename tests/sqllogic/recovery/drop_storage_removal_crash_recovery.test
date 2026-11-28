@@ -35,7 +35,7 @@ CREATE MACRO dsr_stored(object) AS (
 
 statement ok
 CREATE MACRO dsr_leftover() AS (
-  (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+  (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*'))
   - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files'));
 
 

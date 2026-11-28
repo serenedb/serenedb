@@ -1123,6 +1123,7 @@ TEST_F(ColNumericCodecTest, FrameHeadersWithImpossibleWidthsAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     {
       tests::IndexDir dir{Db(), path.string()};
       Write(dir, c.type, {.tier = irs::WriteTier::Flush}, 4096, 4096, c.gen,
@@ -1134,6 +1135,7 @@ TEST_F(ColNumericCodecTest, FrameHeadersWithImpossibleWidthsAreRejected) {
       ASSERT_EQ(block.codec->type, c.codec);
       offset = block.file_offset;
       size = block.byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
     }
     const auto file = path / irs::FileName(kSeg);
     std::string bytes;
@@ -1151,6 +1153,7 @@ TEST_F(ColNumericCodecTest, FrameHeadersWithImpossibleWidthsAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -1172,6 +1175,7 @@ TEST_F(ColNumericCodecTest,
   };
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::FileSizes sizes;
   {
     tests::IndexDir dir{Db(), path.string()};
     Write(dir, duckdb::LogicalType::INTEGER, {.tier = irs::WriteTier::Flush},
@@ -1183,6 +1187,7 @@ TEST_F(ColNumericCodecTest,
     ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Lz4);
     offset = block.file_offset;
     size = block.byte_size;
+    sizes = dir.Sizes(kSeg, irs::kColFile);
   }
   const auto file = path / irs::FileName(kSeg);
   std::string bytes;
@@ -1203,6 +1208,7 @@ TEST_F(ColNumericCodecTest,
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   tests::IndexDir dir{Db(), path.string()};
+  dir.Adopt(kSeg, irs::kColFile, sizes);
   const auto scan = [&] {
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
@@ -1239,6 +1245,7 @@ TEST_F(ColNumericCodecTest, FrameHeadersOfBitPackedFloatsAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     {
       tests::IndexDir dir{Db(), path.string()};
       Write(dir, duckdb::LogicalType::FLOAT, {.tier = irs::WriteTier::Flush},
@@ -1250,6 +1257,7 @@ TEST_F(ColNumericCodecTest, FrameHeadersOfBitPackedFloatsAreRejected) {
       ASSERT_EQ(block.codec->type, codec);
       offset = block.file_offset;
       size = block.byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
     }
     const auto file = path / irs::FileName(kSeg);
     std::string bytes;
@@ -1272,6 +1280,7 @@ TEST_F(ColNumericCodecTest, FrameHeadersOfBitPackedFloatsAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -1291,6 +1300,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   });
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::FileSizes sizes;
   uint64_t rows = 0;
   irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
@@ -1304,6 +1314,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
     ASSERT_TRUE(irs::codecs::IsNumeric(block.codec->type));
     offset = block.file_offset;
     size = block.byte_size;
+    sizes = dir.Sizes(kSeg, irs::kColFile);
     rows = block.tuple_count;
     block_codec = block.codec->type;
   }
@@ -1325,6 +1336,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   tests::IndexDir dir{Db(), path.string()};
+  dir.Adopt(kSeg, irs::kColFile, sizes);
   const auto scan = [&] {
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
@@ -1343,6 +1355,7 @@ TEST_F(ColNumericCodecTest, DictBitpackingBaseBeyondTheDictionaryIsRejected) {
   });
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::FileSizes sizes;
   uint64_t rows = 0;
   irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
@@ -1356,6 +1369,7 @@ TEST_F(ColNumericCodecTest, DictBitpackingBaseBeyondTheDictionaryIsRejected) {
     ASSERT_TRUE(irs::codecs::IsNumeric(block.codec->type));
     offset = block.file_offset;
     size = block.byte_size;
+    sizes = dir.Sizes(kSeg, irs::kColFile);
     rows = block.tuple_count;
     block_codec = block.codec->type;
   }
@@ -1387,6 +1401,7 @@ TEST_F(ColNumericCodecTest, DictBitpackingBaseBeyondTheDictionaryIsRejected) {
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   tests::IndexDir dir{Db(), path.string()};
+  dir.Adopt(kSeg, irs::kColFile, sizes);
   const auto scan = [&] {
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
@@ -3935,6 +3950,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   };
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::FileSizes sizes;
   uint64_t rows = 0;
   irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
@@ -3948,6 +3964,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
     ASSERT_TRUE(irs::codecs::IsNumeric(block.codec->type));
     offset = block.file_offset;
     size = block.byte_size;
+    sizes = dir.Sizes(kSeg, irs::kColFile);
     rows = block.tuple_count;
     block_codec = block.codec->type;
   }
@@ -3969,6 +3986,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   tests::IndexDir dir{Db(), path.string()};
+  dir.Adopt(kSeg, irs::kColFile, sizes);
   const auto scan = [&] {
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
@@ -4220,6 +4238,7 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     CodecType block_codec = CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4235,6 +4254,7 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
       const auto& block = col->DataBlocks().front();
       offset = block.file_offset;
       size = block.byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = block.codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4256,6 +4276,7 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto read = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4328,6 +4349,7 @@ TEST_F(ColNumericCodecTest, SegmentsWithOffsetsOutsideTheirBytesAreRejected) {
     constexpr uint64_t kRows = 4096;
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     {
       tests::IndexDir dir{Db(), path.string()};
       Write(dir, c.type, {.tier = irs::WriteTier::Flush}, kRows, kRows, c.gen,
@@ -4341,6 +4363,7 @@ TEST_F(ColNumericCodecTest, SegmentsWithOffsetsOutsideTheirBytesAreRejected) {
       ASSERT_EQ(block.codec->type, c.codec);
       offset = block.file_offset;
       size = block.byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
     }
     const auto file = path / irs::FileName(kSeg);
     std::string bytes;
@@ -4356,6 +4379,7 @@ TEST_F(ColNumericCodecTest, SegmentsWithOffsetsOutsideTheirBytesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);

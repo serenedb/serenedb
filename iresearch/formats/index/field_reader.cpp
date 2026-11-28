@@ -53,11 +53,7 @@ void FieldReader::prepare(const ReaderState& state) {
     _store.Account(SeparatorBytes(separators));
   }
 
-  IndexFeatures features = IndexFeatures::None;
-  for (const auto& head : heads) {
-    features |= head.features;
-  }
-  _pr.prepare(state, features);
+  _pr.prepare(state);
 
   _by_id.reserve(heads.size());
   _dicts.reserve(heads.size());

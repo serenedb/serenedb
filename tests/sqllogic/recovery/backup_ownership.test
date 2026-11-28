@@ -37,7 +37,7 @@ HINT: Did you call pg_backup_start()?
 
 connection other
 query
-SELECT count(*) > 0 AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+SELECT count(*) > 0 AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/backup/*');
 ----
 active
 t
@@ -51,7 +51,7 @@ WHERE query LIKE '%pg_backup_start(''again'')%' AND pid <> pg_backend_pid();
 
 connection other
 query ok retry 40 backoff 250ms
-SELECT count(*) AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+SELECT count(*) AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/backup/*');
 ----
 active
 0
@@ -153,7 +153,7 @@ HINT: Did you call pg_backup_start()?
 
 connection other
 query
-SELECT count(*) AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+SELECT count(*) AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/backup/*');
 ----
 active
 0

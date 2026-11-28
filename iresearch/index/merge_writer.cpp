@@ -883,6 +883,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     if (!result) [[unlikely]] {
       tracker->Remove();
       segment.kinds = 0;
+      segment.files = {};
       static_cast<SegmentInfo&>(segment) = SegmentInfo{};
     }
   };
@@ -991,7 +992,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
   segment.byte_size = tracker->Bytes();
   segment.kinds = tracker->Kinds();
-  SDB_ASSERT(segment.kinds != 0);
+  segment.files = tracker->Files();
   result = true;
   co_return tracker;
 }
@@ -1044,15 +1045,13 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
   }
   segment.byte_size += fields->Bytes();
   auto postings = field_writer.TakePostings();
-  fields->Open(
-    ReaderState{
-      .db = _db,
-      .fs = _fs,
-      .root = _root,
-      .meta = segment,
-      .postings = postings.doc ? &postings : nullptr,
-    },
-    field_writer.Features());
+  fields->Open(ReaderState{
+    .db = _db,
+    .fs = _fs,
+    .root = _root,
+    .meta = segment,
+    .postings = &postings,
+  });
   return SegmentReaderImpl::OpenPiece(
     segment, id,
     std::make_unique<ColReader>(_db, std::move(columns), std::move(col_file),

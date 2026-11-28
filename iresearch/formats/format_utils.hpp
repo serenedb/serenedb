@@ -33,7 +33,7 @@
 
 namespace irs::format_utils {
 
-inline constexpr uint64_t kTrailerLen = 2 * sizeof(uint32_t);
+inline constexpr uint64_t kFooterCrcLen = sizeof(uint32_t);
 
 inline constexpr duckdb::field_id_t kMetaFieldPacked =
   duckdb::MESSAGE_TERMINATOR_FIELD_ID - 1;
@@ -47,23 +47,64 @@ using FooterWriter = absl::FunctionRef<void(duckdb::BinarySerializer&)>;
 using FooterReader =
   absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)>;
 
-void WriteFooter(duckdb::BufferedFileWriter& out);
+uint32_t WriteFooter(duckdb::BufferedFileWriter& out);
 
-void WriteFooter(duckdb::BufferedFileWriter& out, FooterWriter write);
-
-Footer ReadFooter(const duckdb::InputFile& file, std::string_view name);
+uint32_t WriteFooter(duckdb::BufferedFileWriter& out, FooterWriter write);
 
 Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
-                  FooterReader read);
+                  FileSizes sizes);
+
+Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
+                  FileSizes sizes, FooterReader read);
+
+duckdb::shared_ptr<duckdb::InputFile> EmptyInput(
+  duckdb::DatabaseInstance& db, std::string path,
+  const duckdb::InputFile* sibling);
 
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,
                                                        std::string_view name);
 
-std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
-  const FlushState& state, std::string_view ext, uint8_t kind);
+std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(FileTracker& tracker,
+                                                          std::string_view ext,
+                                                          uint8_t kind);
 
 duckdb::shared_ptr<duckdb::InputFile> CloseOutput(
   duckdb::BufferedFileWriter& out);
+
+duckdb::shared_ptr<duckdb::InputFile> CloseOutput(
+  duckdb::BufferedFileWriter& out, FileTracker& tracker, uint8_t kind,
+  uint32_t footer);
+
+class LazyOutput {
+ public:
+  LazyOutput(std::string_view ext, uint8_t kind) noexcept
+    : _ext{ext}, _kind{kind} {}
+
+  void Prepare(FileTracker& tracker) noexcept {
+    SDB_ASSERT(!_out);
+    _tracker = &tracker;
+  }
+
+  bool Opened() const noexcept { return _out != nullptr; }
+  uint64_t Position() const noexcept { return _out ? _out->Position() : 0; }
+
+  duckdb::BufferedFileWriter& Get() {
+    if (!_out) [[unlikely]] {
+      Open();
+    }
+    return *_out;
+  }
+
+  duckdb::shared_ptr<duckdb::InputFile> Close(uint32_t footer);
+
+ private:
+  void Open();
+
+  std::string_view _ext;
+  uint8_t _kind;
+  FileTracker* _tracker = nullptr;
+  std::unique_ptr<duckdb::BufferedFileWriter> _out;
+};
 
 }  // namespace irs::format_utils

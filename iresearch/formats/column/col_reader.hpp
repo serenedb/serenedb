@@ -38,6 +38,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -62,8 +63,8 @@ struct ColFooter {
 class ColReader final {
  public:
   ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
-            std::string_view root, std::string_view segment_name, bool present,
-            duckdb::MappedFileAccess access);
+            std::string_view root, std::string_view segment_name,
+            FileSizes sizes, duckdb::MappedFileAccess access);
   ColReader(duckdb::DatabaseInstance& db,
             duckdb::shared_ptr<duckdb::InputFile> file, ColFooter footer);
   ColReader(duckdb::DatabaseInstance& db,

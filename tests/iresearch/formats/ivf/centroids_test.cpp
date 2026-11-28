@@ -465,8 +465,12 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   ::tests::IndexDir dir{*db.instance, TestEnv::MemoryRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir.Db(), dir.Fs(), dir.Root(),
-              "seg",    true,     duckdb::MappedFileAccess::SEQUENTIAL};
+  ColReader r{dir.Db(),
+              dir.Fs(),
+              dir.Root(),
+              "seg",
+              dir.Sizes("seg", kColFile),
+              duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 
@@ -488,8 +492,12 @@ TEST(centroids_builder_test,
   ::tests::IndexDir dir{*db.instance, TestEnv::MemoryRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir.Db(), dir.Fs(), dir.Root(),
-              "seg",    true,     duckdb::MappedFileAccess::SEQUENTIAL};
+  ColReader r{dir.Db(),
+              dir.Fs(),
+              dir.Root(),
+              "seg",
+              dir.Sizes("seg", kColFile),
+              duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 

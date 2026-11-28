@@ -10,7 +10,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE MACRO reuse_unowned() AS (
-  (SELECT count(*) FROM glob('${__TEST_DIR__}/reuse/*/engine_v1/store/*'))
+  (SELECT count(*) FROM glob('${__TEST_DIR__}/reuse/*/engine_v2/store/*'))
   - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files'));
 
 statement ok

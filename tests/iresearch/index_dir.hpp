@@ -78,6 +78,10 @@ class IndexDir {
     return _state->segments->released;
   }
   irs::FileTracker& Tracker(std::string_view segment) const;
+  irs::FileSizes Sizes(std::string_view segment, uint8_t kind) const;
+  irs::SegmentMeta Meta(std::string_view segment) const;
+  void Adopt(std::string_view segment, uint8_t kind,
+             irs::FileSizes sizes) const;
   std::shared_ptr<const irs::FileTracker> Files(
     const irs::SegmentMeta& meta) const;
 

@@ -76,17 +76,17 @@ db error: ERROR: tablespace location "<slt:ignore>/loc/base" is already used by 
 system ok
 ls $__TEST_DIR__/loc/base/*
 ----
-engine_v1
+engine_v2
 
 
 statement error
-CREATE TABLESPACE loc_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/x/../engine_v1/deeper';
+CREATE TABLESPACE loc_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/x/../engine_v2/deeper';
 ----
-db error: ERROR: tablespace location "<slt:ignore>/loc/base/engine_v1/deeper" is inside the files of a tablespace
+db error: ERROR: tablespace location "<slt:ignore>/loc/base/engine_v2/deeper" is inside the files of a tablespace
 
 
 statement error
-CREATE TABLESPACE loc_files_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc_files/engine_v1/deeper';
+CREATE TABLESPACE loc_files_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc_files/engine_v2/deeper';
 ----
 db error: ERROR: tablespace location "<slt:ignore>" is inside the files of a tablespace
 
@@ -102,16 +102,16 @@ normalized
 t
 
 statement error
-CREATE TABLESPACE loc_backslash_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/backslash/sub/engine_v1\deeper';
+CREATE TABLESPACE loc_backslash_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/backslash/sub/engine_v2\deeper';
 ----
-db error: ERROR: tablespace location "<slt:ignore>/backslash/sub/engine_v1/deeper" is inside the files of a tablespace
+db error: ERROR: tablespace location "<slt:ignore>/backslash/sub/engine_v2/deeper" is inside the files of a tablespace
 
 
 system ok
 cd $__TEST_DIR__/backslash && ls && ls sub/*
 ----
 sub
-engine_v1
+engine_v2
 
 
 statement ok
@@ -121,7 +121,7 @@ statement ok
 CREATE TABLESPACE loc_parent_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc';
 
 statement ok
-CREATE TABLESPACE loc_beside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/engine_v1x';
+CREATE TABLESPACE loc_beside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/engine_v2x';
 
 statement ok
 CREATE TABLESPACE loc_a_${__DATABASE__} LOCATION '${__TEST_DIR__}/prefix/a';
@@ -140,7 +140,7 @@ ORDER BY spcname;
 tablespace	location
 loc_a	<dir>/prefix/a
 loc_ab	<dir>/prefix/ab
-loc_beside	<dir>/loc/base/engine_v1x
+loc_beside	<dir>/loc/base/engine_v2x
 loc_child	<dir>/loc/base/child
 loc_norm	<dir>/loc/base
 loc_parent	<dir>/loc
@@ -174,9 +174,9 @@ id	body
 2	child row
 
 query
-SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/*/engine_v1/store/*')) AS parent_files,
-       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/*/engine_v1/store/*')) AS child_files,
-       (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/*/engine_v1/**')) AS base_files;
+SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/*/engine_v2/store/*')) AS parent_files,
+       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/*/engine_v2/store/*')) AS child_files,
+       (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/*/engine_v2/**')) AS base_files;
 ----
 parent_files	child_files	base_files
 t	t	0
@@ -197,7 +197,7 @@ db error: ERROR: Failed to create directory "<slt:ignore>": File exists
 
 
 system ok
-mkdir -p $__TEST_DIR__/stray/engine_v1/other && touch $__TEST_DIR__/stray/engine_v1/other/kept
+mkdir -p $__TEST_DIR__/stray/engine_v2/other && touch $__TEST_DIR__/stray/engine_v2/other/kept
 
 statement ok
 CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
@@ -223,7 +223,7 @@ INSERT INTO in_lost VALUES (1, 'lost row');
 statement error
 VACUUM (FLUSH_TABLE) in_lost;
 ----
-db error: ERROR: Cannot open file "<slt:ignore>/lost/<slt:ignore>/engine_v1/store/<slt:ignore>": No such file or directory
+db error: ERROR: Cannot open file "<slt:ignore>/lost/<slt:ignore>/engine_v2/store/<slt:ignore>": No such file or directory
 
 
 query
@@ -239,7 +239,7 @@ statement ok
 DROP TABLESPACE loc_lost_${__DATABASE__};
 
 query ok retry 240 backoff 250ms
-SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/lost/*/engine_v1/**')) AS lost_files;
+SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/lost/*/engine_v2/**')) AS lost_files;
 ----
 lost_files
 0
@@ -289,7 +289,7 @@ body
 stored under a unicode path
 
 query
-SELECT count(*) > 0 AS stored FROM glob('${__TEST_DIR__}/names/with space/ünïcode/*/engine_v1/store/*');
+SELECT count(*) > 0 AS stored FROM glob('${__TEST_DIR__}/names/with space/ünïcode/*/engine_v2/store/*');
 ----
 stored
 t
@@ -338,7 +338,7 @@ statement ok
 DROP TABLESPACE loc_stray_${__DATABASE__};
 
 system ok
-cd $__TEST_DIR__/stray/engine_v1 && find other
+cd $__TEST_DIR__/stray/engine_v2 && find other
 ----
 other
 other/kept

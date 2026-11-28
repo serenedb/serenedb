@@ -199,7 +199,7 @@ tables
 
 connection after_orphan
 query
-SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/half/*/engine_v1/**');
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/half/*/engine_v2/**');
 ----
 files_left
 0

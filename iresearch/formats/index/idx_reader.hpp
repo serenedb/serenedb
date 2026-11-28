@@ -31,6 +31,7 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
@@ -102,7 +103,8 @@ struct IdxFooter {
 class IdxReader final {
  public:
   IdxReader(duckdb::FileSystem& fs, std::string_view root,
-            std::string_view segment_name, bool present, HnswBases* hnsw_bases);
+            std::string_view segment_name, FileSizes sizes,
+            HnswBases* hnsw_bases);
   IdxReader(duckdb::shared_ptr<duckdb::InputFile> file, IdxFooter footer,
             HnswBases* hnsw_bases);
   ~IdxReader();

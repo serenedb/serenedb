@@ -41,8 +41,7 @@ namespace sdb::search {
 class TableReplay {
  public:
   struct Segment {
-    uint8_t kinds = 0;
-    irs::doc_id_t rows = 0;
+    LoggedSegment logged;
     irs::DocumentMaskBuilder deleted;
     std::vector<irs::FieldPatch> patches;
     OwnSegment opened;

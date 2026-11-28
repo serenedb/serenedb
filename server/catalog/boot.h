@@ -45,6 +45,7 @@ struct DataDirectory {
   explicit DataDirectory(std::string directory);
 
   bool InMemory() const noexcept { return directory.empty(); }
+  bool EarlierLayout(duckdb::FileSystem& fs) const;
   std::string LogDir() const;
   std::string StoreDir() const;
 

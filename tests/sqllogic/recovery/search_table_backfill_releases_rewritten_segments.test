@@ -78,7 +78,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE brs_dir = '${SDB_DATADIR}/engine_v1/store/*.col';
+SET VARIABLE brs_dir = '${SDB_DATADIR}/engine_v2/store/*.col';
 
 
 statement ok

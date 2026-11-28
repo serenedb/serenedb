@@ -434,7 +434,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                  " keeps rows in memory or deletes after settling");
       absl::c_for_each(irs::SegmentFiles(unit->meta.name, unit->meta.kinds),
                        add);
-      irs::AppendSegmentList(segments, unit->id, unit->meta.kinds, unit->docs);
+      irs::AppendSegmentList(segments, unit->id, unit->meta, unit->docs);
     }
     image.push_back(
       {.name = std::string{kSegmentsFile}, .bytes = std::move(segments)});

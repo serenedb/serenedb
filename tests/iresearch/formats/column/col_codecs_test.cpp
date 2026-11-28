@@ -3863,6 +3863,7 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   };
   uint64_t offset = 0;
   uint64_t size = 0;
+  irs::FileSizes sizes;
   irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
     tests::IndexDir dir{Db(), path.string()};
@@ -3873,6 +3874,7 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
     ASSERT_FALSE(col->DataBlocks().empty());
     offset = col->DataBlocks().front().file_offset;
     size = col->DataBlocks().front().byte_size;
+    sizes = dir.Sizes(kSeg, irs::kColFile);
     block_codec = col->DataBlocks().front().codec->type;
   }
   const auto file = path / irs::FileName(kSeg);
@@ -3902,6 +3904,7 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   tests::IndexDir dir{Db(), path.string()};
+  dir.Adopt(kSeg, irs::kColFile, sizes);
   const auto scan = [&] {
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
@@ -3942,6 +3945,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -3951,6 +3955,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
       size = col->DataBlocks().front().byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -3969,6 +3974,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4013,6 +4019,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4023,6 +4030,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
       size = col->DataBlocks().front().byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4042,6 +4050,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4051,7 +4060,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
     };
     const auto fetch = [&] {
       irs::ColReader r{Db(), dir.Fs(), dir.Root(),
-                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
+                       kSeg, sizes,    duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -4099,6 +4108,7 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4109,6 +4119,7 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
       size = col->DataBlocks().front().byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4130,6 +4141,7 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4139,7 +4151,7 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
     };
     const auto fetch = [&] {
       irs::ColReader r{Db(), dir.Fs(), dir.Root(),
-                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
+                       kSeg, sizes,    duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -4195,6 +4207,7 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4205,6 +4218,7 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
       size = col->DataBlocks().front().byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4224,6 +4238,7 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4233,7 +4248,7 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
     };
     const auto fetch = [&] {
       irs::ColReader r{Db(), dir.Fs(), dir.Root(),
-                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
+                       kSeg, sizes,    duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -4352,6 +4367,7 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4362,6 +4378,7 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().shared_offset;
       size = col->DataBlocks().front().shared_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4379,6 +4396,7 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4388,7 +4406,7 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
     };
     const auto fetch = [&] {
       irs::ColReader r{Db(), dir.Fs(), dir.Root(),
-                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
+                       kSeg, sizes,    duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -4416,6 +4434,7 @@ TEST_F(ColCodecsTest, CorruptedFrameRangesAreRejectedByPointReads) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4428,6 +4447,7 @@ TEST_F(ColCodecsTest, CorruptedFrameRangesAreRejectedByPointReads) {
                 magic_enum::enum_name(codec));
       offset = block.file_offset;
       size = block.byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = block.codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4452,9 +4472,10 @@ TEST_F(ColCodecsTest, CorruptedFrameRangesAreRejectedByPointReads) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto fetch = [&] {
       irs::ColReader r{Db(), dir.Fs(), dir.Root(),
-                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
+                       kSeg, sizes,    duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -4492,6 +4513,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4501,6 +4523,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
       size = col->DataBlocks().front().byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4519,6 +4542,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto fetch = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4682,6 +4706,7 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
       tests::IndexDir dir{Db(), path.string()};
@@ -4692,6 +4717,7 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
       size = col->DataBlocks().front().byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -4717,6 +4743,7 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     const auto scan = [&] {
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
@@ -4838,6 +4865,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     {
       tests::IndexDir dir{Db(), path.string()};
       irs::ColWriter w{Db(), dir.Tracker(kSeg)};
@@ -4864,6 +4892,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
                 magic_enum::enum_name(c.codec));
       offset = block.file_offset;
       size = block.byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
     }
     const auto file = path / irs::FileName(kSeg);
     std::string bytes;
@@ -4879,6 +4908,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -4952,6 +4982,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
     std::filesystem::create_directories(path);
     uint64_t offset = 0;
     uint64_t size = 0;
+    irs::FileSizes sizes;
     {
       tests::IndexDir dir{Db(), path.string()};
       irs::ColWriter w{Db(), dir.Tracker(kSeg)};
@@ -4974,6 +5005,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
                 magic_enum::enum_name(c.codec));
       offset = block.file_offset;
       size = block.byte_size;
+      sizes = dir.Sizes(kSeg, irs::kColFile);
     }
     const auto file = path / irs::FileName(kSeg);
     std::string bytes;
@@ -4988,6 +5020,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, sizes);
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);

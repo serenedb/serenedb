@@ -120,6 +120,33 @@ irs::FileTracker& IndexDir::Tracker(std::string_view segment) const {
   return *tracker;
 }
 
+irs::FileSizes IndexDir::Sizes(std::string_view segment, uint8_t kind) const {
+  return irs::SizesOf(Meta(segment), kind);
+}
+
+irs::SegmentMeta IndexDir::Meta(std::string_view segment) const {
+  const auto& tracker = Tracker(segment);
+  if (tracker.Kinds() == 0) {
+    for (auto& meta : Committed()) {
+      if (meta.name == segment) {
+        return meta;
+      }
+    }
+  }
+  irs::SegmentMeta meta;
+  meta.name = segment;
+  meta.kinds = tracker.Kinds();
+  meta.files = tracker.Files();
+  return meta;
+}
+
+void IndexDir::Adopt(std::string_view segment, uint8_t kind,
+                     irs::FileSizes sizes) const {
+  auto& tracker = Tracker(segment);
+  tracker.Add(kind);
+  tracker.Closed(kind, sizes);
+}
+
 std::shared_ptr<const irs::FileTracker> IndexDir::Files(
   const irs::SegmentMeta& meta) const {
   absl::MutexLock lock{&_state->segments->mutex};

@@ -2655,8 +2655,12 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   }
 
   ScriptedFileSystem fs{mem.Fs()};
-  irs::ColReader r{Db(),  fs,   mem.Root(),
-                   "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
+  irs::ColReader r{Db(),
+                   fs,
+                   mem.Root(),
+                   "seg",
+                   mem.Sizes("seg", irs::kColFile),
+                   duckdb::MappedFileAccess::SEQUENTIAL};
   ASSERT_NE(fs.mapped, nullptr);
   auto& prefetched = fs.mapped->prefetched;
   const auto& col = *r.Column(kS);
@@ -2707,8 +2711,12 @@ TEST_F(ColumnReaderTest, ReadsPrefetchTheSharedBlockOfTheirRowGroup) {
   }
 
   ScriptedFileSystem fs{mem.Fs()};
-  irs::ColReader r{Db(),  fs,   mem.Root(),
-                   "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
+  irs::ColReader r{Db(),
+                   fs,
+                   mem.Root(),
+                   "seg",
+                   mem.Sizes("seg", irs::kColFile),
+                   duckdb::MappedFileAccess::SEQUENTIAL};
   ASSERT_NE(fs.mapped, nullptr);
   auto& prefetched = fs.mapped->prefetched;
   const auto& col = *r.Column(kS);
@@ -2789,8 +2797,12 @@ TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
   }
 
   ScriptedFileSystem fs{mem.Fs()};
-  irs::ColReader r{Db(),  fs,   mem.Root(),
-                   "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
+  irs::ColReader r{Db(),
+                   fs,
+                   mem.Root(),
+                   "seg",
+                   mem.Sizes("seg", irs::kColFile),
+                   duckdb::MappedFileAccess::SEQUENTIAL};
   ASSERT_NE(fs.mapped, nullptr);
   auto& mapping = *fs.mapped;
   ASSERT_TRUE(absl::c_any_of(r.Column(kRuns)->DataBlocks(),
@@ -2948,8 +2960,12 @@ TEST_F(ColumnReaderTest, ScansAskAboutABlockLargerThanARunInFull) {
   }
 
   ScriptedFileSystem fs{mem.Fs()};
-  irs::ColReader r{Db(),  fs,   mem.Root(),
-                   "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
+  irs::ColReader r{Db(),
+                   fs,
+                   mem.Root(),
+                   "seg",
+                   mem.Sizes("seg", irs::kColFile),
+                   duckdb::MappedFileAccess::SEQUENTIAL};
   ASSERT_NE(fs.mapped, nullptr);
   auto& mapping = *fs.mapped;
   const auto& col = *r.Column(kWide);
@@ -5260,7 +5276,8 @@ void OpenWithCorruptedFooter(duckdb::DatabaseInstance& db, const char* error,
   {
     const auto in = dir.Open(file, duckdb::MappedFileAccess::SEQUENTIAL);
     const auto stored = irs::format_utils::ReadFooter(
-      *in, file, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+      *in, file, dir.Sizes("fseg", irs::kColFile),
+      [&](duckdb::BinaryDeserializer& footer, uint64_t) {
         footer.Set<duckdb::DatabaseInstance&>(db);
         footer.ReadOptionalList(
           irs::kColFieldColumns, "columns",
@@ -5282,15 +5299,18 @@ void OpenWithCorruptedFooter(duckdb::DatabaseInstance& db, const char* error,
     auto out = dir.Create(file);
     out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
                    bytes.size());
-    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
-      footer.WriteList(
-        irs::kColFieldColumns, "columns", metas.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            irs::SerializeColumnMeta(obj, metas[i]);
+    const auto footer = irs::format_utils::WriteFooter(
+      *out, [&](duckdb::BinarySerializer& footer) {
+        footer.WriteList(
+          irs::kColFieldColumns, "columns", metas.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteObject([&](duckdb::BinarySerializer& obj) {
+              irs::SerializeColumnMeta(obj, metas[i]);
+            });
           });
-        });
-    });
+      });
+    dir.Adopt("fseg", irs::kColFile,
+              {.file = out->Position(), .footer = footer});
     out->Close();
   }
   try {
@@ -5344,7 +5364,8 @@ void FetchWithCorruptedFooter(duckdb::DatabaseInstance& db,
   {
     const auto in = dir.Open(file, duckdb::MappedFileAccess::SEQUENTIAL);
     const auto stored = irs::format_utils::ReadFooter(
-      *in, file, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+      *in, file, dir.Sizes("cseg", irs::kColFile),
+      [&](duckdb::BinaryDeserializer& footer, uint64_t) {
         footer.Set<duckdb::DatabaseInstance&>(db);
         footer.ReadOptionalList(
           irs::kColFieldColumns, "columns",
@@ -5369,15 +5390,18 @@ void FetchWithCorruptedFooter(duckdb::DatabaseInstance& db,
     auto out = dir.Create(file);
     out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
                    bytes.size());
-    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
-      footer.WriteList(
-        irs::kColFieldColumns, "columns", metas.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            irs::SerializeColumnMeta(obj, metas[i]);
+    const auto footer = irs::format_utils::WriteFooter(
+      *out, [&](duckdb::BinarySerializer& footer) {
+        footer.WriteList(
+          irs::kColFieldColumns, "columns", metas.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteObject([&](duckdb::BinarySerializer& obj) {
+              irs::SerializeColumnMeta(obj, metas[i]);
+            });
           });
-        });
-    });
+      });
+    dir.Adopt("cseg", irs::kColFile,
+              {.file = out->Position(), .footer = footer});
     out->Close();
   }
   irs::ColReader r = irs::tests::OpenColReader(dir, "cseg");
@@ -5483,27 +5507,30 @@ void OpenWithFooter(duckdb::DatabaseInstance& db, std::string_view error,
     const std::string data(kData, '\0');
     out->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
                    data.size());
-    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
-      footer.WriteOptionalList(
-        irs::kColFieldNormColumns, "norm_columns", norms.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            obj.WriteProperty(0, "id", static_cast<uint64_t>(norms[i].id));
-            obj.WriteList(
-              1, "regions", norms[i].meta.regions.size(),
-              [&](duckdb::BinarySerializer::List& regions, duckdb::idx_t k) {
-                regions.WriteObject([&](duckdb::BinarySerializer& region) {
-                  WriteNormRegion(region, norms[i].meta.regions[k]);
+    const auto footer = irs::format_utils::WriteFooter(
+      *out, [&](duckdb::BinarySerializer& footer) {
+        footer.WriteOptionalList(
+          irs::kColFieldNormColumns, "norm_columns", norms.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteObject([&](duckdb::BinarySerializer& obj) {
+              obj.WriteProperty(0, "id", static_cast<uint64_t>(norms[i].id));
+              obj.WriteList(
+                1, "regions", norms[i].meta.regions.size(),
+                [&](duckdb::BinarySerializer::List& regions, duckdb::idx_t k) {
+                  regions.WriteObject([&](duckdb::BinarySerializer& region) {
+                    WriteNormRegion(region, norms[i].meta.regions[k]);
+                  });
                 });
-              });
+            });
           });
-        });
-      footer.WriteOptionalList(
-        irs::kColFieldRowGroupStarts, "row_group_starts", starts.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteElement(starts[i]);
-        });
-    });
+        footer.WriteOptionalList(
+          irs::kColFieldRowGroupStarts, "row_group_starts", starts.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteElement(starts[i]);
+          });
+      });
+    dir.Adopt("nseg", irs::kColFile,
+              {.file = out->Position(), .footer = footer});
     out->Close();
   }
   if (error.empty()) {
@@ -8279,7 +8306,8 @@ std::string ReadWithCorruptedFooter(
   {
     const auto in = dir.Open(file, duckdb::MappedFileAccess::SEQUENTIAL);
     const auto stored = irs::format_utils::ReadFooter(
-      *in, file, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+      *in, file, dir.Sizes("fseg", irs::kColFile),
+      [&](duckdb::BinaryDeserializer& footer, uint64_t) {
         footer.Set<duckdb::DatabaseInstance&>(db);
         footer.ReadOptionalList(
           irs::kColFieldColumns, "columns",
@@ -8304,15 +8332,18 @@ std::string ReadWithCorruptedFooter(
     auto out = dir.Create(file);
     out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
                    bytes.size());
-    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
-      footer.WriteList(
-        irs::kColFieldColumns, "columns", metas.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            irs::SerializeColumnMeta(obj, metas[i]);
+    const auto footer = irs::format_utils::WriteFooter(
+      *out, [&](duckdb::BinarySerializer& footer) {
+        footer.WriteList(
+          irs::kColFieldColumns, "columns", metas.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteObject([&](duckdb::BinarySerializer& obj) {
+              irs::SerializeColumnMeta(obj, metas[i]);
+            });
           });
-        });
-    });
+      });
+    dir.Adopt("fseg", irs::kColFile,
+              {.file = out->Position(), .footer = footer});
     out->Close();
   }
   irs::ColReader r = irs::tests::OpenColReader(dir, "fseg");
@@ -8898,7 +8929,8 @@ std::vector<irs::ColumnMeta> ReadColumnMetas(duckdb::DatabaseInstance& db,
   std::vector<irs::ColumnMeta> metas;
   const auto in = dir.Open(file, duckdb::MappedFileAccess::SEQUENTIAL);
   irs::format_utils::ReadFooter(
-    *in, file, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+    *in, file, dir.Sizes(segment, irs::kColFile),
+    [&](duckdb::BinaryDeserializer& footer, uint64_t) {
       footer.Set<duckdb::DatabaseInstance&>(db);
       footer.ReadOptionalList(
         irs::kColFieldColumns, "columns",

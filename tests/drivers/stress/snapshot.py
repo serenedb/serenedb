@@ -158,13 +158,13 @@ def owned_files(conn):
 
 
 def scan_datadir(datadir, owned):
-    store = os.path.join(datadir, "engine_v1", "store")
+    store = os.path.join(datadir, "engine_v2", "store")
     if not os.path.isdir(store):
         return []
     files = sum(1 for entry in os.listdir(store) if SEGMENT_FILE.match(entry))
     if files == owned:
         return []
-    return [(os.path.join("engine_v1", "store"), files - owned)]
+    return [(os.path.join("engine_v2", "store"), files - owned)]
 
 
 def observed_states(snap):

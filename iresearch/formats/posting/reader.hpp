@@ -35,11 +35,15 @@
 namespace irs {
 
 inline duckdb::shared_ptr<duckdb::InputFile> PrepareInput(
-  const ReaderState& state, std::string_view ext) {
+  const ReaderState& state, std::string_view ext, uint8_t kind) {
+  const auto sizes = SizesOf(state.meta, kind);
+  if (sizes.file == 0) {
+    return nullptr;
+  }
   const auto name = irs::FileName(state.meta.name, ext);
   auto file = state.fs.OpenInputFile(state.fs.JoinPath(state.root, name),
                                      duckdb::MappedFileAccess::RANDOM);
-  format_utils::ReadFooter(*file, name);
+  format_utils::ReadFooter(*file, name, sizes);
   return file;
 }
 
@@ -52,8 +56,7 @@ class PostingsReader final {
       .doc = _doc_file.get(), .pos = _pos_file.get(), .pay = _pay_file.get()};
   }
 
-  // features - the set of features available for segment
-  void prepare(const ReaderState& state, IndexFeatures features);
+  void prepare(const ReaderState& state);
 
   static size_t decode(const byte_type* in, IndexFeatures field_features,
                        PostingMeta& state);
@@ -76,35 +79,22 @@ class PostingsReader final {
   duckdb::shared_ptr<duckdb::InputFile> _pay_file;
 };
 
-inline void PostingsReader::prepare(const ReaderState& state,
-                                    IndexFeatures features) {
-  const bool needs_pay =
-    IndexFeatures::None !=
-    (features & (IndexFeatures::Offs | IndexFeatures::Vec));
-
+inline void PostingsReader::prepare(const ReaderState& state) {
   if (state.postings) {
     _doc_file = std::move(state.postings->doc);
-    SDB_ASSERT(_doc_file);
-    if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-      _pos_file = std::move(state.postings->pos);
-      SDB_ASSERT(_pos_file);
-    }
-    if (needs_pay) {
-      _pay_file = std::move(state.postings->pay);
-      SDB_ASSERT(_pay_file);
-    }
-    return;
+    _pos_file = std::move(state.postings->pos);
+    _pay_file = std::move(state.postings->pay);
+  } else {
+    _doc_file = PrepareInput(state, PostingsWriter::kDocExt, kDocFile);
+    _pos_file = PrepareInput(state, PostingsWriter::kPosExt, kPosFile);
+    _pay_file = PrepareInput(state, PostingsWriter::kPayExt, kPayFile);
   }
-
-  // prepare document input
-  _doc_file = PrepareInput(state, PostingsWriter::kDocExt);
-
-  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    _pos_file = PrepareInput(state, PostingsWriter::kPosExt);
-  }
-
-  if (needs_pay) {
-    _pay_file = PrepareInput(state, PostingsWriter::kPayExt);
+  if (!_doc_file) {
+    _doc_file = format_utils::EmptyInput(
+      state.db,
+      state.fs.JoinPath(
+        state.root, irs::FileName(state.meta.name, PostingsWriter::kDocExt)),
+      _pos_file ? _pos_file.get() : _pay_file.get());
   }
 }
 

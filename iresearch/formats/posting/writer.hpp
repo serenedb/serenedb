@@ -201,9 +201,9 @@ class PostingsWriter final {
   }
 
   FieldStats EndField() {
-    if (IsSubsetOf(IndexFeatures::Vec, _features) && _term_pay) {
-      SDB_ASSERT(_pay_out);
-      _term_pay->Finish(*_pay_out);
+    if (IsSubsetOf(IndexFeatures::Vec, _features) && _term_pay &&
+        _term_pay->PendingLanes() != 0) {
+      _term_pay->Finish(_pay_out.Get());
     }
     const auto count = _docs.count(_docs_first_word, _docs_end_word);
     SDB_ASSERT(count < doc_limits::eof());
@@ -237,8 +237,8 @@ class PostingsWriter final {
   void FlushDocBlock(const PostingMeta& meta);
   void BeginDocInTerm(doc_id_t doc, uint32_t freq, PostingMeta& meta,
                       bool has_freq);
-  duckdb::shared_ptr<duckdb::InputFile> CloseOutput(
-    std::unique_ptr<duckdb::BufferedFileWriter>& out);
+  static duckdb::shared_ptr<duckdb::InputFile> CloseOutput(
+    format_utils::LazyOutput& out);
 
   uint32_t PosIndex() const noexcept {
     const auto index = _pos_group.Blocks() * pos_limits::kBlockSize + _pos.size;
@@ -248,10 +248,10 @@ class PostingsWriter final {
 
   void FlushGroups() {
     if (!_pos_group.Empty()) {
-      _pos_group.Flush(*_pos_out);
+      _pos_group.Flush(_pos_out.Get());
     }
     if (!_pay_group.Empty()) {
-      _pay_group.Flush(*_pay_out);
+      _pay_group.Flush(_pay_out.Get());
     }
   }
 
@@ -277,10 +277,9 @@ class PostingsWriter final {
   bitset _docs;             // Set of all processed documents
   size_t _docs_first_word = std::numeric_limits<size_t>::max();
   size_t _docs_end_word = 0;
-  FileTracker* _tracker = nullptr;
-  std::unique_ptr<duckdb::BufferedFileWriter> _doc_out;  // Postings (doc+freq)
-  std::unique_ptr<duckdb::BufferedFileWriter> _pos_out;  // Positions
-  std::unique_ptr<duckdb::BufferedFileWriter> _pay_out;  // Payload (pay+offs)
+  format_utils::LazyOutput _doc_out{kDocExt, kDocFile};  // Postings (doc+freq)
+  format_utils::LazyOutput _pos_out{kPosExt, kPosFile};  // Positions
+  format_utils::LazyOutput _pay_out{kPayExt, kPayFile};  // Payload (pay+offs)
   PostingsInputs _inputs;
   DocBuffer _doc;  // Document stream
   PosBuffer _pos;  // Proximity stream
@@ -312,20 +311,17 @@ inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
 }
 
 inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
-  SDB_ASSERT(_doc_out);
   uint64_t pos_group = 0;
   uint32_t pos_index = 0;
   uint64_t pay_group = 0;
   if (IsSubsetOf(IndexFeatures::Pos, _features)) {
-    SDB_ASSERT(_pos_out);
-    pos_group = _pos_out->Position() - meta.pos_start;
+    pos_group = _pos_out.Position() - meta.pos_start;
     pos_index = PosIndex();
     if (IsSubsetOf(IndexFeatures::Offs, _features)) {
-      SDB_ASSERT(_pay_out);
-      pay_group = _pay_out->Position() - meta.pay_start;
+      pay_group = _pay_out.Position() - meta.pay_start;
     }
   }
-  _index.Add(last, _doc_out->Position() - meta.doc_start, pos_group, pos_index,
+  _index.Add(last, _doc_out.Position() - meta.doc_start, pos_group, pos_index,
              pay_group);
   ApplyToWriter([&](auto& writer) {
     writer.Take(0, _index.AddBound());
@@ -336,34 +332,18 @@ inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
 }
 
 inline void PostingsWriter::Prepare(const FlushState& state) {
-  _tracker = &state.tracker;
   _inputs = {};
-
-  // Prepare document stream
-  SDB_ASSERT(!_doc_out);
-  _doc_out = format_utils::PrepareOutput(state, kDocExt, kDocFile);
+  _doc_out.Prepare(state.tracker);
+  _pos_out.Prepare(state.tracker);
+  _pay_out.Prepare(state.tracker);
 
   if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
-    // Prepare proximity stream
     _pos.Reset();
     _pos_group.Reset();
-    SDB_ASSERT(!_pos_out);
-    _pos_out = format_utils::PrepareOutput(state, kPosExt, kPosFile);
   }
-
-  // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
-  // fixed-width per-document payloads (IndexFeatures::Vec, e.g. IVF codes).
-  const bool has_offs =
-    IndexFeatures::None != (state.index_features & IndexFeatures::Offs);
-  const bool has_vec =
-    IndexFeatures::None != (state.index_features & IndexFeatures::Vec);
-  if (has_offs) {
+  if (IndexFeatures::None != (state.index_features & IndexFeatures::Offs)) {
     _pay.Reset();
     _pay_group.Reset();
-  }
-  if (has_offs || has_vec) {
-    SDB_ASSERT(!_pay_out);
-    _pay_out = format_utils::PrepareOutput(state, kPayExt, kPayFile);
   }
 
   _writer = PrepareScoreBoundWriter(state.scorer);
@@ -443,13 +423,11 @@ inline void PostingsWriter::Encode(duckdb::WriteStream& out,
 
 inline void PostingsWriter::BeginTerm(PostingMeta& meta) {
   _index.Reset();
-  meta.doc_start = _doc_out->Position();
+  meta.doc_start = _doc_out.Position();
   if (IsSubsetOf(IndexFeatures::Pos, _features)) {
-    SDB_ASSERT(_pos_out);
-    meta.pos_start = _pos_out->Position();
+    meta.pos_start = _pos_out.Position();
     if (IsSubsetOf(IndexFeatures::Offs, _features)) {
-      SDB_ASSERT(_pay_out);
-      meta.pay_start = _pay_out->Position();
+      meta.pay_start = _pay_out.Position();
     }
     meta.pos_offset = static_cast<uint16_t>(PosIndex());
   }
@@ -467,14 +445,15 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     MarkDocs(_doc.docs[0], _doc.docs[0]);
   } else if (!has_index) {
     UpdateBounds();
+    auto& doc_out = _doc_out.Get();
     ApplyToWriter([&](auto& writer) {
-      _doc_out->Write<byte_type>(writer.SizeRoot());
-      writer.WriteRoot(*_doc_out);
+      doc_out.Write<byte_type>(writer.SizeRoot());
+      writer.WriteRoot(doc_out);
     });
-    WriteDocBlock(*_doc_out);
+    WriteDocBlock(doc_out);
   } else {
     UpdateBounds();
-    WriteDocBlock(*_doc_out);
+    WriteDocBlock(_doc_out.Get());
   }
 
   if (has_index) {
@@ -483,25 +462,26 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
       ApplyToWriter(
         [&](auto& writer) { writer.Take(1, _index.AddRunBound()); });
     }
-    const uint64_t index_start = _doc_out->Position() - meta.doc_start;
+    const uint64_t index_start = _doc_out.Position() - meta.doc_start;
     SDB_ENSURE(index_start <= std::numeric_limits<uint32_t>::max(),
                "postings writer: a single term's `.doc` footprint of ",
                index_start, " bytes exceeds the ",
                std::numeric_limits<uint32_t>::max(), " byte limit");
     meta.doc_delta = static_cast<uint32_t>(index_start);
     ApplyToWriter([&](auto& writer) { writer.Take(2, _index.Root()); });
-    _index.Write(*_doc_out, {.pos = IsSubsetOf(IndexFeatures::Pos, _features),
-                             .offs = IsSubsetOf(IndexFeatures::Offs, _features),
-                             .bounds = _valid_writer != nullptr});
+    _index.Write(_doc_out.Get(),
+                 {.pos = IsSubsetOf(IndexFeatures::Pos, _features),
+                  .offs = IsSubsetOf(IndexFeatures::Offs, _features),
+                  .bounds = _valid_writer != nullptr});
   }
 
   if (IsSubsetOf(IndexFeatures::Pos, _features) &&
       pos_limits::kBlockSize < meta.freq) {
-    const auto extent = [](const duckdb::WriteStream& out, uint64_t start,
+    const auto extent = [](uint64_t position, uint64_t start,
                            const BlockGroup& group, bool partial,
                            uint32_t blocks) {
       const uint64_t bytes =
-        out.Position() - start + PosGroup::kHeaderBytes + group.Bytes() +
+        position - start + PosGroup::kHeaderBytes + group.Bytes() +
         (partial ? blocks * block_codec::kMaxBlockBytes : 0);
       SDB_ENSURE(bytes <= std::numeric_limits<uint32_t>::max(),
                  "postings writer: a single term's positions footprint of ",
@@ -509,11 +489,11 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
                  std::numeric_limits<uint32_t>::max(), " byte limit");
       return static_cast<uint32_t>(bytes);
     };
-    meta.pos_extent =
-      extent(*_pos_out, meta.pos_start, _pos_group, _pos.size != 0, 1);
+    meta.pos_extent = extent(_pos_out.Position(), meta.pos_start, _pos_group,
+                             _pos.size != 0, 1);
     if (IsSubsetOf(IndexFeatures::Offs, _features)) {
-      meta.pay_extent =
-        extent(*_pay_out, meta.pay_start, _pay_group, _pay.size != 0, 2);
+      meta.pay_extent = extent(_pay_out.Position(), meta.pay_start, _pay_group,
+                               _pay.size != 0, 2);
     }
   }
 
@@ -548,7 +528,6 @@ inline void PostingsWriter::UpdateBounds() {
 }
 
 inline void PostingsWriter::FlushTailPos() {
-  SDB_ASSERT(_pos_out);
   SDB_ASSERT(_pos.size != 0);
   const auto tail_size = pos_limits::kBlockSize - _pos.size;
   SDB_ASSERT(tail_size != 0);
@@ -559,7 +538,6 @@ inline void PostingsWriter::FlushTailPos() {
 }
 
 inline void PostingsWriter::FlushTailPay() {
-  SDB_ASSERT(_pay_out);
   SDB_ASSERT(_pay.size != 0);
   const auto tail_size = pos_limits::kBlockSize - _pay.size;
   SDB_ASSERT(tail_size != 0);
@@ -572,20 +550,18 @@ inline void PostingsWriter::FlushTailPay() {
 }
 
 inline void PostingsWriter::WritePosBlock() {
-  SDB_ASSERT(_pos_out);
   uint32_t enc_buf[block_io::kEncWords];
   _pos_group.Append(enc_buf, block_io::EncodeBlock(_pos.buf, enc_buf));
-  _pos_group.Close(*_pos_out);
+  _pos_group.Close(_pos_out.Get());
   _pos.size = 0;
 }
 
 inline void PostingsWriter::WritePayBlock() {
-  SDB_ASSERT(_pay_out);
   uint32_t enc_buf[block_io::kEncWords];
   _pay_group.Append(enc_buf,
                     block_io::EncodeBlock(_pay.offs_start_buf, enc_buf));
   _pay_group.Append(enc_buf, block_io::EncodeBlock(_pay.offs_len_buf, enc_buf));
-  _pay_group.Close(*_pay_out);
+  _pay_group.Close(_pay_out.Get());
   _pay.size = 0;
 }
 
@@ -620,8 +596,8 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
   if (_term_pay) {
     const uint64_t alignment = _term_pay->Alignment();
     SDB_ASSERT(std::has_single_bit(alignment));
-    for (auto pad = -_pay_out->Position() & (alignment - 1); pad != 0; --pad) {
-      _pay_out->Write<byte_type>(0);
+    for (auto pad = -_pay_out.Position() & (alignment - 1); pad != 0; --pad) {
+      _pay_out.Get().Write<byte_type>(0);
     }
   }
 }
@@ -734,50 +710,38 @@ void PostingsWriter::PushDeltas(TermPostings& docs, uint64_t n) {
 
 inline void PostingsWriter::FlushDocBlock(const PostingMeta& meta) {
   UpdateBounds();
-  WriteDocBlock(*_doc_out);
+  WriteDocBlock(_doc_out.Get());
   _doc.block_last = _doc.last;
   _doc.size = 0;
   AddBlock(meta, _doc.block_last);
 }
 
 inline duckdb::shared_ptr<duckdb::InputFile> PostingsWriter::CloseOutput(
-  std::unique_ptr<duckdb::BufferedFileWriter>& out) {
-  block_io::WriteSlack(*out);
-  format_utils::WriteFooter(*out);
-  _tracker->Written(out->Position());
-  auto file = format_utils::CloseOutput(*out);
-  out.reset();
-  return file;
+  format_utils::LazyOutput& out) {
+  if (!out.Opened()) {
+    return nullptr;
+  }
+  auto& stream = out.Get();
+  block_io::WriteSlack(stream);
+  return out.Close(format_utils::WriteFooter(stream));
 }
 
 inline void PostingsWriter::End() {
+  if (_pos.size != 0) {
+    FlushTailPos();
+  }
+  if (!_pos_group.Empty()) {
+    _pos_group.Flush(_pos_out.Get());
+  }
+  if (_pay.size != 0) {
+    FlushTailPay();
+  }
+  if (!_pay_group.Empty()) {
+    _pay_group.Flush(_pay_out.Get());
+  }
   _inputs.doc = CloseOutput(_doc_out);
-
-  if (_pos_out) {
-    if (_pos.size != 0) {
-      FlushTailPos();
-    }
-    if (!_pos_group.Empty()) {
-      _pos_group.Flush(*_pos_out);
-    }
-    _inputs.pos = CloseOutput(_pos_out);
-  } else {
-    SDB_ASSERT(_pos.size == 0);
-  }
-
-  // ".pay" may be open for offsets (with positions) and/or for fixed-width
-  // per-document payloads (IndexFeatures::Vec, no positions).
-  if (_pay_out) {
-    if (_pay.size != 0) {
-      FlushTailPay();
-    }
-    if (!_pay_group.Empty()) {
-      _pay_group.Flush(*_pay_out);
-    }
-    _inputs.pay = CloseOutput(_pay_out);
-  } else {
-    SDB_ASSERT(_pay.size == 0);
-  }
+  _inputs.pos = CloseOutput(_pos_out);
+  _inputs.pay = CloseOutput(_pay_out);
 }
 
 IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
@@ -886,10 +850,10 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
   // Stream this term's fixed-width per-document payload (e.g. IVF quantized
   // codes) into ".pay", contiguous per term.
   if (has_vec) {
-    SDB_ASSERT(_pay_out && _term_pay);
-    meta.pay_start = _pay_out->Position();
+    SDB_ASSERT(_term_pay);
+    meta.pay_start = _pay_out.Position();
     meta.pos_offset = static_cast<uint16_t>(_term_pay->PendingLanes());
-    _term_pay->WriteTermPayload(*_pay_out, _term_docs);
+    _term_pay->WriteTermPayload(_pay_out.Get(), _term_docs);
   }
 }
 
@@ -954,10 +918,10 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
   EndTerm(meta);
 
   if (has_vec) {
-    SDB_ASSERT(_pay_out && _term_pay);
-    meta.pay_start = _pay_out->Position();
+    SDB_ASSERT(_term_pay);
+    meta.pay_start = _pay_out.Position();
     meta.pos_offset = static_cast<uint16_t>(_term_pay->PendingLanes());
-    _term_pay->WriteTermPayload(*_pay_out, _term_docs);
+    _term_pay->WriteTermPayload(_pay_out.Get(), _term_docs);
   }
 }
 

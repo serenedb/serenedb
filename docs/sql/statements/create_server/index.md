@@ -153,9 +153,9 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 
 `path` is required and names the data directory, the directory the other server was started with. `database` names the database to attach and defaults to `postgres`. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY, DATABASE 'shop')` attaches the same database until `DETACH` or a restart of the server.
 
-A copy of the data directory is complete when it holds `engine_v1/wal` and `engine_v1/store`, which holds the index files of the database's tables and of the inverted indexes on its views. A database whose files are not all there is refused, and the error names the missing file. To copy the directory of a running server, run [`pg_backup_start`](../../../operations/backup.md) first, copy `engine_v1/wal` before `engine_v1/store`, and run `pg_backup_stop` once the copy is done.
+A copy of the data directory is complete when it holds `engine_v2/wal` and `engine_v2/store`, which holds the index files of the database's tables and of the inverted indexes on its views. A database whose files are not all there is refused, and the error names the missing file. To copy the directory of a running server, run [`pg_backup_start`](../../../operations/backup.md) first, copy `engine_v2/wal` before `engine_v2/store`, and run `pg_backup_stop` once the copy is done.
 
-Tables and inverted indexes are read from the data directory only. A database is refused when one of its tables or inverted indexes is placed in a [tablespace](../create_tablespace/index.md) other than the database's own. A database created in a tablespace keeps the index files of its tables and indexes in `<system identifier>/engine_v1/store` at the tablespace's location: copy them into the `engine_v1/store` of the copy to attach it.
+Tables and inverted indexes are read from the data directory only. A database is refused when one of its tables or inverted indexes is placed in a [tablespace](../create_tablespace/index.md) other than the database's own. A database created in a tablespace keeps the index files of its tables and indexes in `<system identifier>/engine_v2/store` at the tablespace's location: copy them into the `engine_v2/store` of the copy to attach it.
 
 ### What a read-only database does
 
@@ -180,7 +180,8 @@ The lock is the file system's: on a file system without file locks nothing detec
 `CREATE SERVER` refuses a data directory:
 
 - of a running server, the attaching server included,
-- without `PG_VERSION` or `engine_v1/wal`,
+- written by an earlier release, which holds `engine_v1`,
+- without `PG_VERSION` or `engine_v2/wal`,
 - without a database of the given name,
 - of a database with a table or an inverted index placed in a tablespace, or
 - missing the directory of one of the database's tables or inverted indexes.

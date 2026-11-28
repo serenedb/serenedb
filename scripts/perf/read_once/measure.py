@@ -502,7 +502,7 @@ def hits_source(args):
 
 def phase_log(args, out, blobs):
     datadir = fresh_dir(out / "log_data")
-    wal = datadir / "engine_v1" / "wal"
+    wal = datadir / "engine_v2" / "wal"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:
@@ -585,7 +585,7 @@ def phase_log(args, out, blobs):
 
 def phase_update(args, out, blobs):
     datadir = fresh_dir(out / "update_data")
-    wal = datadir / "engine_v1" / "wal"
+    wal = datadir / "engine_v2" / "wal"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:
@@ -649,7 +649,7 @@ def phase_update(args, out, blobs):
 
 def phase_bulk(args, out, blobs):
     datadir = fresh_dir(out / "bulk_data")
-    store = datadir / "engine_v1" / "store"
+    store = datadir / "engine_v2" / "store"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:
@@ -696,7 +696,7 @@ def ann_query(args):
 
 def phase_hnsw(args, out, blobs):
     datadir = fresh_dir(out / "hnsw_data")
-    store = datadir / "engine_v1" / "store"
+    store = datadir / "engine_v2" / "store"
     server = Server(args.serened, datadir, out / "logs", args.timeout)
     res = {"loadavg": os.getloadavg()}
     try:

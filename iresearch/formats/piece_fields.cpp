@@ -342,9 +342,7 @@ void PieceFields::Seal(PieceTermReader& reader, uint64_t docs,
   }
 }
 
-void PieceFields::Open(const ReaderState& state, IndexFeatures features) {
-  _pr.prepare(state, features);
-}
+void PieceFields::Open(const ReaderState& state) { _pr.prepare(state); }
 
 size_t PieceFields::Bytes() const noexcept {
   size_t bytes = _dicts.capacity() * sizeof(const TermReader*);
@@ -355,7 +353,6 @@ size_t PieceFields::Bytes() const noexcept {
 }
 
 void PieceFieldWriter::prepare(const FlushState& state, uint64_t) {
-  _features = state.index_features;
   _pw.Prepare(state);
 }
 

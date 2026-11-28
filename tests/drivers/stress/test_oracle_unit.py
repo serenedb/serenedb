@@ -143,7 +143,7 @@ def test_mutant_dangling_dependency_edges_both_directions():
 
 def test_mutant_orphan_artifact_on_disk():
     m, s = healthy()
-    s.orphan_files = [("engine_v1/store", 3)]
+    s.orphan_files = [("engine_v2/store", 3)]
     assert "orphan_artifact" in kinds(run([m], s))
 
 

@@ -842,7 +842,7 @@ public final class Bench {
       rs.next();
       oid = rs.getLong(1);
     }
-    final Path dir = sdbData.resolve("engine_v1").resolve("store").resolve(Long.toString(oid));
+    final Path dir = sdbData.resolve("engine_v2").resolve("store").resolve(Long.toString(oid));
     return Files.isDirectory(dir) ? dirSize(dir) : 0;
   }
 

@@ -23,7 +23,7 @@ VACUUM (FLUSH_TABLE) rmc_kept;
 
 
 statement ok
-CREATE TEMP TABLE rmc_before AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*');
+CREATE TEMP TABLE rmc_before AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*');
 
 
 statement ok
@@ -31,7 +31,7 @@ VACUUM (FLUSH_TABLE) rmc_gone;
 
 
 statement ok
-CREATE TABLE rmc_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+CREATE TABLE rmc_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*')
   WHERE file NOT IN (SELECT file FROM rmc_before);
 
 
@@ -72,7 +72,7 @@ n
 
 connection after_crash
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*')
 WHERE file IN (SELECT file FROM rmc_files);
 ----
 leftover

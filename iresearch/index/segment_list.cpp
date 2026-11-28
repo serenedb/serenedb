@@ -24,6 +24,8 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
+#include <bit>
+
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
@@ -31,6 +33,11 @@
 
 namespace irs {
 namespace {
+
+[[noreturn]] void ThrowMalformed(std::string_view line) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG("malformed segment list line: ", line));
+}
 
 std::vector<SegmentMeta> ReadSegmentList(std::string_view text) {
   std::vector<SegmentMeta> segments;
@@ -40,24 +47,43 @@ std::vector<SegmentMeta> ReadSegmentList(std::string_view text) {
     uint64_t id = 0;
     uint32_t kinds = 0;
     auto& meta = segments.emplace_back();
-    if (parts.size() != 3 || !absl::SimpleAtoi(parts[0], &id) ||
-        !absl::SimpleAtoi(parts[1], &kinds) ||
-        !absl::SimpleAtoi(parts[2], &meta.docs_count)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                      ERR_MSG("malformed segment list line: ", line));
+    if (parts.size() < 3 || !absl::SimpleAtoi(parts[0], &id) ||
+        !absl::SimpleAtoi(parts[1], &kinds) || kinds >= (1U << kFileKinds) ||
+        !absl::SimpleAtoi(parts[2], &meta.docs_count) ||
+        parts.size() != 3 + 2 * static_cast<size_t>(std::popcount(kinds))) {
+      ThrowMalformed(line);
     }
     meta.name = FileName(id);
     meta.kinds = static_cast<uint8_t>(kinds);
     meta.live_docs_count = meta.docs_count;
+    size_t at = 3;
+    for (size_t kind = 0; kind != kFileKinds; ++kind) {
+      if ((kinds & (1U << kind)) == 0) {
+        continue;
+      }
+      auto& sizes = meta.files[kind];
+      if (!absl::SimpleAtoi(parts[at], &sizes.file) ||
+          !absl::SimpleAtoi(parts[at + 1], &sizes.footer)) {
+        ThrowMalformed(line);
+      }
+      at += 2;
+    }
   }
   return segments;
 }
 
 }  // namespace
 
-void AppendSegmentList(std::string& out, uint64_t id, uint8_t kinds,
+void AppendSegmentList(std::string& out, uint64_t id, const SegmentMeta& meta,
                        doc_id_t docs) {
-  absl::StrAppend(&out, id, " ", static_cast<uint32_t>(kinds), " ", docs, "\n");
+  absl::StrAppend(&out, id, " ", static_cast<uint32_t>(meta.kinds), " ", docs);
+  for (size_t kind = 0; kind != kFileKinds; ++kind) {
+    if ((meta.kinds & (1U << kind)) != 0) {
+      absl::StrAppend(&out, " ", meta.files[kind].file, " ",
+                      meta.files[kind].footer);
+    }
+  }
+  absl::StrAppend(&out, "\n");
 }
 
 CompositeReader OpenSegmentList(duckdb::DatabaseInstance& db,

@@ -177,6 +177,7 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
   meta.byte_size = _tracker->Bytes();
   meta.kinds = _tracker->Kinds();
+  meta.files = _tracker->Files();
   return {.files = std::move(_tracker), .inputs = std::move(inputs)};
 }
 
@@ -262,15 +263,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   meta.byte_size = _tracker->Bytes() + column_bytes + fields->Bytes() +
                    (col_file ? col_file->GetSize() : 0);
   auto postings = field_writer.TakePostings();
-  fields->Open(
-    ReaderState{
-      .db = _db,
-      .fs = _fs,
-      .root = _root,
-      .meta = meta,
-      .postings = postings.doc ? &postings : nullptr,
-    },
-    field_writer.Features());
+  fields->Open(ReaderState{
+    .db = _db,
+    .fs = _fs,
+    .root = _root,
+    .meta = meta,
+    .postings = &postings,
+  });
   return SegmentReaderImpl::OpenPiece(
     meta, id,
     std::make_unique<ColReader>(_db, std::move(columns), std::move(col_file),

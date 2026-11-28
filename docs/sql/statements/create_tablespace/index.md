@@ -43,16 +43,16 @@ Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside 
 
 ## Locations
 
-A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files in `<system identifier>/engine_v1` at its location, named by the server's system identifier, so several servers can share a location. Of one server, one tablespace at a time can use a location:
+A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files in `<system identifier>/engine_v2` at its location, named by the server's system identifier, so several servers can share a location. Of one server, one tablespace at a time can use a location:
 
 ```text
 ERROR:  tablespace location "/mnt/nvme/serenedb" is already used by tablespace "fast"
 ```
 
-The directory is created when it does not exist, on an object store as an empty object named after the location with a trailing slash, and with it `<system identifier>/engine_v1/store` inside it, the directory that holds the index files of everything placed in the tablespace. A flush into a tablespace whose `store` directory was removed fails until the directory is there again. The server reads and writes nothing above the location, so a secret whose scope is the location is enough; `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow reading, listing and writing the location. A location with an `engine_v1` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
+The directory is created when it does not exist, on an object store as an empty object named after the location with a trailing slash, and with it `<system identifier>/engine_v2/store` inside it, the directory that holds the index files of everything placed in the tablespace. A flush into a tablespace whose `store` directory was removed fails until the directory is there again. The server reads and writes nothing above the location, so a secret whose scope is the location is enough; `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow reading, listing and writing the location. A location with an `engine_v2` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
 
 ```text
-ERROR:  tablespace location "/mnt/nvme/serenedb/engine_v1/inside" is inside the files of a tablespace
+ERROR:  tablespace location "/mnt/nvme/serenedb/engine_v2/inside" is inside the files of a tablespace
 ```
 
 A `memory://` location is refused, since files there are lost when the server stops:

@@ -46,8 +46,15 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
   Reset();
   _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
-  _out = &_idx->BlocksOut();
+  _out = nullptr;
   _pw.Prepare(state);
+}
+
+duckdb::WriteStream& FieldWriter::Out() {
+  if (!_out) {
+    _out = &_idx->BlocksOut();
+  }
+  return *_out;
 }
 
 void FieldWriter::Begin(field_id id, DictRef dict) noexcept {
@@ -273,10 +280,11 @@ void FieldWriter::Cut() {
 }
 
 void FieldWriter::WriteBlock(uint64_t size) {
-  const uint64_t position = _out->Position();
+  auto& out = Out();
+  const uint64_t position = out.Position();
   const uint64_t pad = (kPage - position % kPage) % kPage;
   for (uint64_t i = 0; i != pad; ++i) {
-    _out->Write<byte_type>(0);
+    out.Write<byte_type>(0);
   }
   if (_blocks == 0) {
     _first_page = (position + pad) / kPage;
@@ -285,9 +293,9 @@ void FieldWriter::WriteBlock(uint64_t size) {
   if (pages != 1) {
     _spans.push_back({.block = _blocks, .extra = pages - 1});
   }
-  _encoder.Serialize(*_out, _records);
-  SDB_ENSURE(_out->Position() == position + pad + size,
-             "term dictionary: block of ", _out->Position() - position - pad,
+  _encoder.Serialize(out, _records);
+  SDB_ENSURE(out.Position() == position + pad + size,
+             "term dictionary: block of ", out.Position() - position - pad,
              " bytes, sized as ", size);
   ++_blocks;
 }
@@ -373,7 +381,7 @@ void FieldWriter::end() {
   Cut();
   _pw.End();
   if (!_heads.empty()) {
-    auto& out = *_out;
+    auto& out = Out();
     const auto blocks_end = out.Position();
     WriteArray(out, _separators.offsets);
     WriteArray(out, _separators.arena);

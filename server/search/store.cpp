@@ -381,7 +381,7 @@ void Store::Pack() {
   const auto state = _table->State();
   std::vector<uint64_t> laid_out;
   for (const auto& unit : state->units) {
-    if (unit->piece) {
+    if (unit->piece || unit->meta.kinds == 0) {
       continue;
     }
     duckdb::vector<std::string> paths;
@@ -688,8 +688,10 @@ catalog::RecordBuffer Store::SnapshotRecord(const TableState& state,
     const auto deleted =
       unit->deleted && !unit->deleted->Empty() ? unit->deleted : nullptr;
     if (!unit->piece) {
-      delta.add.push_back(
-        {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
+      delta.add.push_back({.id = unit->id,
+                           .kinds = unit->meta.kinds,
+                           .rows = unit->docs,
+                           .files = unit->meta.files});
       if (deleted || !unit->patches.empty()) {
         delta.segments.push_back(
           {.unit = unit->id, .deleted = deleted, .patches = unit->patches});
@@ -1493,16 +1495,16 @@ void Store::ScheduleRecovery(duckdb::ClientContext& context,
     return;
   }
   _writer->ReserveSegmentId(_replay.Top());
-  for (auto& [id, segment] : _replay.Segments()) {
-    opens.ScheduleTask(
-      duckdb::make_uniq<RecoveryTask>(opens, [this, id, &segment] {
-        try {
-          segment.opened = _table->OpenSegment(id, segment.kinds, segment.rows);
-        } catch (const duckdb::Exception& e) {
-          duckdb::ErrorData{e}.Throw(
-            absl::StrCat("cannot open the files of relation ", _id, ": "));
-        }
-      }));
+  for (auto& [_, segment] : _replay.Segments()) {
+    opens.ScheduleTask(duckdb::make_uniq<RecoveryTask>(opens, [this, &segment] {
+      try {
+        segment.opened = _table->OpenSegment(segment.logged);
+        segment.opened.reader->OpenFiles();
+      } catch (const duckdb::Exception& e) {
+        duckdb::ErrorData{e}.Throw(
+          absl::StrCat("cannot open the files of relation ", _id, ": "));
+      }
+    }));
   }
   for (auto& piece : _replay.Cut()) {
     replays.ScheduleTask(

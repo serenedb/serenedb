@@ -21,10 +21,14 @@
 #pragma once
 
 #include <duckdb/common/vector.hpp>
+#include <duckdb/parser/expression_map.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/logical_operator.hpp>
 #include <optional>
+#include <string_view>
 
+#include "connector/optimizer/plan_index.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 
@@ -44,6 +48,23 @@ void IResearchPushdownComplexFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
+
+bool IsScorerFunctionName(std::string_view name);
+
+class SearchClaims {
+ public:
+  explicit SearchClaims(duckdb::LogicalOperator& plan,
+                        duckdb::ClientContext& context);
+
+  bool Answers(const duckdb::Expression& predicate);
+
+ private:
+  bool Claims(const duckdb::Expression& predicate);
+
+  PlanIndex _index;
+  duckdb::ClientContext& _context;
+  duckdb::expression_map_t<bool> _answers;
+};
 
 duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
   duckdb::unique_ptr<duckdb::Expression> expr, bool with_values);

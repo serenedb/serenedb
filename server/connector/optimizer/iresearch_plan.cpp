@@ -501,19 +501,6 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
                                     client_context));
 }
 
-bool IsScorerFunctionName(std::string_view name) {
-  using S = catalog::ScorerOptions;
-  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
-    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
-    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
-    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
-    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
-    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
-    S::Constant::Owner::type_name(),
-  };
-  return kScorerNames.contains(name);
-}
-
 struct AnnFunctionInfo {
   irs::VectorMetric metric;
   duckdb::OrderType order;
@@ -1697,6 +1684,66 @@ void TakeColumnConjuncts(
 }
 
 }  // namespace
+
+bool IsScorerFunctionName(std::string_view name) {
+  using S = catalog::ScorerOptions;
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
+    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
+    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
+    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
+    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
+    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
+    S::Constant::Owner::type_name(),
+  };
+  return kScorerNames.contains(name);
+}
+
+SearchClaims::SearchClaims(duckdb::LogicalOperator& plan,
+                           duckdb::ClientContext& context)
+  : _index{plan}, _context{context} {}
+
+bool SearchClaims::Answers(const duckdb::Expression& predicate) {
+  const auto [it, inserted] = _answers.try_emplace(predicate, false);
+  if (inserted) {
+    it->second = Claims(predicate);
+  }
+  return it->second;
+}
+
+bool SearchClaims::Claims(const duckdb::Expression& predicate) {
+  PlannedScan* scan = nullptr;
+  bool one_scan = true;
+  auto conjunct = predicate.Copy();
+  duckdb::ExpressionIterator::VisitExpressionMutable<
+    duckdb::BoundColumnRefExpression>(
+    conjunct, [&](duckdb::BoundColumnRefExpression& ref, auto&) {
+      const auto column = _index.Column(ref.Binding());
+      one_scan = one_scan && column && (!scan || column.scan == scan);
+      if (one_scan) {
+        scan = column.scan;
+        ref.BindingMutable() = column.binding;
+      }
+    });
+  if (!one_scan || !scan) {
+    return false;
+  }
+  conjunct =
+    duckdb::Optimizer::OptimizeExpression(_context, std::move(conjunct));
+  try {
+    return WithSearchGetters(
+      *scan, _context, [&](const SearchGetters& getters) {
+        irs::BooleanFilter root;
+        connector::FilterScorers scorers;
+        DeferredClaimBuilder deferred;
+        deferred.column_id = &getters.column_id;
+        return TryClaimIResearchConjunctImpl(root, conjunct, getters.getter,
+                                             getters.expr_getter, _context,
+                                             &scorers, &deferred);
+      });
+  } catch (const irs::SqlException&) {
+    return false;
+  }
+}
 
 void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,

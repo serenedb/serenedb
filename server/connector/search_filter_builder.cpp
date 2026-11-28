@@ -614,9 +614,21 @@ bool IsStrictDisjunct(const duckdb::Expression& expr) {
     [](const auto& child) { return IsStrictDisjunct(*child); });
 }
 
+[[noreturn]] void ThrowMinMatchWithoutOr() {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("::min_match(K) applies to an OR of predicates"),
+    ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR b @@ 'y' OR c @@ "
+             "'z')::min_match(2). To count the words or alternatives of one "
+             "@@ match, put it on the query: col @@ 'x y z'::min_match(2)."));
+}
+
 void RejectRewrittenMinMatch(const duckdb::BoundFunctionExpression& cast,
                              size_t seen) {
   const auto written = WrittenMinMatchBranches(cast);
+  if (written == 1) {
+    ThrowMinMatchWithoutOr();
+  }
   if (written && written != seen) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -2170,12 +2182,7 @@ size_t CountMinMatchBranches(const duckdb::Expression& operand) {
       cur->Cast<duckdb::BoundFunctionExpression>()));
   }
   if (cur->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("::min_match(K) applies to an OR of predicates"),
-      ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR b @@ 'y' OR c @@ "
-               "'z')::min_match(2). To count the words or alternatives of one "
-               "@@ match, put it on the query: col @@ 'x y z'::min_match(2)."));
+    ThrowMinMatchWithoutOr();
   }
   return cur->Cast<duckdb::BoundConjunctionExpression>().GetChildren().size();
 }

@@ -344,6 +344,34 @@ TEST(TrackedTest, DuckAllocatorOverTheLimitThrows) {
   EXPECT_EQ(base, TrackedMemory());
 }
 
+TEST(TrackedTest, AFailedAllocationGivesBackOnlyTheReserveItTook) {
+  constexpr size_t kHuge = size_t{1} << 47;
+  const auto base = TrackedMemory();
+  {
+    irs::LocalBudget budget{irs::gRootBudget};
+    MemoryLimit limit{2 * kHuge};
+    budget.Reserve(kMiB);
+    auto allocator = irs::DuckAllocator(irs::TrackedAllocator<>{budget});
+    EXPECT_THROW(allocator.AllocateData(kHuge), duckdb::OutOfMemoryException);
+    EXPECT_EQ(0, budget.Used());
+    EXPECT_EQ(kMiB, budget.Held());
+    EXPECT_EQ(base + kMiB, TrackedMemory());
+    duckdb::idx_t size = kMiB / 2;
+    auto* data = allocator.AllocateData(size);
+    absl::Cleanup release = [&] { allocator.FreeData(data, size); };
+    EXPECT_THROW(data = allocator.ReallocateData(data, size, kHuge),
+                 duckdb::OutOfMemoryException);
+    EXPECT_EQ(size, budget.Used());
+    EXPECT_EQ(kMiB, budget.Held());
+    irs::TrackedVector<uint8_t> values{irs::TrackedAllocator<>{budget}};
+    EXPECT_THROW(values.reserve(kHuge), std::bad_alloc);
+    EXPECT_EQ(size, budget.Used());
+    EXPECT_EQ(kMiB, budget.Held());
+    EXPECT_EQ(base + kMiB, TrackedMemory());
+  }
+  EXPECT_EQ(base, TrackedMemory());
+}
+
 TEST(TrackedTest, TrackedHugePageVectorChargesItsCapacity) {
   const auto base = TrackedMemory();
   {

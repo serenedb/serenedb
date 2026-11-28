@@ -825,7 +825,7 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     _id{id},
     _type{std::move(type)},
     _options{options},
-    _staged_allocator{DuckAllocator(owner.Allocator())},
+    _staged_charge{owner.Allocator()},
     _null_pad_charge{owner.Allocator()},
     _deferred{deferred},
     _distinct_charge{owner.Allocator()} {
@@ -876,9 +876,11 @@ WriteChunk& ColumnWriter::OpenChunk() {
   }
   if (_staged_chunks == _staged.size()) {
     auto& cache = _staged_caches.emplace_back(
-      _staged_allocator, IngestsList() ? duckdb::LogicalType::BOOLEAN : _type,
+      duckdb::Allocator::DefaultAllocator(),
+      IngestsList() ? duckdb::LogicalType::BOOLEAN : _type,
       STANDARD_VECTOR_SIZE);
-    _staged.push_back(WriteChunk{duckdb::Vector{cache}, 0});
+    const auto& data = _staged.emplace_back(duckdb::Vector{cache}, 0).data;
+    _staged_charge.Resize(_staged_charge.Bytes() + data.GetAllocationSize());
   }
   auto& chunk = _staged[_staged_chunks];
   chunk.data.ResetFromCache(_staged_caches[_staged_chunks]);
@@ -1275,6 +1277,7 @@ void ColumnWriter::Finish() {
   SealRowGroup();
   _staged.clear();
   _staged_caches.clear();
+  _staged_charge.Resize(0);
 }
 
 std::vector<WriteChunk> ColumnWriter::Snapshot(uint64_t rows) const {

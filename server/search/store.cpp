@@ -915,9 +915,13 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
     CommitReplace(ids, folded, std::move(added), std::move(merged.maps), 0,
                   /*logged=*/true);
   } catch (const std::exception& e) {
-    co_return absl::InternalError(
-      absl::StrCat("compaction of table ", _id,
-                   " failed: ", duckdb::ErrorData{e}.RawMessage()));
+    const duckdb::ErrorData error{e};
+    auto message =
+      absl::StrCat("compaction of table ", _id, " failed: ", error.RawMessage());
+    if (error.Type() == duckdb::ExceptionType::OUT_OF_MEMORY) {
+      co_return absl::ResourceExhaustedError(std::move(message));
+    }
+    co_return absl::InternalError(std::move(message));
   }
   co_return absl::OkStatus();
 }

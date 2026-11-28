@@ -437,6 +437,44 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
   }
 }
 
+TEST(PieceTest, ASealedPieceOutlivesItsWriter) {
+  constexpr uint32_t kDocs = uint32_t{STANDARD_VECTOR_SIZE} + 300;
+  constexpr field_id kStored = 4;
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = IndexWriter::Make(dir.Db(), dir.Fs(), dir.Root(),
+                                  irs::tests::DefaultWriterOptions());
+  std::shared_ptr<const SegmentReaderImpl> piece;
+  {
+    auto trx = writer->GetBatch();
+    trx.SetHot(0);
+    ReplayStream keyword;
+    for (uint32_t d = 0; d < kDocs; ++d) {
+      auto doc = trx.Insert();
+      const std::vector<ReplayToken> kw = {
+        {"cat" + std::to_string(d % 17), 1, 0, 0}};
+      keyword.Reset(&kw);
+      ASSERT_TRUE(::tests::InsertField(
+        doc, ReplayField{kKeyword, kKeywordFeatures, &keyword}));
+      const auto value = std::to_string(d);
+      irs::tests::AppendBlob(
+        irs::tests::OpenBlobColumn(*doc.GetColWriter(), kStored), doc.DocId(),
+        ViewCast<byte_type>(std::string_view{value}));
+    }
+    piece = trx.SealPiece(7);
+    trx.Abort();
+  }
+  writer.reset();
+  ASSERT_NE(nullptr, piece);
+  const auto* column = piece->Column(kStored);
+  ASSERT_NE(nullptr, column);
+  irs::tests::BlobPointReader reader{*piece, *column};
+  for (uint32_t d = 0; d < kDocs; ++d) {
+    EXPECT_EQ(std::to_string(d),
+              ViewCast<char>(reader.Get(doc_limits::min() + d)));
+  }
+}
+
 TEST(PieceTest, AbortedPieceRemovesItsFiles) {
   ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};

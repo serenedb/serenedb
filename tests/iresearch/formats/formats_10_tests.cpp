@@ -760,11 +760,10 @@ TEST_P(Format10TestCase, ires336) {
   tests::FormatTestCase::Terms<decltype(terms.begin())> trms(
     terms.begin(), terms.end(), docs.begin(), docs.end());
 
-  irs::LocalBudget budget{irs::gRootBudget};
   irs::FlushState flush_state{
     .tracker = dir->Tracker(segment_name),
     .doc_count = 10000,
-    .alloc = irs::TrackedAllocator<>{budget},
+    .alloc = TestAlloc(),
   };
 
   irs::FieldMeta field_meta;

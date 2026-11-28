@@ -51,8 +51,9 @@ LocalBudget& BudgetOf(duckdb::PrivateAllocatorData* data) noexcept {
 duckdb::data_ptr_t ChargedAllocate(duckdb::PrivateAllocatorData* data,
                                    duckdb::idx_t size) {
   auto& budget = BudgetOf(data);
+  const auto held = budget.Held();
   budget.Charge(size);
-  absl::Cleanup release = [&] { budget.Free(size); };
+  absl::Cleanup release = [&] { budget.Refund(size, held); };
   auto* p = duckdb::Allocator::DefaultAllocate(data, size);
   if (p) {
     std::move(release).Cancel();
@@ -78,8 +79,9 @@ duckdb::data_ptr_t ChargedReallocate(duckdb::PrivateAllocatorData* data,
     }
     return r;
   }
+  const auto held = budget.Held();
   budget.Charge(size - old_size);
-  absl::Cleanup release = [&] { budget.Free(size - old_size); };
+  absl::Cleanup release = [&] { budget.Refund(size - old_size, held); };
   auto* r = duckdb::Allocator::DefaultReallocate(data, p, old_size, size);
   if (r) {
     std::move(release).Cancel();
@@ -146,6 +148,15 @@ void LocalBudget::Take(size_t bytes) {
   }
   _parent->Charge(bytes);
   _held += bytes;
+}
+
+void LocalBudget::Refund(size_t bytes, size_t held) noexcept {
+  Free(bytes);
+  SDB_ASSERT(_used <= held);
+  if (_held > held) {
+    _parent->Free(_held - held);
+    _held = held;
+  }
 }
 
 void LocalBudget::Reserve(size_t bytes) {

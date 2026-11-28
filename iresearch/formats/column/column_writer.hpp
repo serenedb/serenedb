@@ -213,7 +213,7 @@ class ColumnWriter final {
   codecs::CodecType _method = codecs::CodecType::Auto;
   codecs::CodecType _global_method = codecs::CodecType::Auto;
   codecs::CodecSet _disabled;
-  duckdb::Allocator _staged_allocator;
+  MemoryCharge _staged_charge;
   std::vector<WriteChunk> _staged;
   std::vector<duckdb::VectorCache> _staged_caches;
   MemoryCharge _null_pad_charge;

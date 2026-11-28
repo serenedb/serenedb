@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <array>
@@ -934,17 +935,24 @@ class FieldsInverter : util::Noncopyable {
 
   Entry Find(field_id id, DictLayout layout) {
     const auto [it, emplaced] = _fields_map.try_emplace(id);
-    auto& entry = it->second;
     if (emplaced) {
-      entry = {.terms = _terms.size(), .docs = _docs.size(), .layout = layout};
-      _terms.resize(_terms.size() + kTermMembers);
+      const Entry entry{
+        .terms = _terms.size(), .docs = _docs.size(), .layout = layout};
+      absl::Cleanup undo = [&] {
+        _terms.erase(_terms.begin() + entry.terms, _terms.end());
+        _docs.erase(_docs.begin() + entry.docs, _docs.end());
+        _fields_map.erase(it);
+      };
+      _terms.resize(entry.terms + kTermMembers);
       for (size_t n = kDocMembers; n != 0; --n) {
         _docs.emplace_back(_docs.get_allocator());
       }
+      std::move(undo).Cancel();
+      it->second = entry;
     }
-    SDB_ENSURE(entry.layout == layout, "term dictionary: field ", id,
+    SDB_ENSURE(it->second.layout == layout, "term dictionary: field ", id,
                " is written with two layouts");
-    return entry;
+    return it->second;
   }
 
   size_t FieldsMemory() const noexcept {

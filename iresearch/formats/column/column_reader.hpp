@@ -119,9 +119,9 @@ class ColumnReader {
   struct VectorScratch {
     VectorScratch(const duckdb::LogicalType& type, TrackedAllocator<> alloc,
                   duckdb::idx_t capacity = STANDARD_VECTOR_SIZE)
-      : allocator{DuckAllocator(alloc)},
-        cache{allocator, type, capacity},
-        vector{cache} {}
+      : cache{duckdb::Allocator::DefaultAllocator(), type, capacity},
+        vector{cache},
+        charge{alloc, vector.GetAllocationSize()} {}
     VectorScratch(const VectorScratch&) = delete;
     VectorScratch(VectorScratch&&) = delete;
 
@@ -130,9 +130,9 @@ class ColumnReader {
       return vector;
     }
 
-    duckdb::Allocator allocator;
     duckdb::VectorCache cache;
     duckdb::Vector vector;
+    MemoryCharge charge;
   };
 
   struct ScanState {

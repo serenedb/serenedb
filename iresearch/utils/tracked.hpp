@@ -89,6 +89,7 @@ class LocalBudget {
     _used -= bytes;
   }
 
+  void Refund(size_t bytes, size_t held) noexcept;
   void Reserve(size_t bytes);
   void Trim() noexcept;
   void Rebind(MemoryBudget& parent);
@@ -159,8 +160,9 @@ class TrackedAllocator {
   T* allocate(size_t n) {
     static_assert(!std::is_void_v<T>);
     const auto bytes = n * sizeof(T);
+    const auto held = _budget->Held();
     _budget->Charge(bytes);
-    absl::Cleanup release = [&] { _budget->Free(bytes); };
+    absl::Cleanup release = [&] { _budget->Refund(bytes, held); };
     auto* p = static_cast<T*>(Obtain(bytes));
     std::move(release).Cancel();
     return p;

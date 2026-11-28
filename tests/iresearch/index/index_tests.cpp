@@ -681,13 +681,15 @@ class IndexTestCase : public tests::IndexTestBase {
     // 2-nd iteration: cached
     for (size_t i = 0; i < 2; ++i) {
       auto read_columns = [&expected_docs, &reader] {
+        irs::LocalBudget budget{irs::gRootBudget};
         size_t i = 0;
         for (auto& segment : reader) {
           auto* column = segment.Column(kNameColumnId);
           if (!column) {
             return false;
           }
-          irs::tests::BlobPointReader values{segment, *column};
+          irs::tests::BlobPointReader values{segment, *column,
+                                             irs::TrackedAllocator<>{budget}};
           for (irs::doc_id_t doc = (irs::doc_limits::min)(),
                              max = segment.docs_count();
                doc <= max; ++doc) {

@@ -17,7 +17,7 @@ CREATE TEXT SEARCH DICTIONARY geo_src_dict AS
 # longitude). Acceptance is JSON-only -- GEOMETRY columns are explicitly
 # rejected (geopoint's JSON-path config is meaningless on WKB), and any
 # non-JSON / non-GEOMETRY scalar (VARCHAR, BLOB, INTEGER) trips the generic
-# geo-analyzer column-type check in ValidateTokenizerVsColumn.
+# geo-analyzer column-type check in ValidateColumn.
 # ============================================================================
 
 statement ok
@@ -101,7 +101,7 @@ db error: ERROR: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOME
 #   (a) JSON scalar + INCLUDE(col)              -- accept (mirrors g4 explicitly)
 #   (b) JSON-returning expression + INCLUDE     -- accept (sidecar on tag)
 #   (c) LIST<JSON>                              -- reject (falls through
-#       IsJSONType() in ValidateTokenizerVsColumn; LIST itself is not JSON)
+#       IsJSONType() in ValidateColumn; LIST itself is not JSON)
 #   (d) ARRAY<JSON, 2>                          -- reject (same reason)
 #   (e) LIST<GEOMETRY>                          -- reject EARLY in
 #       term_dict::Validate (LIST<GEOMETRY> child trips the
@@ -217,7 +217,7 @@ db error: ERROR: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's
 # ============================================================================
 # g18 -- Geo non-CRS84 rejection for geo_src_dict and geopoint_dict
 #
-# ValidateTokenizerVsColumn (server/catalog/index.cpp) runs ValidateGeometryCRS84
+# ValidateColumn (server/connector/inverted_index_bind.cpp) runs ValidateGeometryCRS84
 # *first* inside the GEOMETRY branch, before the geopoint-on-GEOMETRY check.
 # So for geopoint_dict on a GEOMETRY column the JSON-only error is only
 # reachable when the CRS already passes CRS84 validation -- g4 already pins

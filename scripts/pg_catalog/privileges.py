@@ -10,8 +10,8 @@ PRIVILEGES = os.path.join(DUCKDB_INCLUDE, 'catalog', 'privileges.hpp')
 
 CONTAINERS = ('NONE', 'CLUSTER', 'DATABASE', 'SCHEMA', 'RELATION')
 
-USES = (('Own', 33), ('Drop', 34), ('Rename', 35), ('SetRole', 37),
-        ('Any', 38))
+USES = (('See', 32), ('Own', 33), ('Drop', 34), ('Rename', 35),
+        ('SetRole', 37), ('Any', 38))
 
 KINDS = (
     ('OBJECT_TABLE', 'SCHEMA', ('TABLE_ENTRY', ('VIEW_ENTRY', 'OBJECT_VIEW'))),

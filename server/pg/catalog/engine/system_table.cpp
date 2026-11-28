@@ -56,69 +56,15 @@ uint64_t RoleBit(duckdb::idx_t role) {
            : uint64_t{1} << (duckdb::Hash(uint64_t{role}) % 63);
 }
 
-uint64_t GranteeBits(std::span<const duckdb::AclItem> acl,
-                     duckdb::AclMode privileges) {
-  uint64_t bits = 0;
-  for (const auto& item : acl) {
-    if ((item.privs & privileges) != duckdb::AclMode::NoRights) {
-      bits |= RoleBit(item.grantee);
-    }
-  }
-  return bits;
-}
-
-uint64_t HolderBits(const duckdb::ObjectKind& kind,
-                    const duckdb::Permissions& permissions) {
-  const auto bits = RoleBit(permissions.owner);
-  if (!permissions.UsesDefaultAcl()) {
-    return bits | GranteeBits(permissions.acl, kind.privileges);
-  }
-  return (kind.public_privileges & kind.privileges) != duckdb::AclMode::NoRights
-           ? bits | kPublicBit
-           : bits;
-}
-
-uint64_t OwnBits(const duckdb::CatalogEntry& entry) {
-  if (entry.internal || duckdb::PermissionsOf(entry).owner == 0) {
-    return kVisibleToAll;
-  }
-  const auto& kind = duckdb::ObjectKindOf(entry.type);
-  switch (entry.type) {
-    case duckdb::CatalogType::SCHEMA_ENTRY:
-    case duckdb::CatalogType::SEQUENCE_ENTRY:
-    case duckdb::CatalogType::TYPE_ENTRY:
-    case duckdb::CatalogType::JOB_ENTRY:
-      return HolderBits(kind, entry.permissions);
-    case duckdb::CatalogType::TABLE_ENTRY:
-    case duckdb::CatalogType::VIEW_ENTRY: {
-      auto bits = HolderBits(kind, entry.permissions);
-      duckdb::AnyColumnAcl(entry.Cast<duckdb::StandardEntry>(),
-                           [&](std::span<const duckdb::AclItem> acl) {
-                             bits |=
-                               GranteeBits(acl, duckdb::ACL_COLUMN_PRIVILEGES);
-                             return false;
-                           });
-      return bits;
-    }
-    case duckdb::CatalogType::MACRO_ENTRY:
-    case duckdb::CatalogType::TABLE_MACRO_ENTRY: {
-      const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
-      uint64_t bits = 0;
-      for (const auto& overload : macro.macros) {
-        bits |= HolderBits(kind, macro.OverloadPermissions(*overload));
-      }
-      return bits;
-    }
-    default:
-      return kVisibleToAll;
-  }
-}
-
 }  // namespace
 
 uint64_t VisibilityBits(const duckdb::CatalogEntry& entry) {
-  const auto bits = OwnBits(entry);
-  if (bits == kVisibleToAll || !entry.ParentSchemaOid()) {
+  uint64_t bits = 0;
+  duckdb::ForEachSeer(entry, [&](duckdb::idx_t seer) {
+    bits |= RoleBit(seer);
+    return false;
+  });
+  if ((bits & kPublicBit) || !entry.ParentSchemaOid()) {
     return bits;
   }
   const auto& schema_info =

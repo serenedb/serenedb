@@ -610,6 +610,13 @@ class SystemScan {
   bool Shows(duckdb::CatalogEntry& entry) const {
     return _retriever.Shows(entry);
   }
+  bool Shows(duckdb::CatalogEntry& entry,
+             const duckdb::SchemaView& schema) const {
+    return _retriever.Shows(entry, schema);
+  }
+  duckdb::SchemaView View(const duckdb::SchemaCatalogEntry& schema) const {
+    return _retriever.View(schema);
+  }
   bool ShowsColumn(const duckdb::CatalogEntry& relation,
                    std::span<const duckdb::AclItem> acl);
   bool ShowsActivityOf(duckdb::idx_t role) const {
@@ -1088,8 +1095,9 @@ concept Visits = requires(T& table, Entry& entry) { table.Row(entry); };
 
 template<typename Entry, typename T>
   requires Visits<T, Entry>
-void Visit(T& table, duckdb::CatalogEntry& entry) {
-  if (!table.Shows(entry)) {
+void Visit(T& table, duckdb::CatalogEntry& entry,
+           duckdb::optional_ptr<const duckdb::SchemaView> schema = nullptr) {
+  if (!(schema ? table.Shows(entry, *schema) : table.Shows(entry))) {
     return;
   }
 #ifdef SDB_DEV
@@ -1102,7 +1110,8 @@ void Visit(T& table, duckdb::CatalogEntry& entry) {
 }
 
 template<typename Entry>
-void Visit(SystemScan&, duckdb::CatalogEntry&) {
+void Visit(SystemScan&, duckdb::CatalogEntry&,
+           duckdb::optional_ptr<const duckdb::SchemaView> = nullptr) {
   static_assert(sizeof(Entry) > 0,
                 "dispatching an entry kind needs its definition");
 }
@@ -1287,13 +1296,15 @@ class SystemCursor<SystemEntries> final {
     if constexpr (Visits<T, duckdb::TableCatalogEntry> ||
                   Visits<T, duckdb::ViewCatalogEntry>) {
       if (relations) {
-        return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-          if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
-            Visit<duckdb::TableCatalogEntry>(table, entry);
-          } else {
-            Visit<duckdb::ViewCatalogEntry>(table, entry);
-          }
-        });
+        return Walk(
+          table, schema,
+          [&](duckdb::CatalogEntry& entry, const duckdb::SchemaView& view) {
+            if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+              Visit<duckdb::TableCatalogEntry>(table, entry, &view);
+            } else {
+              Visit<duckdb::ViewCatalogEntry>(table, entry, &view);
+            }
+          });
       }
     }
     if constexpr (Visits<T, duckdb::IndexCatalogEntry>) {
@@ -1327,9 +1338,11 @@ class SystemCursor<SystemEntries> final {
 
   template<typename Entry, typename T>
   bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema) {
-    return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-      Visit<Entry>(table, entry);
-    });
+    return Walk(
+      table, schema,
+      [&](duckdb::CatalogEntry& entry, const duckdb::SchemaView& view) {
+        Visit<Entry>(table, entry, &view);
+      });
   }
 
   template<typename T>
@@ -1359,6 +1372,7 @@ class SystemCursor<SystemEntries> final {
       return !visibility.empty() && !(visibility[pos] & viewer);
     };
     const bool user_schema = !schema.internal;
+    const auto view = table.View(schema);
     table.Walking(_set.snapshot.get());
     for (; _pos < entries.size(); ++_pos) {
       if (hidden(_pos)) {
@@ -1373,7 +1387,7 @@ class SystemCursor<SystemEntries> final {
           (entry.internal && user_schema)) {
         continue;
       }
-      if (table.Step([&] { visit(entry); })) {
+      if (table.Step([&] { visit(entry, view); })) {
         return true;
       }
     }

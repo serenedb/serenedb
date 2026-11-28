@@ -47,6 +47,7 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -439,7 +440,7 @@ struct FilterPrinter {
     }
     const auto& child = *filters.front();
     return child.type() == Type<All>::id() && child.GetBoost() == kNoBoost &&
-           !child.GetScorer();
+           (!child.GetScorer() || IsUnscored(*child.GetScorer()));
   }
 
   ExplainNode BuildBool(const BooleanFilter& filter) const {

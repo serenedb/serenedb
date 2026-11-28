@@ -1975,6 +1975,23 @@ void CloseScope(BoolTarget parent, std::unique_ptr<irs::BooleanFilter> scope) {
   }
 }
 
+void CloseUnscoredScope(BoolTarget parent,
+                        std::unique_ptr<irs::BooleanFilter> scope) {
+  if (parent.occur == irs::Occur::Must && scope->Size(irs::Occur::Must) == 0 &&
+      scope->Size(irs::Occur::Should) == 0) {
+    auto& excluded = scope->Bucket(irs::Occur::MustNot);
+    for (auto& term : excluded.terms) {
+      parent.node->Add(std::move(term), irs::Occur::MustNot);
+    }
+    for (auto& child : excluded.filters) {
+      parent.node->Add(std::move(child), irs::Occur::MustNot);
+    }
+    return;
+  }
+  scope->SetScorer(&irs::Unscored::Instance());
+  CloseScope(parent, std::move(scope));
+}
+
 irs::ScoreMergeType* WordsMerge(irs::Filter& filter) {
   const auto type = filter.type();
   if (type == irs::Type<irs::ByPrefix>::id()) {
@@ -2408,7 +2425,7 @@ absl::Status FromOperatorExpression(
 
 absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& expr) {
-  if (!ctx.unscored &&
+  if (!ctx.negated && !ctx.unscored &&
       expr.GetRewriteGuard() == duckdb::RewriteGuard::UNSCORED) {
     auto sub_ctx = ctx;
     sub_ctx.unscored = true;
@@ -2416,8 +2433,7 @@ absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
     if (auto s = FromExpression(ScopeTarget(scope), sub_ctx, expr); !s.ok()) {
       return s;
     }
-    scope->SetScorer(&irs::Unscored::Instance());
-    CloseScope(filter, std::move(scope));
+    CloseUnscoredScope(filter, std::move(scope));
     return absl::OkStatus();
   }
   // Peel the TSQUERY_MODIFIER -> BOOLEAN coercion that the WHERE-binder

@@ -40,6 +40,7 @@
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>

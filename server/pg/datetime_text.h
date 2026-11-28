@@ -83,20 +83,40 @@ inline size_t FormatDate(char* out, int32_t days) noexcept {
   return 10;
 }
 
-inline size_t FormatTimestamp(char* out, int64_t micros) noexcept {
-  int64_t days = micros / kMicrosPerDay;
-  int64_t time = micros % kMicrosPerDay;
+inline constexpr int64_t kNanosPerDay = kMicrosPerDay * 1'000;
+inline constexpr size_t kMaxTimestampNsText =
+  sizeof("9999-12-31 23:59:59.999999999") - 1;
+
+template<int64_t kPerDay>
+constexpr void SplitDays(int64_t value, int64_t offset, int64_t& days,
+                         int64_t& time) noexcept {
+  days = value / kPerDay;
+  time = value % kPerDay;
   if (time < 0) {
-    time += kMicrosPerDay;
+    time += kPerDay;
     --days;
   }
+  time += offset;
+  if (time >= kPerDay) {
+    time -= kPerDay;
+    ++days;
+  } else if (time < 0) {
+    time += kPerDay;
+    --days;
+  }
+}
+
+template<uint32_t kFractionDigits>
+size_t FormatTimestampParts(char* out, int64_t days, uint64_t time) noexcept {
+  constexpr uint64_t kPerSecond =
+    kFractionDigits == 9 ? 1'000'000'000 : 1'000'000;
   if (days < kMinFastDays || days > kMaxFastDays) {
     return 0;
   }
   FormatDate(out, static_cast<int32_t>(days));
   out[10] = ' ';
-  const auto seconds = static_cast<uint32_t>(time / 1'000'000);
-  const auto fraction = static_cast<uint32_t>(time % 1'000'000);
+  const auto seconds = static_cast<uint32_t>(time / kPerSecond);
+  auto fraction = time % kPerSecond;
   WriteDigitPair(out + 11, seconds / 3600);
   out[13] = ':';
   WriteDigitPair(out + 14, seconds / 60 % 60);
@@ -106,14 +126,29 @@ inline size_t FormatTimestamp(char* out, int64_t micros) noexcept {
     return 19;
   }
   out[19] = '.';
-  WriteDigitPair(out + 20, fraction / 10000);
-  WriteDigitPair(out + 22, fraction / 100 % 100);
-  WriteDigitPair(out + 24, fraction % 100);
-  size_t size = 26;
+  char* digits = out + 20;
+  if constexpr (kFractionDigits == 9) {
+    *digits++ = static_cast<char>('0' + fraction / 100'000'000);
+    fraction %= 100'000'000;
+    digits =
+      WriteDigitPair(digits, static_cast<uint32_t>(fraction / 1'000'000));
+    fraction %= 1'000'000;
+  }
+  WriteDigitPair(digits, static_cast<uint32_t>(fraction / 10000));
+  WriteDigitPair(digits + 2, static_cast<uint32_t>(fraction / 100 % 100));
+  WriteDigitPair(digits + 4, static_cast<uint32_t>(fraction % 100));
+  size_t size = 20 + kFractionDigits;
   while (out[size - 1] == '0') {
     --size;
   }
   return size;
+}
+
+inline size_t FormatTimestamp(char* out, int64_t micros) noexcept {
+  int64_t days = 0;
+  int64_t time = 0;
+  SplitDays<kMicrosPerDay>(micros, 0, days, time);
+  return FormatTimestampParts<6>(out, days, static_cast<uint64_t>(time));
 }
 
 }  // namespace sdb::pg

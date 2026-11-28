@@ -1175,6 +1175,25 @@ int32_t SessionOffsetSeconds(const SerializationContext& ctx, int64_t utc_us) {
 inline constexpr absl::CharSet kTimestampTzCopyDelims =
   kTimestampCopyDelims | absl::CharSet{"+"};
 
+inline constexpr uint32_t kTimestampTextBound = 64;
+
+size_t RenderLocalTimestamp(char* buf, int64_t utc_us, int32_t offset_secs) {
+  int64_t days = 0;
+  int64_t time = 0;
+  SplitDays<kMicrosPerDay>(utc_us, int64_t{offset_secs} * 1'000'000, days,
+                           time);
+  if (const auto size =
+        FormatTimestampParts<6>(buf, days, static_cast<uint64_t>(time))) {
+    return size;
+  }
+  const auto text =
+    duckdb::Date::ToString(duckdb::date_t{static_cast<int32_t>(days)}) + " " +
+    duckdb::Time::ToString(duckdb::dtime_t{time});
+  SDB_ASSERT(text.size() <= kTimestampTextBound);
+  std::memcpy(buf, text.data(), text.size());
+  return text.size();
+}
+
 template<WrapContext InContainer, bool kCopyDelim = false>
 struct TimestampTzTextCore {
   using Value = duckdb::timestamp_tz_t;
@@ -1184,24 +1203,13 @@ struct TimestampTzTextCore {
     const auto ts = duckdb::timestamp_t{tz};
     if (ctx.time_zone && ts.IsFinite()) {
       const auto offset_secs = SessionOffsetSeconds(ctx, ts.value);
-      int64_t local_us = 0;
-      if (duckdb::TryAddOperator::Operation(
-            ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
-        char buf[kMaxTimestampText];
-        if (const auto size = FormatTimestamp(buf, local_us)) {
-          WithWrapIfNested<InContainer>(ctx, true, [&] {
-            WriteText<kCopyDelim>(ctx, std::string_view{buf, size});
-            WriteTzOffsetSuffix<kCopyDelim>(ctx, offset_secs);
-          });
-          return;
-        }
-        auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{local_us});
-        WithWrapIfNested<InContainer>(ctx, true, [&] {
-          WriteText<kCopyDelim>(ctx, str);
-          WriteTzOffsetSuffix<kCopyDelim>(ctx, offset_secs);
-        });
-        return;
-      }
+      char buf[kTimestampTextBound];
+      const auto size = RenderLocalTimestamp(buf, ts.value, offset_secs);
+      WithWrapIfNested<InContainer>(ctx, true, [&] {
+        WriteText<kCopyDelim>(ctx, std::string_view{buf, size});
+        WriteTzOffsetSuffix<kCopyDelim>(ctx, offset_secs);
+      });
+      return;
     }
     char buf[kMaxTimestampText];
     if (const auto size = FormatTimestamp(buf, ts.value)) {
@@ -1220,8 +1228,6 @@ struct TimestampTzTextCore {
     });
   }
 };
-
-inline constexpr uint32_t kTimestampTextBound = 64;
 
 IRS_FORCE_INLINE size_t RenderTimestampText(char* buf, int64_t micros) {
   if (const auto size = FormatTimestamp(buf, micros)) {
@@ -1252,12 +1258,8 @@ struct TimestampTzTextSized {
     const auto ts = duckdb::timestamp_t{tz};
     if (ctx.time_zone && ts.IsFinite()) {
       const auto offset_secs = SessionOffsetSeconds(ctx, ts.value);
-      int64_t local_us = 0;
-      if (duckdb::TryAddOperator::Operation(
-            ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
-        const auto size = RenderTimestampText(buf, local_us);
-        return size + RenderTzOffset(buf + size, offset_secs);
-      }
+      const auto size = RenderLocalTimestamp(buf, ts.value, offset_secs);
+      return size + RenderTzOffset(buf + size, offset_secs);
     }
     const auto size = RenderTimestampText(buf, ts.value);
     if (!ts.IsFinite()) {
@@ -1283,22 +1285,23 @@ struct TimestampTzNsTextCore {
   using CopyDelimEscaped = TimestampTzNsTextCore<InContainer, true>;
   static constexpr absl::CharSet kCopyDelims = kTimestampTzCopyDelims;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
-    duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     if (ctx.time_zone && tz.IsFinite()) {
       const auto offset_secs = SessionOffsetSeconds(ctx, tz.value / 1'000);
-      int64_t local_ns = 0;
-      if (duckdb::TryAddOperator::Operation(
-            tz.value, int64_t{offset_secs} * 1'000'000'000, local_ns)) {
-        const auto str =
-          duckdb::StringCast::Operation(duckdb::timestamp_ns_t{local_ns}, heap);
+      int64_t days = 0;
+      int64_t time = 0;
+      SplitDays<kNanosPerDay>(tz.value, int64_t{offset_secs} * 1'000'000'000,
+                              days, time);
+      char buf[kMaxTimestampNsText];
+      if (const auto size =
+            FormatTimestampParts<9>(buf, days, static_cast<uint64_t>(time))) {
         WithWrapIfNested<InContainer>(ctx, true, [&] {
-          WriteText<kCopyDelim>(ctx,
-                                std::string_view{str.GetData(), str.GetSize()});
+          WriteText<kCopyDelim>(ctx, std::string_view{buf, size});
           WriteTzOffsetSuffix<kCopyDelim>(ctx, offset_secs);
         });
         return;
       }
     }
+    duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(tz, heap);
     WithWrapIfNested<InContainer>(ctx, tz.IsFinite(), [&] {
       WriteText<kCopyDelim>(ctx,

@@ -45,6 +45,7 @@
 #include "connector/functions/list_token_sink.hpp"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
+#include "connector/geo_validate.h"
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
@@ -266,6 +267,11 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   auto& context = input.GetClientContext();
   auto& conn_ctx = ConnectionContext::Get(context);
   DynamicCtx ctx{.db_id = conn_ctx.GetDatabaseId()};
+  const auto& value = input.GetBoundFunction().GetArguments()[1];
+  if (const auto& arg = input.GetArguments()[1]->GetReturnType();
+      arg.id() == duckdb::LogicalTypeId::GEOMETRY) {
+    ValidateGeometryCRS84(arg, "ts_lexize()");
+  }
 
   auto bind = duckdb::make_uniq<TsLexizeBindData>();
   if (auto val = input.TryGetConstant(0); val && !val->IsNull()) {
@@ -278,7 +284,9 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
     }
     auto& fn = input.GetBoundFunction();
     auto binding = entry->GetTokenizer()->Bind(
-      context, duckdb::ListType::GetChildType(fn.GetReturnType()));
+      context, value.id() == duckdb::LogicalTypeId::LIST
+                 ? duckdb::ListType::GetChildType(value)
+                 : value);
     fn.SetReturnType(
       duckdb::LogicalType::LIST(duckdb::LogicalType{binding->Terms()}));
     bind->state = std::move(binding);
@@ -320,6 +328,10 @@ void RegisterTsLexize(duckdb::ExtensionLoader& loader) {
              text, TsLexizeArrayFunctionDynamic,
              TsLexizeBind<TsLexizeArrayFunctionConstant<1>>));
   }
+  set.AddFunction(
+    MakeFn({duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY()},
+           duckdb::LogicalType::BLOB, TsLexizeFunctionDynamic,
+           TsLexizeBind<TsLexizeFunctionConstant<1>>));
   loader.RegisterFunction(std::move(set));
 }
 

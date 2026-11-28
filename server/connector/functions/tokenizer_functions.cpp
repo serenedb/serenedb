@@ -45,6 +45,7 @@
 
 #include "catalog/entry/tokenizer.h"
 #include "connector/functions/list_token_sink.hpp"
+#include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
 #include "pg/connection_context.h"
 #include "pg/tokenizer_options.h"
@@ -283,7 +284,16 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   }
 
   auto& db = duckdb::DatabaseInstance::GetDatabase(context);
-  const auto& value_type = fn.GetArguments()[0];
+  auto& value_type = fn.GetArguments()[0];
+  if (value_type.id() == duckdb::LogicalTypeId::ANY) {
+    const auto& value = args[0]->GetReturnType();
+    if (value.id() == duckdb::LogicalTypeId::GEOMETRY) {
+      ValidateGeometryCRS84(value, operation);
+      value_type = value;
+    } else {
+      value_type = duckdb::LogicalType::JSON();
+    }
+  }
   irs::analysis::BindContext bind_ctx{
     .client = context,
     .row_alone = connector::ComputedFromRowAlone,
@@ -324,7 +334,7 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
 
 duckdb::LogicalType BindTokenLambda(
   duckdb::ClientContext& /*context*/,
-  const duckdb::vector<duckdb::LogicalType>& /*function_child_types*/,
+  const duckdb::vector<duckdb::LogicalType>& function_child_types,
   duckdb::idx_t parameter_idx,
   duckdb::optional_ptr<duckdb::BindLambdaContext> /*bind_lambda_context*/) {
   if (parameter_idx != 0) {
@@ -332,7 +342,14 @@ duckdb::LogicalType BindTokenLambda(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
       ERR_MSG("the lambda of a token filter takes exactly one parameter"));
   }
-  return duckdb::LogicalType::VARCHAR;
+  const auto& tokens = function_child_types[0];
+  const auto element = tokens.id() == duckdb::LogicalTypeId::LIST
+                         ? duckdb::ListType::GetChildType(tokens).id()
+                         : (tokens.id() == duckdb::LogicalTypeId::ARRAY
+                              ? duckdb::ArrayType::GetChildType(tokens).id()
+                              : duckdb::LogicalTypeId::VARCHAR);
+  return element == duckdb::LogicalTypeId::BLOB ? duckdb::LogicalType::BLOB
+                                                : duckdb::LogicalType::VARCHAR;
 }
 
 duckdb::unique_ptr<duckdb::Expression> RewriteLambdaCall(
@@ -369,10 +386,11 @@ void UnrewrittenLambdaCall(duckdb::DataChunk& /*args*/,
 }
 
 duckdb::ScalarFunction MakeFunction(const pg::OptionGroup& group,
-                                    duckdb::LogicalType value_type) {
+                                    duckdb::LogicalType value_type,
+                                    const duckdb::LogicalType& term) {
   duckdb::ScalarFunction fn{
     {},
-    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+    duckdb::LogicalType::LIST(term),
     TokenizeValues,
     Bind,
     nullptr,
@@ -393,17 +411,16 @@ duckdb::ScalarFunction MakeFunction(const pg::OptionGroup& group,
   return fn;
 }
 
-duckdb::ScalarFunction MakeLambdaFunction() {
+duckdb::ScalarFunction MakeLambdaFunction(const duckdb::LogicalType& element) {
   duckdb::ScalarFunction fn{
     {},
-    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+    duckdb::LogicalType::LIST(element),
     UnrewrittenLambdaCall,
     nullptr,
   };
   auto& signature = fn.GetSignature();
-  signature.AddParameter(
-    duckdb::Identifier{"value"},
-    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR));
+  signature.AddParameter(duckdb::Identifier{"value"},
+                         duckdb::LogicalType::LIST(element));
   signature.AddParameter(duckdb::Identifier{"predicate"},
                          duckdb::LogicalType::LAMBDA);
   fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
@@ -420,15 +437,27 @@ void RegisterTokenizerFunctions(duckdb::ExtensionLoader& loader) {
       continue;
     }
     duckdb::ScalarFunctionSet set{duckdb::Identifier{group.function}};
-    if (group.input == pg::TemplateInput::Json) {
-      set.AddFunction(MakeFunction(group, duckdb::LogicalType::JSON()));
-    } else {
-      if (TakesLambda(group)) {
-        set.AddFunction(MakeLambdaFunction());
-      }
-      set.AddFunction(MakeFunction(group, duckdb::LogicalType::VARCHAR));
-      set.AddFunction(MakeFunction(
-        group, duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)));
+    switch (group.input) {
+      case pg::TemplateInput::JsonOrGeometry:
+        set.AddFunction(MakeFunction(group, duckdb::LogicalType::ANY,
+                                     duckdb::LogicalType::BLOB));
+        break;
+      case pg::TemplateInput::Json:
+        set.AddFunction(MakeFunction(group, duckdb::LogicalType::JSON(),
+                                     duckdb::LogicalType::BLOB));
+        break;
+      case pg::TemplateInput::Text:
+        for (const auto& element :
+             {duckdb::LogicalType{duckdb::LogicalType::VARCHAR},
+              duckdb::LogicalType{duckdb::LogicalType::BLOB}}) {
+          if (TakesLambda(group)) {
+            set.AddFunction(MakeLambdaFunction(element));
+          }
+          set.AddFunction(MakeFunction(group, element, element));
+          set.AddFunction(
+            MakeFunction(group, duckdb::LogicalType::LIST(element), element));
+        }
+        break;
     }
     loader.RegisterFunction(std::move(set));
   }

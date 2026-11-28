@@ -18,8 +18,9 @@ Every template of [`CREATE TEXT SEARCH DICTIONARY`](../../../statements/create_t
 | `VARCHAR` | The value is analyzed as one value, the way a dictionary analyzes one cell. |
 | `VARCHAR[]` | Each element is analyzed on its own and the results are concatenated into one list, so a function applied to another function's result acts as the next stage of a pipeline. |
 | `VARCHAR[]` for `generate_shingles` and `generate_wildcard_ngrams` | The list is one token stream: the elements are the base tokens the shingles or wildcard grams are built from. |
+| `BYTEA`, `BYTEA[]` | The value is read as bytes, the way a dictionary reads a `BYTEA` column: a text template's tokens are then `BYTEA` too, and a list of them is a list of values or a token stream as above. |
 | `NULL` | A `NULL` value yields `NULL`; `NULL` elements of a list are skipped. |
-| `VARCHAR[N]` | A fixed-size array is read as the list it is, in the value position and in a list-valued option. |
+| `VARCHAR[N]`, `BYTEA[N]` | A fixed-size array is read as the list it is, in the value position and in a list-valued option. |
 
 Nesting the functions is the pipeline: the inner call produces the list the outer call re-analyzes element by element, so `stem_words(normalize_tokens(split_text(v, case := 'lower'), 'en_US.UTF-8', accent := false), 'en_US.UTF-8')` is the dictionary `split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')`:
 
@@ -30,6 +31,10 @@ Nesting the functions is the pipeline: the inner call produces the list the oute
 A list literal is analyzed element by element:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/index/list" />
+
+A `BYTEA` value is analyzed as bytes, and the tokens come back as `BLOB`s, decoded here to show them:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/index/bytes" />
 
 `generate_shingles` and `generate_wildcard_ngrams` need a token stream, so they take the output of another function; a bare `VARCHAR` counts as a single token:
 
@@ -45,7 +50,7 @@ An option whose value is a list of strings takes either spelling of the dictiona
 
 <SqlLogicTest id="sql/functions/search/tokenizers/index/constant_option" />
 
-The result type follows the tokenizer: `VARCHAR[]` for every text template, `BLOB[]` for [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md), [`encode_geojson`](./encode_geojson.md), [`generate_wildcard_ngrams`](./generate_wildcard_ngrams.md), [`generate_ngrams`](./generate_ngrams.md) with `input_type := 'binary'`, [`split_by_pattern`](./split_by_pattern.md) with a pattern that holds `\C` and [`split_text_csv`](./split_text_csv.md) with an empty delimiter, whose terms are binary. Such a call can only be the outermost tokenizer call of a chain, since the functions take only text, while a later step of a [pipeline](../../../statements/create_text_search_dictionary/pipeline/index.md) reads those bytes. A template that stores a per-document payload alongside its terms, such as `encode_geojson` with a non-source coding, returns only the terms.
+The result type follows the tokenizer: a text template returns the type it reads, `VARCHAR[]` for text and `BLOB[]` for bytes, while [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md), [`encode_geojson`](./encode_geojson.md), [`generate_wildcard_ngrams`](./generate_wildcard_ngrams.md), [`generate_ngrams`](./generate_ngrams.md) with `input_type := 'binary'`, [`split_by_pattern`](./split_by_pattern.md) with a pattern that holds `\C` and [`split_text_csv`](./split_text_csv.md) with an empty delimiter return `BLOB[]` whatever they read, as their terms are binary. An outer call reads such a result as bytes, the way a later step of a [pipeline](../../../statements/create_text_search_dictionary/pipeline/index.md) does. A template that stores a per-document payload alongside its terms, such as `encode_geojson` with a non-source coding, returns only the terms.
 
 Four templates have no function form, because SQL already expresses them: [`keyword`](../../../statements/create_text_search_dictionary/keyword.md) is the list literal `[value]`, [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) is nesting, [`union`](../../../statements/create_text_search_dictionary/union.md) is `list_concat` of two calls, and a [`sql`](../../../statements/create_text_search_dictionary/sql.md) stage is the expression itself.
 

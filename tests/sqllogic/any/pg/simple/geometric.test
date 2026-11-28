@@ -1610,7 +1610,7 @@ statement ok
 COPY (SELECT '\x3ff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_short_point.bin' (FORMAT binary);
 
 
-statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+statement error (insufficient data left in message|incorrect binary data format)
 COPY geo_bin_one (p) FROM '${__TEST_DIR__}/geo_bin_short_point.bin' (FORMAT binary);
 
 
@@ -1618,7 +1618,7 @@ statement ok
 COPY (SELECT '\x000000000000000000000000000000003ff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_zero_line.bin' (FORMAT binary);
 
 
-statement error (invalid line specification: A and B cannot both be zero|COPY FROM: invalid binary value in column 1)
+statement error (invalid line specification: A and B cannot both be zero|incorrect binary data format)
 COPY geo_bin_one (l) FROM '${__TEST_DIR__}/geo_bin_zero_line.bin' (FORMAT binary);
 
 
@@ -1626,7 +1626,7 @@ statement ok
 COPY (SELECT '\x00000000000000000000000000000000bff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_negative_circle.bin' (FORMAT binary);
 
 
-statement error (invalid radius in external "circle" value|COPY FROM: invalid binary value in column 1)
+statement error (invalid radius in external "circle" value|incorrect binary data format)
 COPY geo_bin_one (c) FROM '${__TEST_DIR__}/geo_bin_negative_circle.bin' (FORMAT binary);
 
 
@@ -1634,7 +1634,7 @@ statement ok
 COPY (SELECT '\x'::bytea) TO '${__TEST_DIR__}/geo_bin_empty_path.bin' (FORMAT binary);
 
 
-statement error (no data left in message|COPY FROM: invalid binary value in column 1)
+statement error (no data left in message|incorrect binary data format)
 COPY geo_bin_one (a) FROM '${__TEST_DIR__}/geo_bin_empty_path.bin' (FORMAT binary);
 
 
@@ -1642,7 +1642,7 @@ statement ok
 COPY (SELECT '\x010000'::bytea) TO '${__TEST_DIR__}/geo_bin_short_path.bin' (FORMAT binary);
 
 
-statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+statement error (insufficient data left in message|incorrect binary data format)
 COPY geo_bin_one (a) FROM '${__TEST_DIR__}/geo_bin_short_path.bin' (FORMAT binary);
 
 
@@ -1650,7 +1650,7 @@ statement ok
 COPY (SELECT '\x00000000'::bytea) TO '${__TEST_DIR__}/geo_bin_no_points.bin' (FORMAT binary);
 
 
-statement error (invalid number of points in external "polygon" value|COPY FROM: invalid binary value in column 1)
+statement error (invalid number of points in external "polygon" value|incorrect binary data format)
 COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_no_points.bin' (FORMAT binary);
 
 
@@ -1658,7 +1658,7 @@ statement ok
 COPY (SELECT '\x7fffffff'::bytea) TO '${__TEST_DIR__}/geo_bin_many_points.bin' (FORMAT binary);
 
 
-statement error (invalid number of points in external "polygon" value|COPY FROM: invalid binary value in column 1)
+statement error (invalid number of points in external "polygon" value|incorrect binary data format)
 COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_many_points.bin' (FORMAT binary);
 
 
@@ -1666,5 +1666,5 @@ statement ok
 COPY (SELECT '\x0000000200000000000000000000000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_missing_point.bin' (FORMAT binary);
 
 
-statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+statement error (insufficient data left in message|incorrect binary data format)
 COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_missing_point.bin' (FORMAT binary);

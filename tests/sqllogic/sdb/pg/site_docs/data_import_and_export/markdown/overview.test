@@ -1,0 +1,267 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT E'---\ntitle: Hello\nauthor: Ana\n---\n\n# Hello\n\nFirst post.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_001_post.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT metadata['title'] AS title, metadata['author'] AS author
+#| FROM read_markdown('post.md');
+
+# DOCS_TEST_BODY
+
+query
+SELECT metadata['title'] AS title, metadata['author'] AS author
+FROM read_markdown('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_001_post.md');
+----
+title	author
+Hello	Ana
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT E'---\ntitle: Hello\nauthor: Ana\n---\n\n# Hello\n\nFirst post.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_002_post.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT metadata['title'] AS title
+#| FROM 'post.md';
+
+# DOCS_TEST_BODY
+
+query
+SELECT metadata['title'] AS title
+FROM '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_002_post.md';
+----
+title
+Hello
+
+# DOCS_TEST: example_003
+
+statement ok
+COPY (SELECT E'# Guide\n\nWelcome.\n\n## Install\n\nRun the installer.\n\n### Linux\n\nUse the package.\n\n## Usage\n\nRun it.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_003_guide.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT section_id, section_path, level, title, parent_id, start_line, end_line
+#| FROM read_markdown_sections('guide.md')
+#| ORDER BY start_line;
+
+# DOCS_TEST_BODY
+
+query
+SELECT section_id, section_path, level, title, parent_id, start_line, end_line
+FROM read_markdown_sections('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_003_guide.md')
+ORDER BY start_line;
+----
+section_id	section_path	level	title	parent_id	start_line	end_line
+guide	guide	1	Guide	NULL	1	4
+install	guide/install	2	Install	guide	5	8
+linux	guide/install/linux	3	Linux	install	9	12
+usage	guide/usage	2	Usage	guide	13	15
+
+# DOCS_TEST: example_004
+
+statement ok
+COPY (SELECT E'# Guide\n\nWelcome.\n\n## Install\n\nRun the installer.\n\n### Linux\n\nUse the package.\n\n## Usage\n\nRun it.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_004_guide.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT section_id, level, title
+#| FROM read_markdown_sections('guide.md', section_filter = 'install')
+#| ORDER BY start_line;
+#|
+#| SELECT section_id, level, title
+#| FROM read_markdown_sections('guide.md#install')
+#| ORDER BY start_line;
+
+# DOCS_TEST_BODY
+
+query
+SELECT section_id, level, title
+FROM read_markdown_sections('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_004_guide.md', section_filter = 'install')
+ORDER BY start_line;
+----
+section_id	level	title
+install	2	Install
+linux	3	Linux
+
+query
+SELECT section_id, level, title
+FROM read_markdown_sections('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_004_guide.md#install')
+ORDER BY start_line;
+----
+section_id	level	title
+install	2	Install
+linux	3	Linux
+
+# DOCS_TEST: example_005
+
+statement ok
+COPY (SELECT E'# Hello\n\nThis is a paragraph.\n\n```sql\nSELECT 1;\n```') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_005_blocks.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT element_order, element_type, content, attributes['language'] AS language
+#| FROM read_markdown_blocks('blocks.md')
+#| ORDER BY element_order;
+
+# DOCS_TEST_BODY
+
+query
+SELECT element_order, element_type, content, attributes['language'] AS language
+FROM read_markdown_blocks('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_005_blocks.md')
+ORDER BY element_order;
+----
+element_order	element_type	content	language
+0	heading	Hello	NULL
+1	paragraph	This is a paragraph.	NULL
+2	code	SELECT 1;	sql
+
+# DOCS_TEST: example_006
+
+statement ok
+COPY (SELECT E'# Alpha\n\nFirst note.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_006_notes_a.md' (FORMAT csv, HEADER false, QUOTE '');
+
+statement ok
+COPY (SELECT E'# Beta\n\nSecond note.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_006_notes_b.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT filename, title
+#| FROM read_markdown_sections('notes_*.md', filename = true)
+#| ORDER BY filename;
+#|
+#| SELECT title
+#| FROM read_markdown_sections(['notes_a.md', 'notes_b.md'])
+#| ORDER BY title;
+
+# DOCS_TEST_BODY
+
+query
+SELECT replace(filename, '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_006_', '') AS filename, title
+FROM read_markdown_sections('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_006_notes_*.md', filename = true)
+ORDER BY filename;
+----
+filename	title
+notes_a.md	Alpha
+notes_b.md	Beta
+
+query
+SELECT title
+FROM read_markdown_sections(['${__TEST_DIR__}/data_import_and_export_markdown_overview_example_006_notes_a.md', '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_006_notes_b.md'])
+ORDER BY title;
+----
+title
+Alpha
+Beta
+
+# DOCS_TEST: example_007
+
+statement ok
+COPY (SELECT E'# Alpha\n\nFirst note.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_007_notes.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT count(*) AS documents
+#| FROM read_markdown(['notes.md', 'missing.md'], ignore_errors = true);
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS documents
+FROM read_markdown(['${__TEST_DIR__}/data_import_and_export_markdown_overview_example_007_notes.md', '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_007_missing.md'], ignore_errors = true);
+----
+documents
+1
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT *
+#|     FROM (VALUES (1, 'Ana', 95.5, true), (2, 'B|o', NULL, false)) AS t(id, name, score, passed)
+#| ) TO 'scores.md' (FORMAT markdown, null_value '-');
+#|
+#| SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+#| FROM read_text('scores.md');
+
+# DOCS_TEST_BODY
+
+statement count 2
+COPY (
+    SELECT *
+    FROM (VALUES (1, 'Ana', 95.5, true), (2, 'B|o', NULL, false)) AS t(id, name, score, passed)
+) TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_008_scores.md' (FORMAT markdown, null_value '-');
+
+query
+SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+FROM read_text('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_008_scores.md');
+----
+line
+| id | name | score | passed |
+|---:|---|---:|:---:|
+| 1 | Ana | 95.5 | true |
+| 2 | B\\|o | - | false |
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT *
+#|     FROM (VALUES (0, NULL, 'title: Guide'), (1, 'Install', 'Run the installer.'), (2, 'Linux', 'Use the package.')) AS t(level, title, content)
+#| ) TO 'guide.md' (FORMAT markdown, markdown_mode 'document');
+#|
+#| SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+#| FROM read_text('guide.md');
+
+# DOCS_TEST_BODY
+
+statement count 3
+COPY (
+    SELECT *
+    FROM (VALUES (0, NULL, 'title: Guide'), (1, 'Install', 'Run the installer.'), (2, 'Linux', 'Use the package.')) AS t(level, title, content)
+) TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_009_guide.md' (FORMAT markdown, markdown_mode 'document');
+
+query
+SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+FROM read_text('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_009_guide.md');
+----
+line
+---
+title: Guide
+---
+(empty)
+# Install
+(empty)
+Run the installer.
+(empty)
+## Linux
+(empty)
+Use the package.
+
+# DOCS_TEST: example_010
+
+statement ok
+COPY (SELECT E'# Hello\n\nThis is a paragraph.') TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_010_blocks.md' (FORMAT csv, HEADER false, QUOTE '');
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT kind, element_type, upper(content) AS content, level, encoding, attributes
+#|     FROM read_markdown_blocks('blocks.md')
+#| ) TO 'upper.md' (FORMAT markdown, markdown_mode 'blocks');
+#|
+#| SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+#| FROM read_text('upper.md');
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (
+    SELECT kind, element_type, upper(content) AS content, level, encoding, attributes
+    FROM read_markdown_blocks('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_010_blocks.md')
+) TO '${__TEST_DIR__}/data_import_and_export_markdown_overview_example_010_upper.md' (FORMAT markdown, markdown_mode 'blocks');
+
+query
+SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+FROM read_text('${__TEST_DIR__}/data_import_and_export_markdown_overview_example_010_upper.md');
+----
+line
+# HELLO
+(empty)
+THIS IS A PARAGRAPH.

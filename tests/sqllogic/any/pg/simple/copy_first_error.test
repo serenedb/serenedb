@@ -1,0 +1,236 @@
+control substitution on
+
+statement ok
+CREATE TABLE cfe (id INTEGER, label TEXT);
+
+
+statement ok
+CREATE TABLE cfe_pair (a INTEGER, b INTEGER);
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES ('abc,first'), ('1,x'), ('5,"unterminated')) v(l))
+TO '${__TEST_DIR__}/cfe_unterminated.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_unterminated.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,x'), ('y,2')) v(l))
+TO '${__TEST_DIR__}/cfe_columns.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe_pair FROM '${__TEST_DIR__}/cfe_columns.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "x"
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES ('abc')) v(l))
+TO '${__TEST_DIR__}/cfe_short.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_short.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES ('abc,x,extra')) v(l))
+TO '${__TEST_DIR__}/cfe_long.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_long.csv' (FORMAT csv);
+----
+db error: ERROR: extra data after last expected column
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1'), ('abc,x')) v(l))
+TO '${__TEST_DIR__}/cfe_short_first.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_short_first.csv' (FORMAT csv);
+----
+db error: ERROR: missing data for column "label"
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES (E'abc\tfirst'), ('1')) v(l))
+TO '${__TEST_DIR__}/cfe_short_after.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_short_after.txt';
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES (E'1\tx'), (E'y\t2')) v(l))
+TO '${__TEST_DIR__}/cfe_columns.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe_pair FROM '${__TEST_DIR__}/cfe_columns.txt';
+----
+db error: ERROR: invalid input syntax for type integer: "x"
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES ('abc')) v(l))
+TO '${__TEST_DIR__}/cfe_short.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_short.txt';
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES (E'abc\tx\textra')) v(l))
+TO '${__TEST_DIR__}/cfe_long.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_long.txt';
+----
+db error: ERROR: extra data after last expected column
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES (E'1\tx'), ('abc')) v(l))
+TO '${__TEST_DIR__}/cfe_short_second.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_short_second.txt';
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('abc,x'), ('1,D')) v(l))
+TO '${__TEST_DIR__}/cfe_marker_after.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_marker_after.csv' (FORMAT csv, DEFAULT 'D');
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES ('D,"unterminated')) v(l))
+TO '${__TEST_DIR__}/cfe_marker_unterminated.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_marker_unterminated.csv' (FORMAT csv, DEFAULT 'D');
+----
+db error: ERROR: unexpected default marker in COPY data
+DETAIL: Column "id" has no default value.
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('abc,x'), ('1,ÿ')) v(l))
+TO '${__TEST_DIR__}/cfe_bytes_after.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01', ENCODING 'LATIN1');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_bytes_after.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,ÿ'), ('abc,x')) v(l))
+TO '${__TEST_DIR__}/cfe_bytes_first.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01', ENCODING 'LATIN1');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_bytes_first.csv' (FORMAT csv);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES ('abc,ÿ')) v(l))
+TO '${__TEST_DIR__}/cfe_bytes_same_row.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01', ENCODING 'LATIN1');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_bytes_same_row.csv' (FORMAT csv);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,x'), ('ÿ,y')) v(l))
+TO '${__TEST_DIR__}/cfe_bytes_number.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01', ENCODING 'LATIN1');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_bytes_number.csv' (FORMAT csv);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES (E'abc\tx'), (E'1\tÿ')) v(l))
+TO '${__TEST_DIR__}/cfe_bytes_after.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01', ENCODING 'LATIN1');
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_bytes_after.txt';
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement count 262144
+COPY (
+  SELECT CASE WHEN i = 65530 THEN 'xxxxxxx' ELSE lpad(i::text, 7, '0') END || ','
+      || CASE WHEN i = 65540 THEN 'D' ELSE 'abcdefg' END
+  FROM generate_series(0, 262143) AS s(i)
+  ORDER BY i
+) TO '${__TEST_DIR__}/cfe_ranges.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 262144
+COPY (
+  SELECT CASE WHEN i = 65530 THEN 'xxxxxxx' ELSE lpad(i::text, 7, '0') END || E'\t'
+      || CASE WHEN i = 65540 THEN 'D' ELSE 'abcdefg' END
+  FROM generate_series(0, 262143) AS s(i)
+  ORDER BY i
+) TO '${__TEST_DIR__}/cfe_ranges.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+onlyif serenedb
+statement ok
+SET threads = 4;
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_ranges.csv' (FORMAT csv, DEFAULT 'D');
+----
+db error: ERROR: invalid input syntax for type integer: "xxxxxxx"
+
+
+statement error
+COPY cfe FROM '${__TEST_DIR__}/cfe_ranges.txt' (DEFAULT 'D');
+----
+db error: ERROR: invalid input syntax for type integer: "xxxxxxx"
+
+
+onlyif serenedb
+statement ok
+RESET threads;

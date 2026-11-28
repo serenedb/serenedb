@@ -1,0 +1,54 @@
+control substitution on
+
+statement ok
+CREATE TABLE ctb (v TEXT);
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES (E'a\\0b')) v(l))
+TO '${__TEST_DIR__}/ctb_octal_nul.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY ctb FROM '${__TEST_DIR__}/ctb_octal_nul.txt';
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES (E'a\\x00b')) v(l))
+TO '${__TEST_DIR__}/ctb_hex_nul.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY ctb FROM '${__TEST_DIR__}/ctb_hex_nul.txt';
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+statement count 1
+COPY (SELECT * FROM (VALUES (E'a\\xffb')) v(l))
+TO '${__TEST_DIR__}/ctb_hex_high.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error
+COPY ctb FROM '${__TEST_DIR__}/ctb_hex_high.txt';
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES (E'caf\\xc3\\xa9'), (E'caf\\303\\251')) v(l))
+TO '${__TEST_DIR__}/ctb_valid.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 2
+COPY ctb FROM '${__TEST_DIR__}/ctb_valid.txt';
+
+
+query
+SELECT v, length(v) AS characters FROM ctb ORDER BY v;
+----
+v	characters
+café	4
+café	4

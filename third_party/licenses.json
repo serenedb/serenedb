@@ -25,13 +25,6 @@
       "files": ["third_party/duckdb/src/include/duckdb/storage/compression/alp/algorithm/LICENSE"]
     },
     {
-      "name": "Apache Avro C",
-      "url": "https://avro.apache.org",
-      "license": "Apache-2.0",
-      "files": ["third_party/avro/lang/c/LICENSE", "third_party/avro/lang/c/NOTICE"],
-      "paths": ["third_party/avro"]
-    },
-    {
       "name": "Apache Parquet",
       "url": "https://parquet.apache.org",
       "license": "Apache-2.0",
@@ -172,6 +165,13 @@
       "paths": ["third_party/duckdb_markdown"]
     },
     {
+      "name": "duckdb-nanoarrow",
+      "url": "https://github.com/duckdb/duckdb-nanoarrow",
+      "license": "MIT",
+      "files": ["third_party/duckdb_nanoarrow/LICENSE"],
+      "paths": ["third_party/duckdb_nanoarrow"]
+    },
+    {
       "name": "duckdb-postgres",
       "url": "https://github.com/duckdb/duckdb-postgres",
       "license": "MIT",
@@ -216,6 +216,13 @@
       "license": "MIT",
       "files": ["third_party/fastText/LICENSE"],
       "paths": ["third_party/fastText"]
+    },
+    {
+      "name": "flatcc",
+      "url": "https://github.com/dvidelabs/flatcc",
+      "license": "Apache-2.0",
+      "files": ["third_party/nanoarrow/thirdparty/flatcc/LICENSE"],
+      "paths": ["third_party/nanoarrow/thirdparty/flatcc"]
     },
     {
       "name": "fmt",
@@ -267,13 +274,6 @@
       "url": "https://github.com/iresearch-toolkit/iresearch",
       "license": "Apache-2.0",
       "files": ["iresearch/LICENSE"]
-    },
-    {
-      "name": "Jansson",
-      "url": "https://github.com/akheron/jansson",
-      "license": "MIT",
-      "files": ["third_party/jansson/LICENSE"],
-      "paths": ["third_party/jansson"]
     },
     {
       "name": "Jaro-Winkler",
@@ -351,6 +351,13 @@
       "license": "Apache-2.0 OR GPL-2.0-or-later",
       "files": ["third_party/duckdb/third_party/mbedtls/LICENSE"],
       "paths": ["third_party/duckdb/third_party/mbedtls"]
+    },
+    {
+      "name": "nanoarrow",
+      "url": "https://arrow.apache.org/nanoarrow",
+      "license": "Apache-2.0",
+      "files": ["third_party/nanoarrow/LICENSE.txt", "third_party/nanoarrow/NOTICE.txt"],
+      "paths": ["third_party/nanoarrow"]
     },
     {
       "name": "OpenBLAS",
@@ -524,13 +531,6 @@
       "license": "MIT",
       "files": ["third_party/yaclib/LICENSE"],
       "paths": ["third_party/yaclib"]
-    },
-    {
-      "name": "yyjson",
-      "url": "https://github.com/ibireme/yyjson",
-      "license": "MIT",
-      "files": ["third_party/duckdb/third_party/yyjson/LICENSE"],
-      "paths": ["third_party/duckdb/third_party/yyjson"]
     },
     {
       "name": "zlib-ng",

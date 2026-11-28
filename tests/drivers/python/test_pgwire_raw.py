@@ -14,7 +14,9 @@ import json
 import select
 import socket
 import struct
+import threading
 import time
+from datetime import datetime, timedelta
 
 import pytest
 from spec_loader import conn_kwargs
@@ -206,11 +208,12 @@ def row_description(msgs):
     return None
 
 
-def await_copied(poller, table, count):
+def await_copied(poller, table, count, at_least=False):
     deadline = time.time() + 10
+    op = ">=" if at_least else "="
     while first_field(poller.run(
             "select count(*) from pg_stat_progress_copy "
-            f"where relid = '{table}'::regclass and tuples_processed = {count}")) != b"1":
+            f"where relid = '{table}'::regclass and tuples_processed {op} {count}")) != b"1":
         assert time.time() < deadline, f"COPY into {table} never took {count} rows"
         time.sleep(0.05)
 
@@ -842,6 +845,12 @@ def test_char_oid18_text_param(conn, param, text):
         (1033, 0, b"garbage", "22P02"),
         (1033, 0, b"nobody_missing=r/postgres", "42704"),
         (2205, 0, b"no_such_table_x", "42P01"),
+        (114, 0, b"x", "22P02"),
+        (114, 0, b"[1] 2", "22P02"),
+        (114, 1, b"{x}", "22P02"),
+        (3802, 1, b"\x01[1 2]", "22P02"),
+        (1700, 1, b"\x00", "08P01"),
+        (1231, 0, b"{1,2", "22P02"),
     ],
 )
 def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
@@ -852,12 +861,189 @@ def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
     assert sqlstates(conn.drain_to_ready()) == [sqlstate]
 
 
+@pytest.mark.parametrize(
+    "sql, param, sqlstate, message",
+    [
+        ("select $1::int4", b"abc", "22P02",
+         'invalid input syntax for type integer: "abc"'),
+        ("select $1::int2", b"99999", "22003",
+         'value "99999" is out of range for type smallint'),
+        ("select $1::date", b"2024-13-01", "22008",
+         'date/time field value out of range: "2024-13-01"'),
+    ],
+)
+def test_malformed_typed_parameter_names_the_value(conn, sql, param, sqlstate,
+                                                   message):
+    conn.parse("", sql, oids=(0,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == [sqlstate]
+    assert [(e.get("M"), e.get("W")) for e in errors(m)] == [
+        (message, "unnamed portal parameter $1 = '...'")
+    ]
+
+
+@pytest.mark.parametrize(
+    "sql, oid, fmt, param, message",
+    [
+        ("select $1::text", 25, 0, b"a\x00b",
+         'invalid byte sequence for encoding "UTF8": 0x00'),
+        ("select $1::text", 25, 1, b"a\x00b",
+         'invalid byte sequence for encoding "UTF8": 0x00'),
+        ("select $1::text", 25, 0, b"a\xffb",
+         'invalid byte sequence for encoding "UTF8": 0xff'),
+        ("select $1::text", 25, 1, b"a\xffb",
+         'invalid byte sequence for encoding "UTF8": 0xff'),
+        ("select $1::int4", 23, 0, b"1\x00",
+         'invalid byte sequence for encoding "UTF8": 0x00'),
+    ],
+)
+def test_parameter_text_must_be_utf8_without_zero_bytes(conn, sql, oid, fmt,
+                                                        param, message):
+    conn.parse("", sql, oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22021"]
+    assert [(e.get("M"), e.get("W")) for e in errors(m)] == [
+        (message, "unnamed portal parameter $1 = '...'")
+    ]
+
+
+def test_malformed_parameter_of_a_named_portal_names_the_portal(conn):
+    conn.parse("", "select $1::int4", oids=(0,))
+    conn.bind("p1", "", params=(b"abc",))
+    conn.execute("p1")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22P02"]
+    assert [(e.get("M"), e.get("W")) for e in errors(m)] == [
+        ('invalid input syntax for type integer: "abc"',
+         "portal \"p1\" parameter $1 = '...'")
+    ]
+
+
+@pytest.mark.parametrize(
+    "param, sqlstate, message",
+    [
+        (b"abc", "22P02", 'invalid input syntax for type numeric: "abc"'),
+        (b"123456", "22003", "numeric field overflow"),
+    ],
+)
+def test_malformed_column_parameter_is_refused(conn, param, sqlstate, message):
+    conn.run_ok("drop table if exists raw_bad_numeric_param")
+    conn.run_ok("create table raw_bad_numeric_param (n numeric(5,2))")
+    conn.parse("", "insert into raw_bad_numeric_param values ($1)", oids=(0,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == [sqlstate], errors(m)
+    assert errors(m)[0]["M"] == message
+    assert first_field(
+        conn.run_ok("select count(*) from raw_bad_numeric_param")) == b"0"
+    conn.run_ok("drop table raw_bad_numeric_param")
+
+
 def test_malformed_map_parameter_is_refused(conn):
     conn.parse("", "select $1::MAP(INT, INT)::text", oids=(0,))
     conn.bind("", "", params=(b'{"(1,2)"x}',), formats=(0,))
     conn.execute("")
     conn.sync()
     assert sqlstates(conn.drain_to_ready()) == ["22P02"]
+
+
+def _micros_since_2000(*parts):
+    return (datetime(*parts) - datetime(2000, 1, 1)) // timedelta(microseconds=1)
+
+
+def _record(*fields):
+    out = struct.pack("!i", len(fields))
+    for oid, value in fields:
+        out += struct.pack("!Ii", oid, len(value)) + value
+    return out
+
+
+def _array_of(oid, *elements):
+    out = struct.pack("!iiIii", 1, 0, oid, len(elements), 1)
+    for element in elements:
+        out += struct.pack("!i", len(element)) + element
+    return out
+
+
+_TS = _micros_since_2000(2024, 1, 2, 3, 4, 5)
+_TS_MS = _micros_since_2000(2024, 1, 2, 3, 4, 5, 123000)
+_TS_US = _micros_since_2000(2024, 1, 2, 3, 4, 5, 123456)
+
+
+@pytest.mark.parametrize(
+    "sql, fmt, param, expected",
+    [
+        ("select $1::tinyint = -5::tinyint", 0, b"-5", b"t"),
+        ("select $1::utinyint = 200::utinyint", 0, b"200", b"t"),
+        ("select $1::usmallint = 60000::usmallint", 0, b"60000", b"t"),
+        ("select $1::uinteger = 4000000000::uinteger", 0, b"4000000000", b"t"),
+        ("select $1::hugeint = '170141183460469231731687303715884105727'::hugeint",
+         0, b"170141183460469231731687303715884105727", b"t"),
+        ("select $1::uhugeint = '340282366920938463463374607431768211455'::uhugeint",
+         0, b"340282366920938463463374607431768211455", b"t"),
+        ("select $1::time_ns = '01:02:03.123456789'::time_ns", 0,
+         b"01:02:03.123456789", b"t"),
+        ("select $1::timestamp_s = '2024-01-02 03:04:05'::timestamp_s", 0,
+         b"2024-01-02 03:04:05", b"t"),
+        ("select $1::timestamp_ms = '2024-01-02 03:04:05.123'::timestamp_ms", 0,
+         b"2024-01-02 03:04:05.123", b"t"),
+        ("select $1::timestamp_ns = '2024-01-02 03:04:05.123456789'::timestamp_ns",
+         0, b"2024-01-02 03:04:05.123456789", b"t"),
+        ("select $1::timestamptz_ns = "
+         "'2024-01-02 03:04:05.123456789+00'::timestamptz_ns",
+         0, b"2024-01-02 03:04:05.123456789+00", b"t"),
+        ("select ($1::STRUCT(a INTEGER, b VARCHAR)).b", 0, b"(1,x)", b"x"),
+        ("select $1::bignum = '123'::bignum", 0, b"123", b"t"),
+        ("select $1::tinyint = -5::tinyint", 1, struct.pack("!h", -5), b"t"),
+        ("select $1::utinyint = 200::utinyint", 1, struct.pack("!h", 200), b"t"),
+        ("select $1::usmallint = 60000::usmallint", 1, struct.pack("!i", 60000),
+         b"t"),
+        ("select $1::uinteger = 4000000000::uinteger", 1,
+         struct.pack("!q", 4000000000), b"t"),
+        ("select $1::money = '12.34'::money", 1, struct.pack("!q", 1234), b"t"),
+        ("select $1::time_ns = '01:02:03.123456'::time_ns", 1,
+         struct.pack("!q", 3723123456), b"t"),
+        ("select $1::timestamp_s = '2024-01-02 03:04:05'::timestamp_s", 1,
+         struct.pack("!q", _TS), b"t"),
+        ("select $1::timestamp_ms = '2024-01-02 03:04:05.123'::timestamp_ms", 1,
+         struct.pack("!q", _TS_MS), b"t"),
+        ("select $1::timestamp_ns = '2024-01-02 03:04:05.123456'::timestamp_ns", 1,
+         struct.pack("!q", _TS_US), b"t"),
+        ("select $1::timestamptz_ns = "
+         "'2024-01-02 03:04:05.123456+00'::timestamptz_ns", 1,
+         struct.pack("!q", _TS_US), b"t"),
+        ("select $1::macaddr = '08:00:2b:01:02:03'::macaddr", 1,
+         bytes.fromhex("08002b010203"), b"t"),
+        ("select $1::macaddr8 = '08:00:2b:01:02:03:04:05'::macaddr8", 1,
+         bytes.fromhex("08002b0102030405"), b"t"),
+        ("select $1::bit(3) = B'101'", 1, struct.pack("!i", 3) + b"\xa0", b"t"),
+        ("select ($1::STRUCT(a INTEGER, b VARCHAR)).b", 1,
+         _record((23, struct.pack("!i", 1)), (25, b"x")), b"x"),
+        ("select ($1::MAP(VARCHAR, INTEGER))['k']", 1,
+         _array_of(2249, _record((25, b"k"), (23, struct.pack("!i", 1)))), b"1"),
+        ("select $1::bignum = '123'::bignum", 1, b"\x00\x01", "22P03"),
+    ],
+)
+def test_parameter_of_a_duckdb_type(conn, sql, fmt, param, expected):
+    conn.parse("", sql, oids=(0,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    if isinstance(expected, str):
+        assert sqlstates(m) == [expected], errors(m)
+        return
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected, first_field(m)
 
 
 def test_aclitem_text_param_is_canonical(conn):
@@ -2067,6 +2253,109 @@ def test_copy_takes_rows_while_the_client_waits(conn):
 
 @pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
+def test_copy_readers_waiting_for_data_leave_their_threads_to_other_sessions(conn):
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_slots")
+        conn.run_ok("create table t_copy_slots(a int)")
+        c.send("Q", _cstr("copy t_copy_slots from stdin (format csv)"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"1\n2\n")
+        await_copied(conn, "t_copy_slots", 2)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked'")
+        c.send("d", b"3\n4\n")
+        deadline = time.time() + 10
+        while "E" in types(conn.run("set sdb_faults='-pause_copy_take_blocked:parked'")):
+            assert time.time() < deadline, "the COPY never waited for data again"
+            time.sleep(0.05)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked:release'")
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY 4\x00"], errors(m)
+    finally:
+        conn.run("reset sdb_faults")
+        c.close()
+        conn.run("drop table if exists t_copy_slots")
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+def test_copy_takes_rows_that_arrive_while_earlier_rows_are_held(conn):
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_held")
+        conn.run_ok("create table t_copy_held(a int)")
+        conn.run_ok("set sdb_faults='pause_copy_from_mid_stream'")
+        c.send("Q", _cstr("copy t_copy_held from stdin"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"1\n2\n")
+        await_copied(conn, "t_copy_held", 2)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked'")
+        c.send("d", b"3\n4\n")
+        deadline = time.time() + 10
+        while "E" in types(conn.run("set sdb_faults='-pause_copy_take_blocked:parked'")):
+            assert time.time() < deadline, "the COPY never waited for more data"
+            time.sleep(0.05)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked:release'")
+        conn.run_ok("set sdb_faults='-pause_copy_from_mid_stream'")
+        await_copied(conn, "t_copy_held", 4)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY 4\x00"], errors(m)
+    finally:
+        conn.run("reset sdb_faults")
+        c.close()
+        conn.run("drop table if exists t_copy_held")
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+def test_copy_stops_reading_while_its_rows_wait(conn):
+    block = b"1234567890\n" * 6000
+    blocks = 800
+    sent = 0
+    finished = threading.Event()
+    c = WireConn()
+
+    def write():
+        nonlocal sent
+        try:
+            for _ in range(blocks):
+                c.send("d", block)
+                sent += 1
+        finally:
+            finished.set()
+
+    conn.run_ok("set sdb_faults='pause_copy_from_mid_stream'")
+    try:
+        c.run_ok("set threads = 1")
+        c.run_ok("drop table if exists t_copy_backlog")
+        c.run_ok("create table t_copy_backlog(a bigint)")
+        c.send("Q", _cstr("copy t_copy_backlog from stdin"))
+        assert c.read_msg()[0] == "G"
+        writer = threading.Thread(target=write, daemon=True)
+        writer.start()
+        deadline = time.time() + 60
+        last = -1
+        while sent != last:
+            assert time.time() < deadline, "the client never stopped sending"
+            last = sent
+            time.sleep(1)
+        assert not finished.is_set() and sent < blocks
+        conn.run_ok("set sdb_faults='-pause_copy_from_mid_stream'")
+        writer.join(timeout=120)
+        assert finished.is_set()
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY %d\x00" % (blocks * 6000)], errors(m)
+    finally:
+        conn.run("reset sdb_faults")
+        c.close()
+        conn.run("drop table if exists t_copy_backlog")
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
 def test_copy_feeder_wake_outlives_the_session(conn):
     conn.run_ok("set sdb_faults='copy_feeder_done_wake'")
     c = WireConn()
@@ -2091,6 +2380,51 @@ def test_copy_feeder_wake_outlives_the_session(conn):
         conn.run("set sdb_faults='-copy_feeder_done_wake'")
         c.sock.close()
         conn.run("drop table if exists t_copy_done_wake")
+
+
+@pytest.mark.parametrize("options,row,rows,taken", [
+    ("format csv, sample_size 1000", b"%d,%s\n", 3072, 3072),
+    ("format csv, auto_detect false", b"%d,%s\n", 3072, 3072),
+    ("format json", b'{"a": %d, "b": "%s"}\n', 3072, 3072),
+])
+def test_copy_from_stdin_takes_rows_before_its_stream_ends(conn, options, row, rows, taken):
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_open")
+        conn.run_ok("create table t_copy_open(a int, b text)")
+        c.send("Q", _cstr(f"copy t_copy_open from stdin ({options})"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"".join(row % (i, b"x" * 1000) for i in range(rows)))
+        await_copied(conn, "t_copy_open", taken, at_least=True)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY %d\x00" % rows], errors(m)
+    finally:
+        c.close()
+        conn.run("drop table if exists t_copy_open")
+
+
+def test_copy_from_stdin_takes_avro_blocks_before_its_stream_ends(conn):
+    rows = 3072
+    written = conn.run(
+        f"copy (select i::int as a, repeat('x', 1000) as b from range({rows}) t(i)) "
+        "to stdout (format avro)")
+    payload = b"".join(p for t, p in written if t == "d")
+    assert len(payload) > 2 << 20, len(payload)
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_open_avro")
+        conn.run_ok("create table t_copy_open_avro(a int, b text)")
+        c.send("Q", _cstr("copy t_copy_open_avro from stdin (format avro)"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", payload)
+        await_copied(conn, "t_copy_open_avro", rows)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY %d\x00" % rows], errors(m)
+    finally:
+        c.close()
+        conn.run("drop table if exists t_copy_open_avro")
 
 
 def test_copy_to_stdout_extended(conn):
@@ -2347,6 +2681,10 @@ def test_copy_text_eod_marker_across_frames(conn):
         ([b"1\tone\n\\.x\n"], None, marker_alone),
         ([b"1\tone\n\\.\rx\n"], None, marker_alone),
         ([b"1\ta\\.b\n"], None, marker_alone),
+        ([b"1\tone\\\n\\.\n"], None, marker_alone),
+        ([b"1\tone\\", b"\n\\.\n"], None, marker_alone),
+        ([b"1\tone\n2\ttwo\\\\\n\\.\n3\tthree\n"], (2, 2), None),
+        ([b"1\tone\n2\ttwo\\", b"\\\n\\.\n3\tthree\n"], (2, 2), None),
     ]
     conn.run_ok("drop table if exists smoke_copy_eod_frames")
     assert "E" not in types(conn.run("create table smoke_copy_eod_frames(a int, b text)"))

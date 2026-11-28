@@ -100,6 +100,7 @@ class WireSinkContext {
   // inherits Direct/Parallel + zero-copy.
   RowEncoding row_encoding = RowEncoding::DataRow;
   bool copy_binary_header = false;
+  bool duckdb_rendering = false;
 
   // Paged Execute (protocol max_rows>0): force single-threaded Direct mode and
   // cap emitted rows at row_budget. The sink suspends (BLOCKED) when the budget
@@ -132,6 +133,7 @@ class WireSinkContext {
     proto = sdb::pg::SerializationContext{};
     row_encoding = RowEncoding::DataRow;
     copy_binary_header = false;
+    duckdb_rendering = false;
     mode = Mode::Direct;
     paged = false;
     row_budget.store(0, std::memory_order_relaxed);

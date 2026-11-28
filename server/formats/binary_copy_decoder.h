@@ -20,12 +20,13 @@
 
 #pragma once
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <exception>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,56 +34,57 @@
 #include "pg/copy_in_batches.h"
 #include "pg/deserialize.h"
 
-namespace sdb::connector {
+namespace sdb::formats {
 
-using CopyDeserializers =
-  std::vector<pg::DeserializationFunction<pg::VectorSink>>;
+inline constexpr size_t kNoColumn = std::numeric_limits<size_t>::max();
 
-struct CopyTextEnd {
-  std::atomic<uint64_t> marker{std::numeric_limits<uint64_t>::max()};
-  std::atomic<uint64_t> latest{0};
+struct CopyRowError {
+  std::exception_ptr error;
+  uint64_t record = 0;
+  size_t column = kNoColumn;
 };
 
-CopyDeserializers MakeCopyDeserializers(
-  const std::vector<duckdb::LogicalType>& types, bool binary);
+[[noreturn]] void ThrowCopyRowError(const pg::CopyInTarget& target,
+                                    const CopyRowError& error, uint64_t line);
 
-bool ProcessTextRow(std::string_view line, char delim,
-                    std::string_view null_str, bool ignore_errors,
-                    const CopyDeserializers& deserializers,
-                    pg::DeserializeContext& dctx, duckdb::DataChunk& output,
-                    duckdb::idx_t row, std::string& field_buf);
-
-class CopyBatchParser {
+class BinaryCopyDecoder {
  public:
-  CopyBatchParser(duckdb::ClientContext& context, pg::CopyInTarget target,
-                  CopyTextEnd& end, std::atomic<uint64_t>& rejected);
+  BinaryCopyDecoder(duckdb::ClientContext& context, pg::CopyInTarget target);
 
   void Start(const pg::CopyBatch& batch);
   bool Active() const noexcept { return static_cast<bool>(_batch); }
   bool Exhausted() const noexcept {
     return _segment == _batch->segments.size();
   }
-  uint64_t Seq() const noexcept { return _batch->seq; }
+  uint64_t Seq() const noexcept { return _seq; }
   void Stop() noexcept { _batch = nullptr; }
   duckdb::idx_t Parse(duckdb::DataChunk& output, duckdb::idx_t row);
 
+  bool Failed() const noexcept { return static_cast<bool>(_error.error); }
+  const CopyRowError& Error() const noexcept { return _error; }
+  uint64_t Lines() const noexcept { return _lines; }
+
  private:
-  duckdb::idx_t ParseText(duckdb::DataChunk& output, duckdb::idx_t row);
-  duckdb::idx_t ParseBinary(duckdb::DataChunk& output, duckdb::idx_t row);
-  void EndMarker();
-  void CountRejected(uint64_t rejected);
+  std::span<std::string_view> Column(size_t column, size_t rows) noexcept {
+    return {_fields.data() + column * STANDARD_VECTOR_SIZE, rows};
+  }
+  size_t Walk(std::string_view data, size_t max_rows);
+  duckdb::idx_t Decode(duckdb::DataChunk& output, duckdb::idx_t row,
+                       size_t rows);
+  void FailRow(uint64_t record, std::exception_ptr error, size_t column);
 
   pg::CopyInTarget _target;
-  CopyDeserializers _deserializers;
+  std::vector<pg::DeserializationFunction<pg::ColumnSink>> _decoders;
   pg::DeserializeContext _dctx;
-  std::string _field_buf;
-  CopyTextEnd& _end;
-  std::atomic<uint64_t>& _rejected;
+  std::vector<std::string_view> _fields;
+  std::vector<uint64_t> _failed;
+  CopyRowError _error;
+  uint64_t _lines = 0;
+  int32_t _bad_fields = -1;
   const pg::CopyBatch* _batch = nullptr;
+  uint64_t _seq = 0;
   size_t _segment = 0;
   size_t _pos = 0;
-  bool _skip = false;
-  bool _ended = false;
 };
 
-}  // namespace sdb::connector
+}  // namespace sdb::formats

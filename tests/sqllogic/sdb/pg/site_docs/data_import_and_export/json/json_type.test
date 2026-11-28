@@ -87,3 +87,25 @@ SELECT '2023-05-12'::DATE::JSON;
 ----
 json
 "2023-05-12"
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query error
+SELECT '{"a": tru}'::JSON;
+----
+db error: ERROR: Malformed JSON at byte 6 of input: invalid literal, expected 'true'.  Input: "{"a": tru}"
+
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    '[1, 2,]'::JSON AS trailing_comma,
+    '[NaN, -Infinity]'::JSON AS special_numbers;
+----
+trailing_comma	special_numbers
+[1, 2,]	[NaN, -Infinity]

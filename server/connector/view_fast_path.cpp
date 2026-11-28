@@ -66,10 +66,6 @@ struct RegistryEntry {
   std::string_view function_name;
   PkSpec single_pk_spec;
   PkSpec glob_pk_spec;
-  // Whether the reader's lookup applies pushed table filters. csv/json/text
-  // only fetch rows by offset and ignore filters, so filters on their lookup
-  // columns must NOT be pushed (they'd be silently dropped) -- see
-  // supports_pushdown.
   bool supports_filters = false;
 };
 
@@ -81,29 +77,40 @@ const RegistryEntry kRegistry[] = {
     .supports_filters = true,
   },
   {
+    .function_name = "read_arrow",
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
+    .supports_filters = true,
+  },
+  {
     .function_name = "read_csv",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
   },
   {
     .function_name = "read_json",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
   },
   {
     .function_name = "read_ndjson",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
   },
   {
     .function_name = "read_json_objects",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
   },
   {
     .function_name = "read_ndjson_objects",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
   },
   {
     .function_name = "iceberg_scan",
@@ -123,7 +130,12 @@ const RegistryEntry kRegistry[] = {
     .glob_pk_spec = PkSpec::FileIndexPlusDuckDBRowId,
     .supports_filters = true,
   },
-  // TODO: read_avro, postgres_scan / postgres_query.
+  {
+    .function_name = "read_avro",
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
+  },
 };
 
 constexpr struct {

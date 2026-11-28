@@ -29,12 +29,14 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/statement/copy_statement.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <optional>
 #include <utility>
 
 #include "auth/role_closure.h"
@@ -45,6 +47,7 @@
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
+#include "pg/copy_in_stream.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "pg/types/mapping.h"
@@ -210,6 +213,12 @@ yaclib::Task<bool> SyncSession::CopyTable(const SyncTable& table, bool binary) {
   this->_connection_ctx->SetSideChannel(&batches);
   _copy_stmt =
     BuildCopyFromStdin(table.schema, table.table, table.columns, binary);
+  std::optional<sdb::pg::CopyInStreamOffer> stream;
+  if (!binary) {
+    stream.emplace(*this->_connection_ctx,
+                   _copy_stmt->Cast<duckdb::CopyStatement>().info->file_path,
+                   batches, sdb::pg::kCopyBatchesInFlight);
+  }
   if (!PostJob(Job::Copy)) {
     this->_connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
     co_return false;

@@ -116,8 +116,8 @@ id	c_bool	c_i8	c_i16	c_i32	c_i64	c_i128
 
 
 # ============================================================================
-# Unsigned integers -- yyjson keeps UINT and SINT distinct, so the full
-# UBIGINT range must survive.
+# Unsigned integers -- the JSON reader keeps unsigned and signed integers
+# distinct, so the full UBIGINT range must survive.
 # ============================================================================
 
 query

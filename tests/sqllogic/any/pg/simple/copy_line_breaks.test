@@ -1,0 +1,111 @@
+control substitution on
+
+statement ok
+CREATE TABLE clb (id INTEGER, label TEXT);
+
+
+onlyif postgres
+statement ok
+COPY (SELECT 1) TO PROGRAM 'cat > /dev/null; printf ''id\tlabel\r1\tone\r2\ttwo\\\rthree\r3\t\\N\r'' > ${__TEST_DIR__}/clb_cr.txt';
+
+
+skipif postgres
+statement ok
+COPY (SELECT ('id' || chr(9) || 'label' || chr(13) || '1' || chr(9) || 'one' || chr(13) || '2' || chr(9) || 'two\\' || chr(13) || 'three' || chr(13) || '3' || chr(9) || '\\N' || chr(13))::BLOB) TO '${__TEST_DIR__}/clb_cr.txt' (FORMAT BLOB);
+
+
+statement ok
+COPY clb FROM '${__TEST_DIR__}/clb_cr.txt' (FORMAT text, HEADER true);
+
+
+query
+SELECT id, replace(label, chr(13), '<CR>') AS label FROM clb ORDER BY id;
+----
+id	label
+1	one
+2	two<CR>three
+3	NULL
+
+
+statement ok
+DELETE FROM clb;
+
+
+onlyif postgres
+statement ok
+COPY (SELECT 1) TO PROGRAM 'cat > /dev/null; printf ''1,"x\ry"\r2,"two\nlines"\r3,"a""b"\r4,\r'' > ${__TEST_DIR__}/clb_cr.csv';
+
+
+skipif postgres
+statement ok
+COPY (SELECT ('1,"x' || chr(13) || 'y"' || chr(13) || '2,"two' || chr(10) || 'lines"' || chr(13) || '3,"a""b"' || chr(13) || '4,' || chr(13))::BLOB) TO '${__TEST_DIR__}/clb_cr.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY clb FROM '${__TEST_DIR__}/clb_cr.csv' (FORMAT csv);
+
+
+query
+SELECT id, replace(replace(label, chr(13), '<CR>'), chr(10), '<LF>') AS label FROM clb ORDER BY id;
+----
+id	label
+1	x<CR>y
+2	two<LF>lines
+3	a"b
+4	NULL
+
+
+statement ok
+DELETE FROM clb;
+
+
+onlyif postgres
+statement ok
+COPY (SELECT 1) TO PROGRAM 'cat > /dev/null; printf ''1,"a\\"b\\\\c\\d"\r2,two\r'' > ${__TEST_DIR__}/clb_esc.csv';
+
+
+skipif postgres
+statement ok
+COPY (SELECT ('1,"a\\"b\\\\c\\d"' || chr(13) || '2,two' || chr(13))::BLOB) TO '${__TEST_DIR__}/clb_esc.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY clb FROM '${__TEST_DIR__}/clb_esc.csv' (FORMAT csv, ESCAPE '\');
+
+
+query
+SELECT id, replace(label, chr(92), '<BS>') AS label, length(label) AS n FROM clb ORDER BY id;
+----
+id	label	n
+1	a"b<BS>c<BS>d	7
+2	two	3
+
+
+statement ok
+DELETE FROM clb;
+
+
+onlyif postgres
+statement ok
+COPY (SELECT 1) TO PROGRAM 'cat > /dev/null; printf ''1,one\r\n2,two\r\n'' > ${__TEST_DIR__}/clb_crlf.csv';
+
+
+skipif postgres
+statement ok
+COPY (SELECT ('1,one' || chr(13) || chr(10) || '2,two' || chr(13) || chr(10))::BLOB) TO '${__TEST_DIR__}/clb_crlf.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY clb FROM '${__TEST_DIR__}/clb_crlf.csv' (FORMAT csv);
+
+
+query
+SELECT id, label, length(label) AS n FROM clb ORDER BY id;
+----
+id	label	n
+1	one	3
+2	two	3
+
+
+statement ok
+DROP TABLE clb;

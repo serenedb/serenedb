@@ -97,16 +97,11 @@ EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HE
 QUERY PLAN
 ╭─ INSERT ───────────╮
 ╰──────────┬─────────╯
-╭─ PROJECTION ───────╮
-│ Projections: name, │
-│              id    │
-│ ~4 rows            │
-╰──────────┬─────────╯
 ╭─ READ_CSV ─────────╮
 │ Function: READ_CSV │
-│ Projections: id,   │
-│              name  │
-│ ~4 rows            │
+│ Projections: name, │
+│              id    │
+│ ~42 rows           │
 ╰────────────────────╯
 
 

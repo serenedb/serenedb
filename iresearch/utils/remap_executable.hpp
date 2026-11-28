@@ -34,4 +34,6 @@ struct ExecutableRemap {
 
 ExecutableRemap RemapExecutable(bool remap_text, size_t threads);
 
+bool SetAllocatorBackgroundThreads(bool enabled);
+
 }  // namespace irs

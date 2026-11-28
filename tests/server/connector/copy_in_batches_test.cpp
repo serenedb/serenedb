@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -41,6 +42,7 @@
 
 #include "pg/copy_batch_builder.h"
 #include "pg/copy_in_batches.h"
+#include "pg/copy_in_stream.h"
 
 namespace {
 
@@ -50,7 +52,6 @@ using sdb::pg::CopyBatchFormat;
 using sdb::pg::CopyBatchLease;
 using sdb::pg::CopyInBatches;
 using sdb::pg::CopyTake;
-using sdb::pg::kCopyWakeBacklog;
 
 std::string Join(const CopyBatch& batch) {
   std::string out;
@@ -125,12 +126,12 @@ std::string BinaryRows() {
   return rows;
 }
 
-TEST(PgCopyBatchBuilder, TextKeepsEveryByteAcrossPieces) {
+TEST(PgCopyBatchBuilder, RawKeepsEveryByteAcrossPieces) {
   const std::string input = "1\ta\n22\tbb\n333\tccc\n\n4444\tdddd";
   for (const size_t piece : {1, 2, 3, 5, 7, 64}) {
     for (const bool stable : {true, false}) {
       for (const size_t target : {1, 8, 1 << 20}) {
-        CopyBatchBuilder builder{CopyBatchFormat::Text, target};
+        CopyBatchBuilder builder{CopyBatchFormat::Raw, target};
         EXPECT_EQ(Drain(builder, input, piece, stable), input)
           << "piece=" << piece << " stable=" << stable << " target=" << target;
       }
@@ -138,72 +139,9 @@ TEST(PgCopyBatchBuilder, TextKeepsEveryByteAcrossPieces) {
   }
 }
 
-TEST(PgCopyBatchBuilder, JoinedBlankLinesStayWithTheRowsBeforeThem) {
-  const std::string input = "a\n\n\r\n\nb\n\n";
-  for (const size_t piece : {1, 2, 3, 5, 64}) {
-    CopyBatchBuilder builder{CopyBatchFormat::Text, 1, true};
-    std::vector<std::string> batches;
-    for (size_t pos = 0; pos < input.size(); pos += piece) {
-      builder.Feed(std::string_view{input}.substr(pos, piece), false);
-      while (builder.Ready()) {
-        batches.push_back(Join(*builder.Take()));
-      }
-    }
-    builder.Finish();
-    while (builder.HasRows()) {
-      batches.push_back(Join(*builder.Take()));
-    }
-    EXPECT_EQ(absl::StrJoin(batches, ""), input) << "piece=" << piece;
-    for (size_t i = 1; i < batches.size(); ++i) {
-      EXPECT_FALSE(batches[i].starts_with('\n') ||
-                   batches[i].starts_with("\r\n"))
-        << "piece=" << piece << " batch=" << i;
-    }
-    if (piece < input.size()) {
-      EXPECT_EQ(batches.back(), "b\n\n") << "piece=" << piece;
-    }
-  }
-}
-
-TEST(PgCopyBatchBuilder, TextBatchesEndOnRowBoundaries) {
-  const std::string input = "aa\nbbb\ncccc\nd\n";
-  CopyBatchBuilder builder{CopyBatchFormat::Text, 1};
-  for (size_t pos = 0; pos < input.size(); pos += 3) {
-    builder.Feed(std::string_view{input}.substr(pos, 3), true);
-    if (builder.Ready()) {
-      const auto batch = builder.Take();
-      const auto bytes = Join(*batch);
-      ASSERT_FALSE(bytes.empty());
-      EXPECT_EQ(bytes.back(), '\n');
-    }
-  }
-}
-
-TEST(PgCopyBatchBuilder, TextBatchesSkipEscapedNewlines) {
-  const std::string input = "a\\\nb\nc\\\\\n\\\\\\\nd\n\ne";
-  const std::vector<size_t> row_ends{4, 8, 14, 15};
-  for (const size_t piece : {1, 2, 3, 5, 7}) {
-    CopyBatchBuilder builder{CopyBatchFormat::Text, 1};
-    std::string out;
-    for (size_t pos = 0; pos < input.size(); pos += piece) {
-      builder.Feed(std::string_view{input}.substr(pos, piece), false);
-      if (builder.Ready()) {
-        out += Join(*builder.Take());
-        EXPECT_NE(absl::c_find(row_ends, out.size() - 1), row_ends.end())
-          << "piece=" << piece << " batch end=" << out.size();
-      }
-    }
-    builder.Finish();
-    if (builder.HasRows()) {
-      out += Join(*builder.Take());
-    }
-    EXPECT_EQ(out, input) << "piece=" << piece;
-  }
-}
-
-TEST(PgCopyBatchBuilder, TextStableBytesAreBorrowed) {
+TEST(PgCopyBatchBuilder, RawStableBytesAreBorrowed) {
   const std::string input = "row one\nrow two\npartial";
-  CopyBatchBuilder builder{CopyBatchFormat::Text, 1 << 20};
+  CopyBatchBuilder builder{CopyBatchFormat::Raw, 1 << 20};
   builder.Feed(input, true);
   const auto batch = builder.Take();
   ASSERT_EQ(batch->segments.size(), 1);
@@ -261,6 +199,36 @@ TEST(PgCopyBatchBuilder, BinaryBatchesHoldWholeRows) {
     }
   }
   EXPECT_GT(batches, 1);
+}
+
+TEST(PgCopyBatchBuilder, BinaryFeedSaysWhetherTheBatchViewsItsBytes) {
+  const auto header = BinaryHeader();
+  const auto row = BinaryRow({std::string(100, 'x')});
+  const auto input = header + row + row + BinaryTrailer();
+  const std::string_view bytes{input};
+  const auto split = header.size() + 10;
+  const auto second = header.size() + row.size();
+  CopyBatchBuilder builder{CopyBatchFormat::Binary};
+  EXPECT_FALSE(builder.Feed(bytes.substr(0, split), true));
+  EXPECT_FALSE(builder.Feed(bytes.substr(split, second - split), true));
+  EXPECT_TRUE(builder.Feed(bytes.substr(second, row.size()), true));
+  EXPECT_FALSE(builder.Feed(bytes.substr(second + row.size()), true));
+  EXPECT_TRUE(builder.Ended());
+  const auto batch = builder.Take();
+  ASSERT_EQ(batch->segments.size(), 2);
+  EXPECT_EQ(batch->owned.size(), 1);
+  EXPECT_EQ(batch->segments[1].data(), input.data() + second);
+
+  CopyBatchBuilder copied{CopyBatchFormat::Binary};
+  EXPECT_FALSE(copied.Feed(input, false));
+  EXPECT_TRUE(copied.HasRows());
+}
+
+TEST(PgCopyBatchBuilder, RawFeedSaysWhetherTheBatchViewsItsBytes) {
+  CopyBatchBuilder builder{CopyBatchFormat::Raw};
+  EXPECT_TRUE(builder.Feed("a\n", true));
+  EXPECT_FALSE(builder.Feed("b\n", false));
+  EXPECT_FALSE(builder.Feed({}, true));
 }
 
 TEST(PgCopyBatchBuilder, BinaryRejectsBadSignature) {
@@ -377,21 +345,62 @@ struct BlockingInput {
   duckdb::TableFunctionInput input{nullptr, nullptr, nullptr};
 };
 
-TEST(PgCopyInBatches, ParkedTaskWakesOnceBatchesBackUp) {
+TEST(PgCopyInBatches, ParkedTaskWakesOnPush) {
   CopyInBatches queue;
   BlockingInput consumer;
   std::vector<CopyBatchLease> taken;
-  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
-            CopyTake::Blocked);
-  for (size_t i = 0; i < kCopyWakeBacklog; ++i) {
-    queue.Push(MakeBatch(std::to_string(i)), {});
-  }
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
   consumer.signal->Await();
-  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
-            CopyTake::Batches);
-  EXPECT_EQ(taken.size(), kCopyWakeBacklog);
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
+  EXPECT_EQ(taken.size(), 1);
   queue.Finish();
   EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+}
+
+TEST(PgCopyInBatches, PushWakesOneParkedTaskPerBatch) {
+  CopyInBatches queue;
+  BlockingInput first;
+  BlockingInput second;
+  std::vector<CopyBatchLease> taken;
+  ASSERT_EQ(queue.Take(first.input, 1, taken), CopyTake::Blocked);
+  ASSERT_EQ(queue.Take(second.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
+  auto input = NoInput();
+  ASSERT_EQ(queue.Take(input, 1, taken), CopyTake::Batches);
+  EXPECT_TRUE(queue.Starving());
+  queue.Push(MakeBatch("1"), {});
+  first.signal->Await();
+  second.signal->Await();
+  EXPECT_FALSE(queue.Starving());
+  ASSERT_EQ(queue.Take(input, 1, taken), CopyTake::Batches);
+  ASSERT_EQ(taken.size(), 2);
+  EXPECT_EQ(Join(*taken[0]), "0");
+  EXPECT_EQ(Join(*taken[1]), "1");
+  taken.clear();
+  queue.Finish();
+}
+
+TEST(PgCopyInBatches, ParkingOnAnEmptyQueueSignalsStarvation) {
+  CopyInBatches queue;
+  size_t starved = 0;
+  queue.OnStarve([&] { ++starved; });
+  EXPECT_FALSE(queue.Starving());
+  BlockingInput consumer;
+  std::vector<CopyBatchLease> taken;
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  EXPECT_EQ(starved, 1);
+  EXPECT_TRUE(queue.Starving());
+  queue.Push(MakeBatch("0"), {});
+  EXPECT_FALSE(queue.Starving());
+  consumer.signal->Await();
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
+  EXPECT_EQ(starved, 1);
+  taken.clear();
+  queue.Finish();
+  EXPECT_FALSE(queue.Starving());
+  EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+  EXPECT_EQ(starved, 1);
 }
 
 TEST(PgCopyInBatches, FinishWakesParkedTaskForFewBatches) {
@@ -449,13 +458,23 @@ TEST(PgCopyInBatches, RetainedBytesCountUntilBatchesAreFreedInOrder) {
   EXPECT_EQ(queue.RetainedBytes(), 0);
 }
 
-TEST(PgCopyInBatches, FailRethrowsToConsumers) {
+TEST(PgCopyInBatches, FailRethrowsAfterTheBatchesPushedBeforeIt) {
   CopyInBatches queue;
   queue.Push(MakeBatch("0"), {});
+  queue.Push(MakeBatch("1"), {});
   queue.Fail(std::make_exception_ptr(std::runtime_error{"boom"}));
-  EXPECT_THROW(queue.Next(), std::runtime_error);
+  EXPECT_EQ(queue.FailedAt(), 2);
+  auto first = queue.Next();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->seq, 0);
+  auto input = NoInput();
   std::vector<CopyBatchLease> taken;
-  EXPECT_THROW(queue.TryTake(1, taken), std::runtime_error);
+  ASSERT_EQ(queue.Take(input, 3, taken), CopyTake::Batches);
+  ASSERT_EQ(taken.size(), 1);
+  EXPECT_EQ(taken[0]->seq, 1);
+  EXPECT_FALSE(queue.TryTake(1, taken));
+  EXPECT_THROW(queue.Take(input, 1, taken), std::runtime_error);
+  EXPECT_THROW(queue.Next(), std::runtime_error);
 }
 
 TEST(PgCopyInBatches, AbortEndsConsumersAndDropsPushes) {
@@ -585,6 +604,62 @@ TEST(PgCopyInBatches, ParallelConsumersSeeEveryBatchOnce) {
     for (size_t i = 0; i < kBatches; ++i) {
       ASSERT_EQ(count[i], 1) << "batch " << i << " round " << round;
     }
+  }
+}
+
+yaclib::Future<> ProduceStream(CopyInBatches& queue, yaclib::IExecutor& io,
+                               std::string_view data, uint64_t seed) {
+  co_await yaclib::On(io);
+  std::mt19937_64 rng{seed};
+  for (size_t at = 0; at < data.size();) {
+    if (queue.NeedSpace()) {
+      co_await queue.SpaceReady(io);
+      queue.ResetSpace();
+    }
+    const auto size = std::min<size_t>(1 + rng() % 512, data.size() - at);
+    queue.Push(MakeBatch(std::string{data.substr(at, size)}), {});
+    at += size;
+    std::this_thread::yield();
+  }
+  queue.Finish();
+  co_return {};
+}
+
+TEST(PgCopyInStream, ConcurrentReadersSeeTheStreamInOrder) {
+  constexpr size_t kReaders = 16;
+  std::string data(2 << 20, '\0');
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<char>((i * 2654435761U) >> 24);
+  }
+  const size_t region = data.size() / kReaders;
+  for (uint64_t round = 0; round < 20; ++round) {
+    CopyInBatches queue{8};
+    sdb::pg::CopyInStream stream{queue, 4};
+    yaclib::FairThreadPool io{1};
+    std::vector<std::thread> readers;
+    for (size_t r = 0; r < kReaders; ++r) {
+      readers.emplace_back([&, r] {
+        std::mt19937_64 rng{round * kReaders + r};
+        std::string buffer(1 << 16, '\0');
+        for (size_t offset = r * region; offset < (r + 1) * region;) {
+          const auto want = std::min<size_t>(1 + rng() % buffer.size(),
+                                             (r + 1) * region - offset);
+          const auto got = stream.Read(buffer.data(), want, offset);
+          ASSERT_GT(got, 0) << "offset " << offset;
+          ASSERT_LE(got, want);
+          ASSERT_EQ(std::string_view(buffer.data(), got),
+                    std::string_view(data).substr(offset, got))
+            << "offset " << offset << " round " << round;
+          offset += got;
+        }
+      });
+    }
+    std::ignore = ProduceStream(queue, io, data, round).Get();
+    for (auto& reader : readers) {
+      reader.join();
+    }
+    io.Stop();
+    io.Wait();
   }
 }
 

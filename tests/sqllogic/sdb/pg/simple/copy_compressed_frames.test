@@ -1,0 +1,128 @@
+control substitution on
+
+statement ok
+CREATE TABLE ccf AS
+SELECT x::INTEGER AS id, md5(x::VARCHAR) || md5((x + 7)::VARCHAR) AS s
+FROM range(200000) t(x);
+
+
+statement count 200000
+COPY ccf TO '${__TEST_DIR__}/ccf.csv.zst' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE ccf_csv (id INTEGER, s VARCHAR);
+
+
+statement count 200000
+COPY ccf_csv FROM '${__TEST_DIR__}/ccf.csv.zst' (FORMAT csv);
+
+
+query
+SELECT count(*) AS n FROM (SELECT * FROM ccf EXCEPT ALL SELECT * FROM ccf_csv);
+----
+n
+0
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, sum(length(s)) AS bytes
+FROM read_csv('${__TEST_DIR__}/ccf.csv.zst', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+n	total	bytes
+200000	19999900000	12800000
+
+
+statement count 1
+COPY (SELECT content || '\x28b52ffd2006190000616263'::BYTEA FROM read_blob('${__TEST_DIR__}/ccf.csv.zst'))
+TO '${__TEST_DIR__}/ccf_short_frame.csv.zst' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/ccf_short_frame.csv.zst', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+db error: ERROR: Data corruption detected
+
+
+statement count 1
+COPY (SELECT substr(content, 1, octet_length(content) - 100) FROM read_blob('${__TEST_DIR__}/ccf.csv.zst'))
+TO '${__TEST_DIR__}/ccf_cut.csv.zst' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error Unexpected end of ZSTD stream
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/ccf_cut.csv.zst', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+
+
+statement error Unexpected end of ZSTD stream
+COPY ccf_csv FROM '${__TEST_DIR__}/ccf_cut.csv.zst' (FORMAT csv);
+
+
+statement count 1
+COPY (SELECT content || '\x28b52ffd'::BYTEA FROM read_blob('${__TEST_DIR__}/ccf.csv.zst'))
+TO '${__TEST_DIR__}/ccf_frame_magic.csv.zst' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error Unexpected end of ZSTD stream
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/ccf_frame_magic.csv.zst', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+
+
+statement count 100
+COPY (SELECT * FROM ccf WHERE id < 100) TO '${__TEST_DIR__}/ccf_small.csv.zst' (FORMAT csv);
+
+
+statement count 1
+COPY (
+  SELECT '\x502a4d1800002000'::BYTEA || repeat('x', 2097152)::BYTEA || content
+  FROM read_blob('${__TEST_DIR__}/ccf_small.csv.zst')
+) TO '${__TEST_DIR__}/ccf_skippable.csv.zst' (FORMAT blob, COMPRESSION 'none');
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM read_csv('${__TEST_DIR__}/ccf_skippable.csv.zst', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+n	total
+100	4950
+
+
+statement count 200000
+COPY ccf TO '${__TEST_DIR__}/ccf.ndjson.zst' (FORMAT json);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, sum(length(s)) AS bytes
+FROM read_ndjson('${__TEST_DIR__}/ccf.ndjson.zst', columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+n	total	bytes
+200000	19999900000	12800000
+
+
+statement count 200000
+COPY ccf TO '${__TEST_DIR__}/ccf.ndjson.gz' (FORMAT json);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, sum(length(s)) AS bytes
+FROM read_ndjson('${__TEST_DIR__}/ccf.ndjson.gz', columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+n	total	bytes
+200000	19999900000	12800000
+
+
+statement count 200000
+COPY (SELECT id, s || 'é' AS s FROM ccf) TO '${__TEST_DIR__}/ccf_latin1.csv.gz' (FORMAT csv, ENCODING 'latin1');
+
+
+statement ok
+CREATE TABLE ccf_latin1 (id INTEGER, s VARCHAR);
+
+
+statement count 200000
+COPY ccf_latin1 FROM '${__TEST_DIR__}/ccf_latin1.csv.gz' (FORMAT csv, ENCODING 'latin1');
+
+
+query
+SELECT count(*) AS n FROM ccf_latin1 JOIN ccf USING (id) WHERE ccf_latin1.s = ccf.s || 'é';
+----
+n
+200000

@@ -3,12 +3,11 @@ paths:
   - "third_party/duckdb/**"
   - "third_party/duckdb_*/**"
   - "third_party/database-connector/**"
-  - "third_party/avro/**"
 ---
 
 # The DuckDB family
 
-`third_party/duckdb`, the `duckdb_*` extensions, `database-connector`, and `avro` (Apache's avro-c with DuckDB's changes, so it has both upstreams), patched heavily. Write it like our code ([cpp-serenedb.md](cpp-serenedb.md)), using DuckDB's own types where its APIs take them, and know what our fork changed:
+`third_party/duckdb`, the `duckdb_*` extensions and `database-connector`, patched heavily. Write it like our code ([cpp-serenedb.md](cpp-serenedb.md)), using DuckDB's own types where its APIs take them, and know what our fork changed:
 
 - `unordered_map`/`unordered_set` are `absl::node_hash_map`/`node_hash_set`, and so is everything built on them (`case_insensitive_map_t`, ...): look up with the `string_view` you have, never a temporary string.
 - `duckdb::mutex` is `absl::Mutex`: wait with `Await`/`LockWhen`, never a condition variable or a yield loop.
@@ -19,6 +18,8 @@ paths:
 
 - Reuse DuckDB's code paths. Where we write our own, it mirrors DuckDB's design unless a divergence was agreed, and is never slower, more allocating or more copying than the native path.
 - A gap in something DuckDB implements is fixed by patching DuckDB's code, and our parallel version is deleted.
+- The exception is the file formats engine in `src/formats/`: for a format it takes over (CSV, JSON), it replaces DuckDB's reader, sniffer scanners and writer instead of patching them. It reaches parity on DuckDB's tests for that format, then DuckDB's implementation is deleted in the same change; a test whose expectation changes on purpose is changed there, with its reason in the pull request.
+- A format's library (simdjson, cmark-gfm, ...) does only what really differs between formats: parsing that format's grammar. Everything else is the engine's shared code, optimized once for every format: reading and splitting the input, field values to types and back, both renderings, nulls and errors, pushdown, lookups, sniffing and writing.
 - Vectors: one `Vector` per batch holds data and validity; a vector carries its size (no separate `count`; a writer sets child cardinality); a vector reused across calls is reset first; a table function emits at most `STANDARD_VECTOR_SIZE` rows per call, straight into its output; never `Flatten` or per-cell `GetValue` on hot paths, read through `UnifiedVectorFormat`; JSON is `VARCHAR` with the `JSON` alias, so dispatch on the full type.
 - Internal bulk reads consume vectors inside the pipeline (a table function), never materialize and `Fetch`.
 - DuckDB-level targets (`unittest`, extensions) build on upstream's own dependencies: cut a serenedb-only edge instead of making serenedb work their prerequisite.

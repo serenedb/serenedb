@@ -1,0 +1,108 @@
+control substitution on
+
+# PostgreSQL types whose DuckDB storage is not their value are written to
+# Parquet and Arrow as their PostgreSQL text, and read back through their input
+# functions.
+
+statement ok
+CREATE TABLE cpt (
+    id int,
+    mac macaddr,
+    mac8 macaddr8,
+    lsn pg_lsn,
+    m money,
+    r int4range,
+    mr int4multirange,
+    p point,
+    b box,
+    macs macaddr[],
+    n numeric(10,2),
+    a int[]
+);
+
+
+statement ok
+INSERT INTO cpt VALUES
+    (1, '08:00:2b:01:02:03', '08:00:2b:01:02:03:04:05', '16/B374D848', 12.34, '[1,5)', '{[1,3),[5,7)}',
+     '(1,2)', '((1,1),(0,0))', ARRAY['08:00:2b:01:02:03'::macaddr, NULL], 1.5, ARRAY[1, 2]),
+    (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+
+statement ok
+COPY cpt TO '${__TEST_DIR__}/cpt.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY cpt TO '${__TEST_DIR__}/cpt.arrow' (FORMAT arrow);
+
+
+query
+SELECT pg_typeof(mac), pg_typeof(mac8), pg_typeof(lsn), pg_typeof(m), pg_typeof(r), pg_typeof(mr), pg_typeof(p),
+       pg_typeof(b), pg_typeof(macs), pg_typeof(n), pg_typeof(a)
+FROM read_parquet('${__TEST_DIR__}/cpt.parquet') WHERE id = 1;
+----
+pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof	pg_typeof
+text	text	text	numeric	text	text	text	text	text[]	numeric	integer[]
+
+
+query
+SELECT mac, mac8, lsn, m, r, mr, p, b, macs, n, a FROM read_parquet('${__TEST_DIR__}/cpt.parquet') ORDER BY id;
+----
+mac	mac8	lsn	m	r	mr	p	b	macs	n	a
+08:00:2b:01:02:03	08:00:2b:01:02:03:04:05	16/B374D848	12.34	[1,5)	{[1,3),[5,7)}	(1,2)	(1,1),(0,0)	{08:00:2b:01:02:03,NULL}	1.50	{1,2}
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+
+query
+SELECT pg_typeof(mac), pg_typeof(r), pg_typeof(macs), mac, r, macs FROM read_arrow('${__TEST_DIR__}/cpt.arrow') WHERE id = 1;
+----
+pg_typeof	pg_typeof	pg_typeof	mac	r	macs
+text	text	text[]	08:00:2b:01:02:03	[1,5)	{08:00:2b:01:02:03,NULL}
+
+
+statement ok
+CREATE TABLE cpt_back (id int, mac macaddr, mac8 macaddr8, lsn pg_lsn, m money, r int4range, mr int4multirange,
+    p point, b box, macs macaddr[], n numeric(10,2), a int[]);
+
+
+statement ok
+COPY cpt_back FROM '${__TEST_DIR__}/cpt.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY cpt_back FROM '${__TEST_DIR__}/cpt.arrow' (FORMAT arrow);
+
+
+query
+SELECT count(*) FROM (
+    SELECT id, mac::text, mac8::text, lsn::text, m::text, r::text, mr::text, p::text, b::text, macs::text, n, a FROM cpt_back
+    EXCEPT ALL
+    SELECT id, mac::text, mac8::text, lsn::text, m::text, r::text, mr::text, p::text, b::text, macs::text, n, a FROM (SELECT * FROM cpt UNION ALL SELECT * FROM cpt)
+);
+----
+count
+0
+
+
+statement ok
+CREATE TYPE cpt_pair AS (n int, lsn pg_lsn, mac macaddr);
+
+
+statement ok
+COPY (SELECT 1 AS id, ROW(7, '16/B374D848', '08:00:2b:01:02:03')::cpt_pair AS pair) TO '${__TEST_DIR__}/cpt_pair.parquet' (FORMAT parquet);
+
+
+query
+SELECT name, type, duckdb_type FROM parquet_schema('${__TEST_DIR__}/cpt_pair.parquet') WHERE name IN ('n', 'lsn', 'mac') ORDER BY name;
+----
+name	type	duckdb_type
+lsn	BYTE_ARRAY	VARCHAR
+mac	BYTE_ARRAY	VARCHAR
+n	INT32	INTEGER
+
+
+query
+SELECT id, pair FROM read_parquet('${__TEST_DIR__}/cpt_pair.parquet');
+----
+id	pair
+1	(7,16/B374D848,08:00:2b:01:02:03)

@@ -1,0 +1,26 @@
+statement ok
+SET TIME ZONE 'Asia/Tokyo';
+
+skipif pg-wire-extended
+query
+SELECT '2024-01-02 03:04:05.123456789+00'::TIMESTAMPTZ_NS AS ns, '2024-01-02 03:04:05.12+00'::TIMESTAMPTZ_NS AS short_fraction, '2024-01-02 03:04:05+00'::TIMESTAMPTZ_NS AS whole;
+----
+ns	short_fraction	whole
+2024-01-02 12:04:05.123456789+09	2024-01-02 12:04:05.12+09	2024-01-02 12:04:05+09
+
+skipif pg-wire-extended
+query
+SELECT '2262-04-11 23:00:00.000000001+00'::TIMESTAMPTZ_NS AS late, ARRAY['2262-04-11 23:00:00.5+00'::TIMESTAMPTZ_NS] AS late_array;
+----
+late	late_array
+2262-04-12 08:00:00.000000001+09	{"2262-04-12 08:00:00.5+09"}
+
+statement ok
+SET TIME ZONE 'America/Los_Angeles';
+
+skipif pg-wire-extended
+query
+SELECT '1677-09-22 00:00:00.000000001+00'::TIMESTAMPTZ_NS AS early;
+----
+early
+1677-09-21 16:07:02.000000001-07:52:58

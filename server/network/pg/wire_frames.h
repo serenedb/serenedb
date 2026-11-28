@@ -58,11 +58,6 @@ inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
 void WriteParameterStatus(message::Buffer& out, std::string_view name,
                           std::string_view value);
 
-// How a chunk's rows are encoded onto the wire (see WriteDataChunk /
-// WriteCopyChunk):
-//   DataRow    -- one pg 'D' DataRow message per row (normal SELECT result)
-//   CopyBinary -- PGCOPY rows (int16 field-count + binary fields)
-//   CopyText   -- PG-text rows (TAB-separated fields, \N null, \n per row)
 enum class RowEncoding : uint8_t {
   DataRow,
   CopyBinary,
@@ -73,16 +68,13 @@ enum class RowEncoding : uint8_t {
 // [begin, end) -- the sub-range serves Execute max_rows paging; a full chunk is
 // [0, chunk.size()).
 void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
-                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::ChunkSerializer& serializer,
                     sdb::pg::SerializationContext& context, duckdb::idx_t begin,
                     duckdb::idx_t end);
 
-// COPY ... TO STDOUT: PGCOPY rows (CopyBinary) or PG-text rows (CopyText). An
-// empty chunk emits no frame, so a chain of frames is always a valid
-// PGCOPY/COPY row sequence.
 template<RowEncoding Encoding>
 void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
-                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::ChunkSerializer& serializer,
                     sdb::pg::SerializationContext& context, bool binary_header);
 
 void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first);
@@ -92,12 +84,9 @@ void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first);
 // format, as PG does). Sent by the session before the first CopyData.
 void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns);
 
-// A CopyData frame carrying the COPY TO STDOUT (text) header line: the column
-// names, delimiter-separated and newline-terminated, with PG text escaping.
-// Sent after CopyOutResponse and before the row frames when HEADER is set.
-void WriteCopyTextHeader(message::Buffer& out,
-                         std::span<const duckdb::Identifier> names,
-                         sdb::pg::SerializationContext& context);
+void WriteCopyHeader(message::Buffer& out,
+                     std::span<const duckdb::Identifier> names,
+                     sdb::pg::SerializationContext& context, bool csv);
 
 // The int16 -1 PGCOPY trailer as its own CopyData frame (end of the rows).
 void WriteCopyBinaryFooter(message::Buffer& out, bool binary_header);

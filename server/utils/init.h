@@ -22,6 +22,7 @@
 
 namespace sdb::app {
 
+void ReserveFileDescriptors();
 void InitProcess(const char* argv0);
 
 }  // namespace sdb::app

@@ -333,3 +333,75 @@ SELECT * FROM ontime;
 flightdate	uniquecarrier	origincityname	destcityname
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
+
+# DOCS_TEST: example_013
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('apple', 50),
+    ('banana', 150),
+    ('cherry', 250)
+) AS t("name", "price") ORDER BY price) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_013_1_prices_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| EXPLAIN
+#| SELECT name
+#| FROM read_csv('prices.csv')
+#| WHERE price > 100;
+#|
+#| SELECT name
+#| FROM read_csv('prices.csv')
+#| WHERE price > 100
+#| ORDER BY name;
+
+# DOCS_TEST_BODY
+
+query
+EXPLAIN
+SELECT name
+FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_013_1_prices_csv.csv')
+WHERE price > 100;
+----
+QUERY PLAN
+╭─ READ_CSV ─────────────────╮
+│ Function: READ_CSV         │
+│ Projections: name          │
+│ Column Filter: price > 100 │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+query
+SELECT name
+FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_013_1_prices_csv.csv')
+WHERE price > 100
+ORDER BY name;
+----
+name
+banana
+cherry
+
+# DOCS_TEST: example_014
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha'),
+    (2, 'beta'),
+    (3, 'gamma')
+) AS t("id", "name") ORDER BY id) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_014_1_rows_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| SELECT id, name, file_row_number
+#| FROM read_csv('rows.csv', file_row_number = true)
+#| ORDER BY file_row_number;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, file_row_number
+FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_014_1_rows_csv.csv', file_row_number = true)
+ORDER BY file_row_number;
+----
+id	name	file_row_number
+1	alpha	8
+2	beta	16
+3	gamma	23

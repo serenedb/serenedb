@@ -60,10 +60,12 @@
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
+#include "formats/pg_value_decoder.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/connection_context.h"
+#include "pg/types/mapping.h"
 #include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -105,6 +107,8 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
     };
   config.create_client_context = CreateClientContext;
   config.create_secret_storage = catalog::CreateSecretStorage;
+  config.copy_to_written_type = sdb::pg::ColumnarWrittenType;
+  config.create_postgres_decoder = sdb::formats::MakePostgresDecoder;
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
   config.AddExtensionOption(
@@ -208,7 +212,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterPgBinaryCopyFunction(db);
 
-  connector::RegisterPgTextCopyFunction(db);
+  connector::RegisterPgTextCopyFunctions(db);
   replication::RegisterReplicationSourceFunction(db);
   replication::RegisterReplicationFunctions(db);
 

@@ -173,6 +173,7 @@ integer_division	on	Whether or not the / operator defaults to integer division, 
 integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
+json_strict_paths	off	Whether the JSON path functions (->, ->>, json_extract, json_value, ...) reject a malformed document even when the error is outside the part they read
 late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder.
@@ -303,6 +304,7 @@ sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy pred
 sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_object_cache_size	0	Bytes the database's object cache may hold: decoded columnstore dictionaries, idle tokenizers and other reusable objects, evicted least recently used. 0 = an eighth of memory_limit, at least 256MB. Default 0. Server-global; only a superuser may change it.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
+sdb_rendering	postgres	The text form of the values in query results sent as text: 'postgres' writes them as PostgreSQL does (arrays as {1,2}, booleans as t and f), 'duckdb' as DuckDB's casts to VARCHAR do ([1, 2], true and false). COPY takes its RENDERING option instead. Default 'postgres'.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a CREATE INDEX on a table rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
@@ -524,6 +526,7 @@ integer_division	on	Whether or not the / operator defaults to integer division, 
 integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
+json_strict_paths	off	Whether the JSON path functions (->, ->>, json_extract, json_value, ...) reject a malformed document even when the error is outside the part they read
 late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder.
@@ -654,6 +657,7 @@ sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy pred
 sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_object_cache_size	0	Bytes the database's object cache may hold: decoded columnstore dictionaries, idle tokenizers and other reusable objects, evicted least recently used. 0 = an eighth of memory_limit, at least 256MB. Default 0. Server-global; only a superuser may change it.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
+sdb_rendering	postgres	The text form of the values in query results sent as text: 'postgres' writes them as PostgreSQL does (arrays as {1,2}, booleans as t and f), 'duckdb' as DuckDB's casts to VARCHAR do ([1, 2], true and false). COPY takes its RENDERING option instead. Default 'postgres'.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a CREATE INDEX on a table rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.

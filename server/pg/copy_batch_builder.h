@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -31,14 +32,15 @@
 
 namespace sdb::pg {
 
-size_t TrailingBackslashes(std::string_view bytes) noexcept;
+size_t BinaryRowEnd(std::string_view bytes, size_t pos,
+                    std::span<const int32_t> widths) noexcept;
 
-size_t FindRowEnd(std::string_view bytes, size_t from,
-                  size_t backslashes_before = 0) noexcept;
-size_t FindLastRowEnd(std::string_view bytes) noexcept;
+size_t WalkBinaryRows(std::string_view bytes, size_t pos,
+                      size_t limit) noexcept;
+
+size_t BinaryCopyHeaderExtension(std::string_view header);
 
 enum class CopyBatchFormat : uint8_t {
-  Text,
   Binary,
   Raw,
 };
@@ -46,22 +48,18 @@ enum class CopyBatchFormat : uint8_t {
 class CopyBatchBuilder {
  public:
   explicit CopyBatchBuilder(CopyBatchFormat format,
-                            size_t target_bytes = kCopyBatchBytes,
-                            bool join_blank_lines = false)
-    : _format{format},
-      _target{target_bytes},
-      _join_blank_lines{join_blank_lines} {}
+                            size_t target_bytes = kCopyBatchBytes)
+    : _format{format}, _target{target_bytes} {}
 
-  void Feed(std::string_view bytes, bool stable);
+  bool Feed(std::string_view bytes, bool stable);
+  bool AddRows(std::string_view rows, bool stable);
   void Finish();
-
-  bool Ready() const noexcept {
-    return _sealed || (!_join_blank_lines && Full());
-  }
-  bool HasRows() const noexcept {
-    return _sealed || (_batch && !_batch->Empty());
-  }
+  bool Ready() const noexcept { return Full(); }
+  bool HasRows() const noexcept { return _batch && !_batch->Empty(); }
   bool Ended() const noexcept { return _ended; }
+  bool BetweenRows() const noexcept {
+    return _header_done && !_open && !_ended;
+  }
   std::unique_ptr<CopyBatch> Take();
 
  private:
@@ -73,18 +71,13 @@ class CopyBatchBuilder {
 
   bool Full() const noexcept { return _batch && _batch->bytes >= _target; }
   CopyBatch& Current();
-  void AddRows(std::string_view rows, bool stable);
-  void AddRow(std::string row);
-  void FeedText(std::string_view bytes, bool stable);
-  void FeedBinary(std::string_view bytes, bool stable);
+  bool FeedBinary(std::string_view bytes, bool stable);
   size_t FeedHeader(std::string_view bytes);
   bool Gather(std::string_view bytes, size_t& pos, size_t need);
 
   const CopyBatchFormat _format;
   const size_t _target;
-  const bool _join_blank_lines;
   std::unique_ptr<CopyBatch> _batch;
-  std::unique_ptr<CopyBatch> _sealed;
   std::string _partial;
   std::string _header;
   std::array<char, 4> _scratch{};

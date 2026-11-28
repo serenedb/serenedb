@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import os
 import subprocess
 import uuid
@@ -115,6 +116,23 @@ def test_shell_copy_to_stdout(tmp_path: Path) -> None:
     assert r.returncode == 0, f"stderr=\n{r.stderr}\nstdout=\n{r.stdout}"
     for v in ("10", "20", "30"):
         assert v in r.stdout, f"missing {v} in stdout:\n{r.stdout}"
+
+
+def test_shell_copy_to_gzip_file_with_prefix_and_suffix(tmp_path: Path) -> None:
+    rows = tmp_path / "prefixed.csv.gz"
+    empty = tmp_path / "empty.csv.gz"
+    script = (
+        f"COPY (SELECT range AS x FROM range(300000)) TO '{rows}' "
+        "(FORMAT csv, HEADER false, PREFIX '[', SUFFIX ']');\n"
+        f"COPY (SELECT range AS x FROM range(0)) TO '{empty}' "
+        "(FORMAT csv, HEADER false, PREFIX '[', SUFFIX ']');\n"
+    )
+    r = _run_shell(script)
+    assert r.returncode == 0, f"stderr=\n{r.stderr}\nstdout=\n{r.stdout}"
+    text = gzip.decompress(rows.read_bytes()).decode()
+    assert text.startswith("[") and text.endswith("]")
+    assert sorted(int(v) for v in text[1:-1].split("\n")) == list(range(300000))
+    assert gzip.decompress(empty.read_bytes()) == b"[]"
 
 
 def test_shell_copy_to_stdout_bare_keyword(tmp_path: Path) -> None:

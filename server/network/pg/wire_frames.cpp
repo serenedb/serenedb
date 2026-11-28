@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "pg/command_tag.h"
+#include "pg/copy_binary.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "pg/types/mapping.h"
@@ -52,14 +53,6 @@ constexpr size_t kInt16 = 2;     // a big-endian int16 wire field
 constexpr size_t kInt32 = 4;     // a big-endian int32 wire field
 constexpr size_t kFrameHeader = kFrameTag + kInt32;  // type byte + length
 
-// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
-// length (0).
-constexpr std::string_view kPgCopyHeader{
-  "PGCOPY\n\xFF\r\n\0"
-  "\0\0\0\0"
-  "\0\0\0\0",
-  19};
-
 void WriteNoticeField(message::Writer& w, char tag, std::string_view value) {
   w.Write({&tag, 1});
   w.Write(value);
@@ -69,93 +62,43 @@ void WriteNoticeField(message::Writer& w, char tag, std::string_view value) {
 }  // namespace
 
 void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
-                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::ChunkSerializer& serializer,
                     sdb::pg::SerializationContext& context, duckdb::idx_t begin,
                     duckdb::idx_t end) {
-  const auto columns = static_cast<uint16_t>(chunk.ColumnCount());
-  auto& decoded = context.decoded;
-  decoded.clear();
-  decoded.resize(columns);
-  for (uint16_t column = 0; column < columns; ++column) {
-    duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], chunk.size(),
-                                             decoded[column]);
-  }
-  // One 'D' message per row, each carrying its own length + field count. The
-  // Writer rewinds the row if a serializer throws partway (no truncated bytes
-  // reach the client).
-  for (duckdb::idx_t row = begin; row < end; ++row) {
-    message::Writer writer{out};
-    context.writer = &writer;
-    auto* prefix = writer.Alloc(kFrameHeader + kInt16);
-    for (uint16_t column = 0; column < columns; ++column) {
-      serializers[column](context, decoded[column], row);
-    }
-    sdb::pg::CheckMessageSize(writer.Written() - kFrameTag);
-    prefix[0] = PQ_MSG_DATA_ROW;
-    absl::big_endian::Store32(
-      prefix + kFrameTag, static_cast<int32_t>(writer.Written() - kFrameTag));
-    absl::big_endian::Store16(prefix + kFrameHeader, columns);
-    writer.Commit(false);
-  }
+  serializer.Write(out, context, chunk, begin, end,
+                   {.tag = PQ_MSG_DATA_ROW, .field_count = true});
 }
 
 template<RowEncoding Encoding>
 void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
-                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::ChunkSerializer& serializer,
                     sdb::pg::SerializationContext& context,
                     bool binary_header) {
-  const auto rows = chunk.size();
-  if (rows == 0) {
-    return;
-  }
-  const auto columns = static_cast<uint16_t>(chunk.ColumnCount());
-  auto& decoded = context.decoded;
-  decoded.clear();
-  decoded.resize(columns);
-  for (uint16_t column = 0; column < columns; ++column) {
-    duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
-                                             decoded[column]);
-  }
-  for (duckdb::idx_t row = 0; row < rows; ++row) {
-    message::Writer writer{out};
-    context.writer = &writer;
-    auto* prefix = writer.Alloc(kFrameHeader);
-    if constexpr (Encoding == RowEncoding::CopyBinary) {
-      if (binary_header && row == 0) {
-        writer.Write(kPgCopyHeader);
-      }
-      // PGCOPY row: int16 field count, then the binary fields.
-      absl::big_endian::Store16(writer.Alloc(kInt16), columns);
-      for (uint16_t column = 0; column < columns; ++column) {
-        serializers[column](context, decoded[column], row);
-      }
-    } else {
-      static_assert(Encoding == RowEncoding::CopyText,
-                    "WriteCopyChunk is for the COPY encodings only");
-      // PG-text row: TAB-separated fields, terminated by \n.
-      for (uint16_t column = 0; column < columns; ++column) {
-        if (column > 0) {
-          writer.Write({&context.copy_delim, 1});
-        }
-        serializers[column](context, decoded[column], row);
-      }
-      writer.Write("\n");
-    }
-    sdb::pg::CheckMessageSize(writer.Written() - kFrameTag);
-    prefix[0] = PQ_MSG_COPY_DATA;
-    absl::big_endian::Store32(
-      prefix + kFrameTag, static_cast<int32_t>(writer.Written() - kFrameTag));
-    writer.Commit(false);
+  if constexpr (Encoding == RowEncoding::CopyBinary) {
+    serializer.Write(
+      out, context, chunk, 0, chunk.size(),
+      {
+        .tag = PQ_MSG_COPY_DATA,
+        .field_count = true,
+        .first = binary_header ? sdb::pg::kPgCopyHeader : std::string_view{},
+      });
+  } else {
+    static_assert(Encoding == RowEncoding::CopyText,
+                  "WriteCopyChunk is for the COPY encodings only");
+    serializer.Write(out, context, chunk, 0, chunk.size(),
+                     {
+                       .tag = PQ_MSG_COPY_DATA,
+                       .delimited = true,
+                       .after = context.copy_newline,
+                     });
   }
 }
 
 template void WriteCopyChunk<RowEncoding::CopyBinary>(
-  message::Buffer&, const duckdb::DataChunk&,
-  std::span<const sdb::pg::SerializationFunction>,
+  message::Buffer&, const duckdb::DataChunk&, sdb::pg::ChunkSerializer&,
   sdb::pg::SerializationContext&, bool);
 template void WriteCopyChunk<RowEncoding::CopyText>(
-  message::Buffer&, const duckdb::DataChunk&,
-  std::span<const sdb::pg::SerializationFunction>,
+  message::Buffer&, const duckdb::DataChunk&, sdb::pg::ChunkSerializer&,
   sdb::pg::SerializationContext&, bool);
 
 void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns) {
@@ -178,29 +121,37 @@ void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns) {
 }
 
 void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first) {
-  auto& head = *first.head;
+  auto* chunk = first.head;
+  while (chunk->Size() == 0) {
+    chunk = chunk->Next();
+  }
+  auto& head = *chunk;
   const auto* frame = head.WritableData() + head.GetBegin();
   SDB_ASSERT(head.Size() >= kFrameHeader && frame[0] == PQ_MSG_COPY_DATA);
   message::Writer w{out};
   auto* prefix = w.Alloc(kFrameHeader);
   prefix[0] = PQ_MSG_COPY_DATA;
-  absl::big_endian::Store32(
-    prefix + kFrameTag,
-    absl::big_endian::Load32(frame + kFrameTag) + kPgCopyHeader.size());
-  w.Write(kPgCopyHeader);
+  absl::big_endian::Store32(prefix + kFrameTag,
+                            absl::big_endian::Load32(frame + kFrameTag) +
+                              sdb::pg::kPgCopyHeader.size());
+  w.Write(sdb::pg::kPgCopyHeader);
   w.Commit(false);
   head.SetBegin(head.GetBegin() + kFrameHeader);
   first.bytes -= kFrameHeader;
 }
 
-void WriteCopyTextHeader(message::Buffer& out,
-                         std::span<const duckdb::Identifier> names,
-                         sdb::pg::SerializationContext& context) {
+void WriteCopyHeader(message::Buffer& out,
+                     std::span<const duckdb::Identifier> names,
+                     sdb::pg::SerializationContext& context, bool csv) {
   message::Writer w{out};
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
   auto* const writer = std::exchange(context.writer, &w);
-  sdb::pg::SerializeCopyTextHeader(context, names);
+  if (csv) {
+    sdb::pg::SerializeCopyCsvHeader(context, names);
+  } else {
+    sdb::pg::SerializeCopyTextHeader(context, names);
+  }
   context.writer = writer;
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(
@@ -213,9 +164,9 @@ void WriteCopyBinaryFooter(message::Buffer& out, bool binary_header) {
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
   if (binary_header) {
-    w.Write(kPgCopyHeader);
+    w.Write(sdb::pg::kPgCopyHeader);
   }
-  absl::big_endian::Store16(w.Alloc(kInt16), static_cast<int16_t>(-1));
+  absl::big_endian::Store16(w.Alloc(kInt16), sdb::pg::kPgCopyTrailer);
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(
     prefix + kFrameTag, static_cast<int32_t>(w.Written() - start - kFrameTag));

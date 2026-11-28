@@ -99,3 +99,16 @@ SELECT DATE '9999-12-31' - DATE '0001-01-01' AS span_days;
 ----
 span_days
 3652058
+
+statement ok
+SET TIME ZONE 'Asia/Tokyo';
+
+skipif pg-wire-extended
+query
+SELECT '294247-01-09 03:00:00+00'::TIMESTAMPTZ AS before_edge, '294247-01-10 03:00:00+00'::TIMESTAMPTZ AS late, ARRAY['294247-01-10 03:00:00.5+00'::TIMESTAMPTZ] AS late_array;
+----
+before_edge	late	late_array
+294247-01-09 12:00:00+09	294247-01-10 12:00:00+09	{"294247-01-10 12:00:00.5+09"}
+
+statement ok
+SET TIME ZONE 'UTC';

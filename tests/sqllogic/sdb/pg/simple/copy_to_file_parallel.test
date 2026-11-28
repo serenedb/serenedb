@@ -1,0 +1,295 @@
+control substitution on
+
+statement ok
+CREATE TABLE ctfp_src AS
+SELECT x::INTEGER AS id, 'v' || x::VARCHAR || CASE WHEN x % 7 = 0 THEN e'\t\\' ELSE '' END AS label
+FROM range(300000) t(x);
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctfp_text (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_text FROM '${__TEST_DIR__}/ctfp.txt' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, sum(id) AS total
+FROM ctfp_text
+JOIN ctfp_src USING (id, label);
+----
+n	ids	total
+300000	300000	44999850000
+
+
+statement count 300000
+COPY (SELECT * FROM ctfp_src ORDER BY id) TO '${__TEST_DIR__}/ctfp_ordered.txt' (FORMAT text);
+
+
+query
+SELECT content = (
+  SELECT string_agg(id::VARCHAR || chr(9) || replace(replace(label, e'\\', e'\\\\'), chr(9), e'\\t') || chr(10), '' ORDER BY id)
+  FROM ctfp_src
+) AS same
+FROM read_text('${__TEST_DIR__}/ctfp_ordered.txt');
+----
+same
+t
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_header.txt' (FORMAT text, HEADER);
+
+
+query
+SELECT replace(split_part(content, chr(10), 1), chr(9), '<tab>') AS first_line, length(content) - length(replace(content, chr(10), '')) AS lines
+FROM read_text('${__TEST_DIR__}/ctfp_header.txt');
+----
+first_line	lines
+id<tab>label	300001
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp.bin' (FORMAT binary);
+
+
+query
+SELECT left(hex(content), 38) AS head, right(hex(content), 4) AS tail
+FROM read_blob('${__TEST_DIR__}/ctfp.bin');
+----
+head	tail
+5047434F50590AFF0D0A000000000000000000	FFFF
+
+
+statement ok
+CREATE TABLE ctfp_bin (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_bin FROM '${__TEST_DIR__}/ctfp.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_bin
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY (SELECT * FROM ctfp_src ORDER BY id DESC) TO '${__TEST_DIR__}/ctfp_ordered.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE ctfp_bin_ordered (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_bin_ordered FROM '${__TEST_DIR__}/ctfp_ordered.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_bin_ordered
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp.txt.gz' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctfp_gz (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_gz FROM '${__TEST_DIR__}/ctfp.txt.gz' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_gz
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 0
+COPY (SELECT * FROM ctfp_src WHERE id < 0) TO '${__TEST_DIR__}/ctfp_empty.bin' (FORMAT binary);
+
+
+query
+SELECT hex(content) AS bytes
+FROM read_blob('${__TEST_DIR__}/ctfp_empty.bin');
+----
+bytes
+5047434F50590AFF0D0A000000000000000000FFFF
+
+
+statement ok
+SET threads = 1;
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_one_thread.txt' (FORMAT text);
+
+
+statement ok
+RESET threads;
+
+
+query
+SELECT list_sort(string_split(rtrim(content, chr(10)), chr(10))) = (
+  SELECT list_sort(list(id::VARCHAR || chr(9) || replace(replace(label, e'\\', e'\\\\'), chr(9), e'\\t')))
+  FROM ctfp_src
+) AND content LIKE '%' || chr(10) AS same
+FROM read_text('${__TEST_DIR__}/ctfp_one_thread.txt');
+----
+same
+t
+
+
+statement ok
+SET SESSION preserve_insertion_order = false;
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_unordered.csv' (FORMAT csv);
+
+
+statement ok
+SET SESSION preserve_insertion_order = true;
+
+
+statement ok
+CREATE TABLE ctfp_unordered (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_unordered FROM '${__TEST_DIR__}/ctfp_unordered.csv' (FORMAT csv);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_unordered
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_zstd.txt' (FORMAT text, COMPRESSION zstd);
+
+
+statement ok
+CREATE TABLE ctfp_zstd (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_zstd FROM '${__TEST_DIR__}/ctfp_zstd.txt' (FORMAT text, COMPRESSION zstd);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_zstd
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY (SELECT * FROM ctfp_src ORDER BY id DESC) TO '${__TEST_DIR__}/ctfp_ordered.txt.gz' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE previous <> id + 1) AS misordered
+FROM (
+  SELECT id, lag(id) OVER (ORDER BY file_row_number) AS previous
+  FROM read_csv('${__TEST_DIR__}/ctfp_ordered.txt.gz', delim = e'\t', quote = '', escape = '', header = false,
+                file_row_number = true, columns = {'id': 'INTEGER', 'label': 'VARCHAR'})
+);
+----
+n	misordered
+300000	0
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp.bin.gz' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE ctfp_bin_gz (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_bin_gz FROM '${__TEST_DIR__}/ctfp.bin.gz' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_bin_gz
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_header.csv.zst' (FORMAT csv, HEADER);
+
+
+statement ok
+CREATE TABLE ctfp_csv_zst (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_csv_zst FROM '${__TEST_DIR__}/ctfp_header.csv.zst' (FORMAT csv, HEADER);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_csv_zst
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_per_thread' (FORMAT text, PER_THREAD_OUTPUT true);
+
+
+statement ok
+CREATE TABLE ctfp_per_thread (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_per_thread FROM '${__TEST_DIR__}/ctfp_per_thread/*.text' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_per_thread
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement error
+COPY ctfp_src TO '/dev/full' (FORMAT text);
+----
+db error: ERROR: Could not write file "/dev/full": No space left on device

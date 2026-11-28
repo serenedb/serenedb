@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import os
@@ -72,6 +73,373 @@ def test_copy_from_stdin(conn: psycopg.Connection, table_name: str,
             n, s = cur.fetchone()
             assert n == 3
             assert s == 6
+    finally:
+        _drop(conn, table_name)
+
+
+_STREAM_ROWS = 400_000
+
+
+def _stream_payload(fmt: str, bad_line: int | None = None) -> bytes:
+    rows = []
+    for i in range(_STREAM_ROWS):
+        label = f"row {i} " + "x" * (i % 37)
+        if i + 1 == bad_line:
+            rows.append('{"x": oops}')
+        elif fmt == "csv":
+            rows.append(f'{i},"{label}"')
+        else:
+            rows.append(json.dumps({"x": i, "label": label}))
+    if fmt == "json_array":
+        return ("[\n" + ",\n".join(rows) + "\n]\n").encode()
+    return ("\n".join(rows) + "\n").encode()
+
+
+@pytest.mark.parametrize(
+    "fmt,options",
+    [
+        ("json", "FORMAT json"),
+        ("json_array", "FORMAT json"),
+        ("csv", "FORMAT csv, SAMPLE_SIZE 1000"),
+    ],
+    ids=["json_lines", "json_array", "csv_duckdb_option"],
+)
+def test_copy_from_stdin_reads_the_stream_in_ranges(conn: psycopg.Connection,
+                                                    table_name: str, fmt: str,
+                                                    options: str) -> None:
+    _create_int_varchar(conn, table_name)
+    payload = _stream_payload(fmt)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(
+                f'COPY public."{table_name}" FROM STDIN ({options})'
+            ) as cp:
+                for begin in range(0, len(payload), 1 << 20):
+                    cp.write(payload[begin:begin + (1 << 20)])
+            cur.execute(f'SELECT count(*), sum(x), sum(length(label)) '
+                        f'FROM public."{table_name}"')
+            assert cur.fetchone() == (
+                _STREAM_ROWS, _STREAM_ROWS * (_STREAM_ROWS - 1) // 2,
+                sum(len(f"row {i} ") + i % 37 for i in range(_STREAM_ROWS)))
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.usefixtures("own_server")
+@pytest.mark.parametrize("fmt", ["text", "csv", "json", "binary"])
+def test_copy_from_stdin_takes_rows_longer_than_its_window_of_batches(
+        conn: psycopg.Connection, table_name: str, fmt: str) -> None:
+    conn.execute("SET threads = 1")
+    _create_int_varchar(conn, table_name)
+    size = 5 << 20
+    labels = [chr(ord("a") + i) * size for i in range(3)]
+    rows = []
+    for i, label in enumerate(labels):
+        if fmt == "json":
+            rows.append(json.dumps({"x": i, "label": label}))
+        elif fmt == "csv":
+            rows.append(f'{i},"{label}"')
+        else:
+            rows.append(f"{i}\t{label}")
+    payload = ("\n".join(rows) + "\n").encode()
+    if fmt == "binary":
+        payload = _bytea_payload("BINARY",
+                                 [label.encode() for label in labels])
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(
+                f'COPY public."{table_name}" FROM STDIN (FORMAT {fmt})'
+            ) as cp:
+                for begin in range(0, len(payload), 1 << 20):
+                    cp.write(payload[begin:begin + (1 << 20)])
+            cur.execute(f'SELECT count(*), sum(x), sum(length(label)) '
+                        f'FROM public."{table_name}"')
+            assert cur.fetchone() == (3, 3, 3 * size)
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_json_error_names_its_line(conn: psycopg.Connection,
+                                                   table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.Error, match="line 300001"):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              "(FORMAT json)") as cp:
+                    cp.write(_stream_payload("json", bad_line=300_001))
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize(
+    "compression", ["none", "uncompressed", "auto", "auto_detect", "gzip"])
+def test_copy_from_stdin_json_compression(conn: psycopg.Connection,
+                                          table_name: str,
+                                          compression: str) -> None:
+    payload = b'{"x": 1, "label": "one"}\n{"x": 2, "label": "two"}\n'
+    if compression == "gzip":
+        payload = gzip.compress(payload)
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT json, COMPRESSION {compression})") as cp:
+                cp.write(payload)
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [(1, "one"), (2, "two")]
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize(
+    "fmt, payload, expected",
+    [
+        ("text", b"1\tone\r2\ttw\\\ro\r\\.\r",
+         [(1, "one"), (2, "tw\ro")]),
+        ("text", b"1\tone\r\n2\ttwo\r\n\\.\r\n", [(1, "one"), (2, "two")]),
+        ("csv", b'1,"o\rne"\r2,"tw\no"\r3,\r',
+         [(1, "o\rne"), (2, "tw\no"), (3, None)]),
+    ],
+)
+def test_copy_from_stdin_reads_carriage_return_lines(
+        conn: psycopg.Connection, table_name: str, fmt: str, payload: bytes,
+        expected: list) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT {fmt})") as cp:
+                for piece in range(0, len(payload), 3):
+                    cp.write(payload[piece:piece + 3])
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == expected
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize("encoding,codec", [("utf-8", "utf-8"),
+                                            ("latin-1", "latin-1")])
+def test_copy_from_stdin_csv_reader_option_and_encoding(
+        conn: psycopg.Connection, table_name: str, encoding: str,
+        codec: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT csv, HEADER, SAMPLE_SIZE 10, "
+                          f"ENCODING '{encoding}')") as cp:
+                cp.write("x,label\n1,café\n".encode(codec))
+            cur.execute(f'SELECT x, label FROM public."{table_name}"')
+            assert cur.fetchall() == [(1, "café")]
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_format_without_a_reader(conn: psycopg.Connection,
+                                                 table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.Error,
+                               match='COPY FROM is not supported for FORMAT "blob"'):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              "(FORMAT blob)") as cp:
+                    cp.write(b"1\tone\n")
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_csv_record_across_messages(conn: psycopg.Connection,
+                                                    table_name: str) -> None:
+    label = "y" * 200
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          "(FORMAT csv)") as cp:
+                cp.write(f'0,"zero"\n1,"{label[:10]}'.encode())
+                cp.write(f'{label[10:]}"\n2,"two"\n'.encode())
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [(0, "zero"), (1, label), (2, "two")]
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_from_stdin_end_marker_inside_a_field(conn: psycopg.Connection,
+                                                   table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.BadCopyFileFormat,
+                               match="end-of-copy marker is not alone on its line"):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN') as cp:
+                    cp.write(b"1\tsi\\.x\n")
+    finally:
+        _drop(conn, table_name)
+
+
+_ENCODED_LABELS = {
+    "LATIN1": ("latin-1", ["café", "ÿ a\\b"]),
+    "UTF16LE": ("utf-16-le", ["é€😀", "a\\b 😀z"]),
+    "UTF16BE": ("utf-16-be", ["é€😀", "a\\b 😀z"]),
+    "UTF32LE": ("utf-32-le", ["é€😀", "a\\b 😀z"]),
+    "UTF32BE": ("utf-32-be", ["é€😀", "a\\b 😀z"]),
+}
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 64 * 1024])
+@pytest.mark.parametrize("fmt", ["text", "csv"])
+@pytest.mark.parametrize("encoding", list(_ENCODED_LABELS))
+def test_copy_from_stdin_decodes_its_encoding(conn: psycopg.Connection,
+                                              table_name: str, encoding: str,
+                                              fmt: str, chunk: int) -> None:
+    codec, labels = _ENCODED_LABELS[encoding]
+    if fmt == "text":
+        lines = [f"{i}\t{label.replace(chr(92), chr(92) * 2)}\n"
+                 for i, label in enumerate(labels)] + [f"{len(labels)}\t\\N\n"]
+    else:
+        lines = [f'{i},"{label}"\n' for i, label in enumerate(labels)]
+        lines.append(f"{len(labels)},\n")
+    payload = "".join(lines).encode(codec)
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT {fmt}, ENCODING '{encoding}')") as cp:
+                for start in range(0, len(payload), chunk):
+                    cp.write(payload[start:start + chunk])
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [*enumerate(labels), (len(labels), None)]
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize(
+    "encoding,payload,message",
+    [
+        ("UTF16LE", "1\tone\n".encode("utf-16-le") + b"\x32",
+         'invalid byte sequence for encoding "UTF16LE": incomplete character '
+         "at the end of the input"),
+        ("UTF16BE", "1\tone\n".encode("utf-16-be") + b"\xdc\x00\x00\x0a",
+         'invalid byte sequence for encoding "UTF16BE": invalid UTF-16 code unit'),
+        ("UTF32LE", "1\tone\n".encode("utf-32-le") + b"\x00\x00\x11\x00",
+         'invalid byte sequence for encoding "UTF32LE": invalid UTF-32 code point'),
+    ],
+    ids=["incomplete", "lone_low_surrogate", "beyond_unicode"])
+def test_copy_from_stdin_refuses_bytes_outside_its_encoding(
+        conn: psycopg.Connection, table_name: str, encoding: str,
+        payload: bytes, message: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with pytest.raises(psycopg.Error) as info:
+            with conn.cursor() as cur:
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              f"(FORMAT text, ENCODING '{encoding}')") as cp:
+                    cp.write(payload)
+        assert info.value.diag.message_primary == message
+        with conn.cursor() as cur:
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+
+
+@pytest.mark.parametrize(
+    "fmt,encoding,codec,text",
+    [("text", "UTF16BE", "utf-16-be", "é€😀"), ("csv", "LATIN1", "latin-1", "café"),
+     ("text", "UTF32LE", "utf-32-le", "a\tb")],
+    ids=["text_utf16be", "csv_latin1", "text_utf32le"])
+def test_copy_to_stdout_encodes_its_encoding(conn: psycopg.Connection, fmt: str,
+                                             encoding: str, codec: str,
+                                             text: str) -> None:
+    with conn.cursor() as cur:
+        with cur.copy(f"COPY (SELECT %s::text AS t, 1 AS n) TO STDOUT "
+                      f"(FORMAT {fmt}, ENCODING '{encoding}')", (text,)) as cp:
+            data = b"".join(bytes(chunk) for chunk in cp)
+    field = text.replace("\t", "\\t") if fmt == "text" else text
+    delim = "\t" if fmt == "text" else ","
+    assert data == f"{field}{delim}1\n".encode(codec)
+
+
+def test_copy_stdio_force_column_lists(conn: psycopg.Connection,
+                                       table_name: str) -> None:
+    with conn.cursor() as cur:
+        with cur.copy("COPY (SELECT 1 AS a, 'x' AS b, NULL::text AS c) TO STDOUT "
+                      "(FORMAT csv, FORCE_QUOTE (b, c))") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == b'1,"x",\n'
+        with cur.copy("COPY (SELECT 1 AS a, 'x' AS b) TO STDOUT "
+                      "(FORMAT csv, FORCE_QUOTE *)") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == b'"1","x"\n'
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          "(FORMAT csv, FORCE_NOT_NULL (label), FORCE_NULL (x))") as cp:
+                cp.write(b'1,\n"",two\n')
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY label')
+            assert cur.fetchall() == [(1, ""), (None, "two")]
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_to_stdout_takes_an_expression_option(conn: psycopg.Connection,
+                                                   shared_path: Path) -> None:
+    path = shared_path / "delimited.csv"
+    with conn.cursor() as cur:
+        cur.execute(f"COPY (SELECT 1 AS a, 2 AS b) TO '{path}' "
+                    "(FORMAT csv, DELIMITER chr(124))")
+        assert path.read_bytes() == b"1|2\n"
+        with cur.copy("COPY (SELECT 1 AS a, 2 AS b) TO STDOUT "
+                      "(FORMAT csv, DELIMITER chr(124))") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == b"1|2\n"
+
+
+@pytest.mark.parametrize(
+    "fmt,duckdb,postgres",
+    [
+        ("text", b"1\t[1, 2]\ttrue\n", b"1\t{1,2}\tt\n"),
+        ("csv", b'1,"[1, 2]",true\n', b'1,"{1,2}",t\n'),
+    ],
+    ids=["text", "csv"],
+)
+def test_copy_stdio_rendering(conn: psycopg.Connection, table_name: str,
+                              fmt: str, duckdb: bytes, postgres: bytes) -> None:
+    query = "SELECT 1 AS id, ARRAY[1, 2] AS l, true AS b"
+    with conn.cursor() as cur:
+        with cur.copy(f"COPY ({query}) TO STDOUT "
+                      f"(FORMAT {fmt}, RENDERING duckdb)") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == duckdb
+        with cur.copy(f"COPY ({query}) TO STDOUT (FORMAT {fmt})") as cp:
+            assert b"".join(bytes(chunk) for chunk in cp) == postgres
+        cur.execute(f'CREATE TABLE public."{table_name}"'
+                    "(id INT, l INT[], b BOOLEAN)")
+        try:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT {fmt}, RENDERING duckdb)") as cp:
+                cp.write(duckdb)
+            cur.execute(f'SELECT id, l, b FROM public."{table_name}"')
+            assert cur.fetchall() == [(1, [1, 2], True)]
+            with pytest.raises(psycopg.errors.DataError):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                              f"(FORMAT {fmt})") as cp:
+                    cp.write(duckdb)
+        finally:
+            _drop(conn, table_name)
+
+
+def test_copy_from_stdin_crlf_end_marker(conn: psycopg.Connection,
+                                         table_name: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN') as cp:
+                cp.write(b"\\\\.\r\ntwo\r\n\\.\r\n")
+            cur.execute(f'SELECT label FROM public."{table_name}" ORDER BY label')
+            assert cur.fetchall() == [("\\.",), ("two",)]
     finally:
         _drop(conn, table_name)
 
@@ -277,6 +645,303 @@ def test_copy_to_stdout_parquet_is_binary_blob(conn: psycopg.Connection,
         _drop(conn, table_name)
 
 
+def test_copy_arrows_round_trip(conn: psycopg.Connection,
+                                table_name: str) -> None:
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, CASE WHEN i % 7 = 0 '
+                f"THEN NULL ELSE 'label ' || i END FROM generate_series(1, 5000) i")
+            blob = b""
+            with cur.copy(
+                f'COPY public."{table_name}" TO STDOUT (FORMAT arrows)'
+            ) as cp:
+                for chunk in cp:
+                    blob += bytes(chunk)
+            assert blob.startswith(b"\xff\xff\xff\xff"), blob[:8]
+            with cur.copy(
+                f'COPY public."{dest}" FROM STDIN (FORMAT arrows)'
+            ) as cp:
+                for i in range(0, len(blob), 4096):
+                    cp.write(blob[i:i + 4096])
+            cur.execute(
+                f'SELECT count(*) FROM (SELECT * FROM public."{table_name}" '
+                f'EXCEPT ALL SELECT * FROM public."{dest}")')
+            assert cur.fetchone() == (0,)
+            cur.execute(f'SELECT count(*), count(label) FROM public."{dest}"')
+            assert cur.fetchone() == (5000, 5000 - 5000 // 7)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
+def _arrows_load(cur, table: str, blob: bytes) -> None:
+    with cur.copy(f'COPY public."{table}" FROM STDIN (FORMAT arrows)') as cp:
+        for i in range(0, len(blob), 64 * 1024):
+            cp.write(blob[i:i + 64 * 1024])
+
+
+@pytest.mark.usefixtures("own_server")
+@pytest.mark.parametrize("compression", ["none", "lz4", "zstd"])
+def test_copy_arrows_from_stdin_decodes_batches_on_every_thread(
+        conn: psycopg.Connection, table_name: str, compression: str) -> None:
+    conn.execute("SET threads = 8")
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, CASE WHEN i % 7 = 0 '
+                f"THEN NULL ELSE repeat('v', i % 50) || i END "
+                f"FROM generate_series(1, 400000) i")
+            with cur.copy(f'COPY public."{table_name}" TO STDOUT (FORMAT arrows, '
+                          f"COMPRESSION '{compression}', ROW_GROUP_SIZE 20000)") as cp:
+                blob = b"".join(bytes(chunk) for chunk in cp)
+            _arrows_load(cur, dest, blob)
+            for left, right in ((table_name, dest), (dest, table_name)):
+                cur.execute(f'SELECT count(*) FROM (SELECT * FROM public."{left}" '
+                            f'EXCEPT ALL SELECT * FROM public."{right}")')
+                assert cur.fetchone() == (0,)
+            cur.execute(f'TRUNCATE public."{dest}"')
+            at = blob.index(b"\xff\xff\xff\xff", len(blob) // 2)
+            with pytest.raises(psycopg.Error, match="truncated"):
+                _arrows_load(cur, dest, blob[:at + 100])
+            cur.execute(f'SELECT count(*) FROM public."{dest}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
+@pytest.mark.parametrize("codec", ["null", "deflate", "zstandard"])
+def test_copy_avro_round_trip(conn: psycopg.Connection, table_name: str,
+                              codec: str) -> None:
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, CASE WHEN i % 7 = 0 '
+                f"THEN NULL ELSE 'label ' || i END FROM generate_series(1, 20000) i")
+            blob = b""
+            with cur.copy(
+                f'COPY public."{table_name}" TO STDOUT '
+                f"(FORMAT avro, CODEC '{codec}')"
+            ) as cp:
+                assert cur.pgresult.binary_tuples == psycopg.pq.Format.BINARY
+                for chunk in cp:
+                    blob += bytes(chunk)
+            assert blob.startswith(b"Obj\x01"), blob[:8]
+            with cur.copy(
+                f'COPY public."{dest}" FROM STDIN (FORMAT avro)'
+            ) as cp:
+                assert cur.pgresult.binary_tuples == psycopg.pq.Format.BINARY
+                for i in range(0, len(blob), 4096):
+                    cp.write(blob[i:i + 4096])
+            cur.execute(
+                f'SELECT count(*) FROM (SELECT * FROM public."{table_name}" '
+                f'EXCEPT ALL SELECT * FROM public."{dest}")')
+            assert cur.fetchone() == (0,)
+            cur.execute(f'SELECT count(*), count(label) FROM public."{dest}"')
+            assert cur.fetchone() == (20000, 20000 - 20000 // 7)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
+def _avro_load(cur, table: str, blob: bytes) -> None:
+    with cur.copy(f'COPY public."{table}" FROM STDIN (FORMAT avro)') as cp:
+        for i in range(0, len(blob), 64 * 1024):
+            cp.write(blob[i:i + 64 * 1024])
+
+
+@pytest.mark.usefixtures("own_server")
+def test_copy_avro_from_stdin_takes_blocks_on_every_thread(
+        conn: psycopg.Connection, table_name: str) -> None:
+    conn.execute("SET threads = 8")
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, '
+                f"repeat('v', i % 50) || i FROM generate_series(1, 300000) i")
+            cur.execute(f'INSERT INTO public."{table_name}" VALUES '
+                        f"(0, repeat('w', 9 << 20))")
+            with cur.copy(f'COPY public."{table_name}" TO STDOUT '
+                          f"(FORMAT avro)") as cp:
+                blob = b"".join(bytes(chunk) for chunk in cp)
+            assert len(blob) > 16 << 20
+            _avro_load(cur, dest, blob)
+            for left, right in ((table_name, dest), (dest, table_name)):
+                cur.execute(f'SELECT count(*) FROM (SELECT * FROM public."{left}" '
+                            f'EXCEPT ALL SELECT * FROM public."{right}")')
+                assert cur.fetchone() == (0,)
+            cur.execute(f'TRUNCATE public."{dest}"')
+            sync = blob[-16:]
+            at = blob.index(sync, len(blob) // 2)
+            with pytest.raises(psycopg.Error, match="truncated"):
+                _avro_load(cur, dest, blob[:at - 100])
+            damaged = blob[:at] + bytes([blob[at] ^ 0xFF]) + blob[at + 1:]
+            with pytest.raises(psycopg.Error, match="sync marker"):
+                _avro_load(cur, dest, damaged)
+            negative = blob[:at + 16] + b"\x01" + blob[at + 17:]
+            with pytest.raises(psycopg.Error, match="corrupt"):
+                _avro_load(cur, dest, negative)
+            cur.execute(f'SELECT count(*) FROM public."{dest}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
+_AVRO_TURN = 2 << 20
+_AVRO_SYNC = bytes(range(16))
+
+
+def _avro_long(value: int) -> bytes:
+    zigzag = ((value << 1) ^ (value >> 63)) & ((1 << 64) - 1)
+    out = bytearray()
+    while zigzag >= 0x80:
+        out.append((zigzag & 0x7F) | 0x80)
+        zigzag >>= 7
+    out.append(zigzag)
+    return bytes(out)
+
+
+def _avro_header() -> bytes:
+    schema = json.dumps({"type": "record", "name": "r", "fields": [
+        {"name": "x", "type": "int"}, {"name": "label", "type": "string"}]}).encode()
+    meta = (_avro_long(2) + _avro_long(11) + b"avro.schema" +
+            _avro_long(len(schema)) + schema + _avro_long(10) + b"avro.codec" +
+            _avro_long(4) + b"null" + _avro_long(0))
+    return b"Obj\x01" + meta + _AVRO_SYNC
+
+
+def _avro_block(xs: list[int], size: int | None = None) -> bytes:
+    data = b"".join(_avro_long(x) + _avro_long(len(b"v%d" % x)) + b"v%d" % x
+                    for x in xs)
+    return (_avro_long(len(xs)) + _avro_long(len(data) if size is None else size) +
+            data + _AVRO_SYNC)
+
+
+def _avro_filler(total: int) -> bytes:
+    for length in range(total, 0, -1):
+        data = _avro_long(0) + _avro_long(length) + b"f" * length
+        block = _avro_long(1) + _avro_long(len(data)) + data + _AVRO_SYNC
+        if len(block) == total:
+            return block
+    raise ValueError(total)
+
+
+def _avro_before_turn_end(before: int, tail: bytes) -> bytes:
+    return _avro_header() + _avro_filler(_AVRO_TURN - before) + tail
+
+
+_AVRO_FIVE = _avro_block(list(range(1, 6)))
+_AVRO_LAST = _avro_block([1000, 1001, 1002])
+
+
+@pytest.mark.usefixtures("own_server")
+def test_copy_avro_from_stdin_cuts_turns_inside_block_headers_and_syncs(
+        conn: psycopg.Connection, table_name: str) -> None:
+    streams = [
+        (_avro_before_turn_end(1, _avro_block(list(range(1, 101))) + _AVRO_LAST),
+         (104, 8053)),
+        (_avro_before_turn_end(1, _AVRO_FIVE + _AVRO_LAST), (9, 3018)),
+        (_avro_before_turn_end(len(_AVRO_FIVE) - 8, _AVRO_FIVE + _AVRO_LAST),
+         (9, 3018)),
+    ]
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            for threads in (8, 1):
+                cur.execute(f"SET threads = {threads}")
+                for blob, loaded in streams:
+                    cur.execute(f'TRUNCATE public."{table_name}"')
+                    _avro_load(cur, table_name, blob)
+                    cur.execute(f'SELECT count(*), sum(x) FROM public."{table_name}"')
+                    assert cur.fetchone() == loaded
+    finally:
+        _drop(conn, table_name)
+
+
+class _ClientStop(Exception):
+    pass
+
+
+@pytest.mark.usefixtures("own_server")
+def test_copy_avro_from_stdin_refuses_damaged_block_headers_and_stops_with_its_client(
+        conn: psycopg.Connection, table_name: str) -> None:
+    conn.execute("SET threads = 8")
+    damaged = [
+        _avro_before_turn_end(1, _avro_block([1], size=-5)),
+        _avro_before_turn_end(1, b"\xff" * 11 + _AVRO_FIVE),
+        _avro_before_turn_end(1, b"\x02" + b"\xff" * 11 + _AVRO_FIVE),
+    ]
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            for blob in damaged:
+                with pytest.raises(psycopg.Error, match="corrupt"):
+                    _avro_load(cur, table_name, blob)
+            whole = _avro_header() + b"".join(_avro_filler(1 << 20) for _ in range(4))
+            with pytest.raises(_ClientStop):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN (FORMAT avro)') as cp:
+                    cp.write(whole[:3 << 20])
+                    raise _ClientStop()
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_to_stdout_arrow_file_is_binary_blob(conn: psycopg.Connection,
+                                                   shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        blob = b""
+        with cur.copy(
+            "COPY (SELECT i AS x, 'v' || i AS label FROM generate_series(1, 100) i) "
+            "TO STDOUT (FORMAT arrow)"
+        ) as cp:
+            for chunk in cp:
+                blob += bytes(chunk)
+        assert blob.startswith(b"ARROW1"), blob[:8]
+        assert blob.endswith(b"ARROW1"), blob[-8:]
+        path = shared_path / "stdout.arrow"
+        path.write_bytes(blob)
+        cur.execute(f"SELECT count(*), sum(x) FROM read_arrow('{path}')")
+        assert cur.fetchone() == (100, 5050)
+
+
+def test_copy_from_stdin_arrow_file_is_refused(conn: psycopg.Connection,
+                                               table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with pytest.raises(psycopg.errors.FeatureNotSupported,
+                           match="use FORMAT arrows"):
+            with conn.cursor() as cur:
+                with cur.copy(
+                    f'COPY public."{table_name}" FROM STDIN (FORMAT arrow)'
+                ) as cp:
+                    cp.write(b"ARROW1")
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            assert cur.fetchone() == (1,)
+    finally:
+        _drop(conn, table_name)
+
+
 def test_copy_to_stdout_json_lines(conn: psycopg.Connection,
                                    table_name: str) -> None:
     # COPY ... TO STDOUT (FORMAT JSON) emits one JSON object per row (newline
@@ -359,6 +1024,28 @@ def test_copy_to_stdout_csv_header_flag(conn: psycopg.Connection,
         else:
             assert sorted(rows) == data_rows, \
                 f"unexpected rows: {rows!r}"
+    finally:
+        _drop(conn, table_name)
+
+
+def test_copy_to_stdout_csv_quotes_special_fields(conn: psycopg.Connection,
+                                                   table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" VALUES '
+                "(1, 'a,b'), (2, 'x\"y'), (3, E'line\\nbreak'), (4, ''), "
+                "(5, NULL), (6, 'plain')")
+            out = b""
+            with cur.copy(
+                f'COPY (SELECT * FROM public."{table_name}" ORDER BY x) '
+                'TO STDOUT (FORMAT CSV)'
+            ) as cp:
+                for chunk in cp:
+                    out += bytes(chunk)
+        assert out == (b'1,"a,b"\n2,"x""y"\n3,"line\nbreak"\n4,""\n5,\n'
+                       b'6,plain\n'), f"unexpected output: {out!r}"
     finally:
         _drop(conn, table_name)
 
@@ -666,6 +1353,24 @@ def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
+@pytest.mark.usefixtures("own_server")
+def test_binary_copy_from_file_on_one_thread_reads_ahead_within_its_limit(
+        conn: psycopg.Connection, table_name: str, shared_path: Path) -> None:
+    conn.execute("SET threads = 1")
+    with conn.cursor() as cur:
+        payload = _binary_rows(cur, 400_000)
+        assert len(payload) > 8 << 20
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            _copy_from(cur, table_name, payload, "FORMAT BINARY", "file",
+                       shared_path)
+            cur.execute(f'SELECT count(*), sum(x), count(DISTINCT label) FROM '
+                        f'public."{table_name}"')
+            assert cur.fetchone() == (400_000, 400_000 * 399_999 // 2, 400_000)
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
 def _bytea_value(i: int) -> bytes:
     length = i % 100 + 1
     if i % 3 == 1:
@@ -733,6 +1438,18 @@ def test_bytea_copy_values_longer_than_a_batch(conn: psycopg.Connection,
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
+def _cut_inside_row(payload: bytes, at: int) -> bytes:
+    pos = 19
+    while True:
+        end = pos + 2
+        for _ in range(struct.unpack_from("!h", payload, pos)[0]):
+            length = struct.unpack_from("!i", payload, end)[0]
+            end += 4 + max(length, 0)
+        if end > at:
+            return payload[:pos + 1]
+        pos = end
+
+
 @pytest.mark.parametrize("source", _SOURCES)
 @pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 @pytest.mark.parametrize("damage", ["after_trailer", "truncated"])
@@ -742,7 +1459,7 @@ def test_large_binary_copy_damaged_stream_inserts_nothing(
     with conn.cursor() as cur:
         payload = _binary_rows(cur, _ROWS)
         payload = (payload + b"\x00\x01" if damage == "after_trailer"
-                   else payload[:len(payload) * 2 // 3])
+                   else _cut_inside_row(payload, len(payload) * 2 // 3))
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
                     f" {storage}")
         try:
@@ -750,6 +1467,98 @@ def test_large_binary_copy_damaged_stream_inserts_nothing(
                 _copy_from(cur, table_name, payload, "FORMAT BINARY", source,
                            shared_path)
             assert _count(cur, table_name, storage) == 0
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("source", _SOURCES)
+def test_binary_copy_reports_its_first_bad_row_before_a_truncated_end(
+        conn: psycopg.Connection, table_name: str, source: str,
+        shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        payload = _binary_rows(cur, 1000)
+        bad_row = (struct.pack("!hii", 3, 4, 1) + struct.pack("!i", 1) + b"A" +
+                   struct.pack("!i", 1) + b"B")
+        payload = payload[:19] + bad_row + payload[19:len(payload) - 9]
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            with pytest.raises(psycopg.Error,
+                               match="row field count is 3, expected 2"):
+                _copy_from(cur, table_name, payload, "FORMAT BINARY", source,
+                           shared_path)
+            assert _count(cur, table_name, "") == 0
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+_PGCOPY_HEADER = b"PGCOPY\n\xff\r\n\x00" + struct.pack("!ii", 0, 0)
+_PGCOPY_ROW = struct.pack("!hii", 1, 4, 7)
+_PGCOPY_EXTENDED = (b"PGCOPY\n\xff\r\n\x00" + struct.pack("!ii", 0, 8) +
+                    b"abcdefgh" + _PGCOPY_ROW + b"\xff\xff")
+
+
+@pytest.mark.parametrize("chunks, loaded", [
+    ([_PGCOPY_HEADER], 0),
+    ([_PGCOPY_HEADER, b"\xff\xff"], 0),
+    ([_PGCOPY_HEADER, _PGCOPY_ROW, b"\xff\xff"], 1),
+    ([bytes([byte]) for byte in _PGCOPY_EXTENDED], 1),
+], ids=["header_only", "header_and_trailer", "rows_apart",
+        "extension_byte_by_byte"])
+def test_binary_copy_from_stdin_takes_any_split_of_the_stream(
+        conn: psycopg.Connection, table_name: str, chunks: list[bytes],
+        loaded: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(a INT)')
+        try:
+            with cur.copy(
+                    f'COPY public."{table_name}" FROM STDIN (FORMAT BINARY)'
+            ) as cp:
+                for chunk in chunks:
+                    cp.write(chunk)
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone()[0] == loaded
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("source", _SOURCES)
+@pytest.mark.parametrize("payload", [b"", _PGCOPY_HEADER[:5]],
+                         ids=["no_bytes", "cut_signature"])
+def test_binary_copy_without_a_whole_signature_is_an_error(
+        conn: psycopg.Connection, table_name: str, payload: bytes,
+        source: str, shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(a INT)')
+        try:
+            with pytest.raises(psycopg.errors.BadCopyFileFormat):
+                if source == "file":
+                    path = shared_path / "copy.dat"
+                    path.write_bytes(payload)
+                    cur.execute(f"COPY public.\"{table_name}\" FROM '{path}' "
+                                f"(FORMAT BINARY)")
+                else:
+                    with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                                  f'(FORMAT BINARY)') as cp:
+                        cp.write(payload)
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("source", _SOURCES)
+@pytest.mark.parametrize("payload", [b"1\t\xc3\\\xa9\n", b"1\xc3\\\xa9\tx\n"],
+                         ids=["text_column", "integer_column"])
+def test_text_copy_refuses_bytes_unescaping_would_join_into_utf8(
+        conn: psycopg.Connection, table_name: str, payload: bytes,
+        source: str, shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(a INT, b TEXT)')
+        try:
+            with pytest.raises(psycopg.errors.CharacterNotInRepertoire,
+                               match="0xc3 0x5c"):
+                _copy_from(cur, table_name, payload, "FORMAT TEXT", source,
+                           shared_path)
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone()[0] == 0
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 

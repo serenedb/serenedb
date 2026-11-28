@@ -11,6 +11,7 @@ add_executable(
     database_directory_test.cpp
     drain_gate_test.cpp
     docs_search_test.cpp
+    fd_table_test.cpp
     duckdb_detach_test.cpp
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
@@ -62,12 +63,14 @@ add_executable(
     connector/ai_functions_test.cpp
     connector/col_filter_share_test.cpp
     connector/copy_in_batches_test.cpp
+    pg_datetime_text_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
     connector/index_lifecycle_test.cpp
     connector/inet_terms_test.cpp
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
+    connector/pg_serialize_chunk_test.cpp
     connector/pgoutput_test.cpp
     connector/reindex_removes_test.cpp
     connector/row_position_deduplicator_test.cpp

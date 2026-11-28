@@ -1,0 +1,136 @@
+control substitution on
+
+statement ok
+CREATE TABLE cie (cash MONEY, i INTEGER, d DATE, n3 NUMERIC(3,0), n4 NUMERIC(4,1));
+
+
+statement count 1
+COPY (SELECT 'abc' AS l) TO '${__TEST_DIR__}/cie_abc.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (cash) FROM '${__TEST_DIR__}/cie_abc.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type money: "abc"
+
+
+statement count 1
+COPY (SELECT '99999999999999999999' AS l) TO '${__TEST_DIR__}/cie_money_big.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (cash) FROM '${__TEST_DIR__}/cie_money_big.csv' (FORMAT csv);
+----
+db error: ERROR: value "99999999999999999999" is out of range for type money
+
+
+statement count 1
+COPY (SELECT '-' AS l) TO '${__TEST_DIR__}/cie_minus.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (i) FROM '${__TEST_DIR__}/cie_minus.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "-"
+
+
+statement count 1
+COPY (SELECT '-99999999999' AS l) TO '${__TEST_DIR__}/cie_int_low.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (i) FROM '${__TEST_DIR__}/cie_int_low.csv' (FORMAT csv);
+----
+db error: ERROR: value "-99999999999" is out of range for type integer
+
+
+statement count 1
+COPY (SELECT '2024-01' AS l) TO '${__TEST_DIR__}/cie_year_month.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (d) FROM '${__TEST_DIR__}/cie_year_month.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type date: "2024-01"
+
+
+statement count 1
+COPY (SELECT '2024-00-01' AS l) TO '${__TEST_DIR__}/cie_month_zero.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (d) FROM '${__TEST_DIR__}/cie_month_zero.csv' (FORMAT csv);
+----
+db error: ERROR: date/time field value out of range: "2024-00-01"
+HINT: Perhaps you need a different "DateStyle" setting.
+
+
+statement count 1
+COPY (SELECT '.5e10' AS l) TO '${__TEST_DIR__}/cie_fraction_exp.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (n3) FROM '${__TEST_DIR__}/cie_fraction_exp.csv' (FORMAT csv);
+----
+db error: ERROR: numeric field overflow
+DETAIL: A field with precision 3, scale 0 must round to an absolute value less than 10^3.
+
+
+statement count 1
+COPY (SELECT '5.e10' AS l) TO '${__TEST_DIR__}/cie_whole_exp.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (n3) FROM '${__TEST_DIR__}/cie_whole_exp.csv' (FORMAT csv);
+----
+db error: ERROR: numeric field overflow
+DETAIL: A field with precision 3, scale 0 must round to an absolute value less than 10^3.
+
+
+statement count 1
+COPY (SELECT '1234567890123456789' AS l) TO '${__TEST_DIR__}/cie_long.csv' (FORMAT csv);
+
+
+statement error
+COPY cie (n4) FROM '${__TEST_DIR__}/cie_long.csv' (FORMAT csv);
+----
+db error: ERROR: numeric field overflow
+DETAIL: A field with precision 4, scale 1 must round to an absolute value less than 10^3.
+
+
+statement count 1
+COPY (SELECT '' AS l) TO '${__TEST_DIR__}/cie_empty.txt' (FORMAT text);
+
+
+statement error
+COPY cie (n4) FROM '${__TEST_DIR__}/cie_empty.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type numeric: ""
+
+
+query
+SELECT count(*) AS n FROM cie;
+----
+n
+0
+
+
+statement ok
+CREATE TABLE cie_text (t TEXT);
+
+
+statement count 1
+COPY (SELECT '\xff' AS l) TO '${__TEST_DIR__}/cie_escape_ff.csv' (FORMAT csv);
+
+
+statement error
+COPY cie_text FROM '${__TEST_DIR__}/cie_escape_ff.csv' (FORMAT text);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+query
+SELECT count(*) AS n FROM cie_text;
+----
+n
+0

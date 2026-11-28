@@ -20,46 +20,30 @@
 
 #pragma once
 
-#include <cstdint>
 #include <duckdb/common/identifier.hpp>
-#include <duckdb/common/types/value.hpp>
-#include <duckdb/common/unique_ptr.hpp>
-#include <duckdb/common/vector.hpp>
-#include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/formats/copy_options.hpp>
+#include <duckdb/main/database.hpp>
+#include <span>
 #include <string>
+#include <vector>
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
+#include "connector/copy_options.h"
+#include "pg/serialize.h"
 
 namespace sdb::connector {
 
-// Registers the "text" CopyFunction, giving COPY ... (FORMAT text) -- and the
-// no-FORMAT default -- the real PostgreSQL COPY text format (tab-separated
-// fields, \N for NULL, backslash-escaped specials, no header). DuckDB ships no
-// such function, so the format string "text" would otherwise fall back to csv.
-void RegisterPgTextCopyFunction(duckdb::DatabaseInstance& db);
+void RegisterPgTextCopyFunctions(duckdb::DatabaseInstance& db);
 
-struct TextCopyOptions {
-  char delim = '\t';
-  std::string null_str = "\\N";
-  bool header = false;
-  bool ignore_errors = false;
-  uint64_t reject_limit = 0;
-};
+void SetCopyFormat(sdb::pg::SerializationContext& context,
+                   const duckdb::CopyFormatOptions& options, size_t columns);
 
-void CheckTextCopyOptions(const TextCopyOptions& options, bool from);
+std::vector<sdb::pg::VarFormat> CopyFieldFormats(
+  const duckdb::CopyFormatOptions& options, std::span<const std::string> names);
 
-TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options);
+void SerializeCopyHeader(sdb::pg::SerializationContext& context,
+                         const duckdb::CopyFormatOptions& options,
+                         std::span<const duckdb::Identifier> names);
 
-void ResolveTextCopyOptions(
-  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options,
-  TextCopyOptions& out);
-
-TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::identifier_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
-    parsed_options);
+std::vector<std::string> CopyNames(std::span<const duckdb::Identifier> names);
 
 }  // namespace sdb::connector

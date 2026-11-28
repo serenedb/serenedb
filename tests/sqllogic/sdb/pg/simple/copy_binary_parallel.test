@@ -1,0 +1,332 @@
+control substitution on
+
+statement ok
+CREATE TABLE cbp_src AS
+SELECT x::INTEGER AS id, decode(repeat('00020000000400000007000000024142', 5), 'hex') AS payload
+FROM range(200000) t(x);
+
+
+statement count 200000
+COPY cbp_src TO '${__TEST_DIR__}/cbp.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbp_dst (id INTEGER, payload BYTEA);
+
+
+statement count 200000
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_dst
+JOIN cbp_src USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement count 1
+COPY (SELECT content || '\x0001'::BYTEA FROM read_blob('${__TEST_DIR__}/cbp.bin'))
+TO '${__TEST_DIR__}/cbp_junk.bin' (FORMAT blob);
+
+
+statement error
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_junk.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: received copy data after EOF marker
+
+
+statement count 1
+COPY (SELECT substr(content, 1, octet_length(content) - 7) FROM read_blob('${__TEST_DIR__}/cbp.bin'))
+TO '${__TEST_DIR__}/cbp_cut.bin' (FORMAT blob);
+
+
+statement error
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_cut.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: truncated row
+
+
+statement count 1
+COPY (
+  SELECT '\x5047434f50590aff0d0a00'::BYTEA || '\x0000000000000004deadbeef'::BYTEA || substr(content, 20)
+  FROM read_blob('${__TEST_DIR__}/cbp.bin')
+) TO '${__TEST_DIR__}/cbp_extension.bin' (FORMAT blob);
+
+
+statement ok
+TRUNCATE cbp_dst;
+
+
+statement count 200000
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_extension.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_dst
+JOIN cbp_src USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement count 1
+COPY (
+  SELECT '\x5047434f50590aff0d0a00'::BYTEA || '\x00000000ffffffff'::BYTEA || substr(content, 20)
+  FROM read_blob('${__TEST_DIR__}/cbp.bin')
+) TO '${__TEST_DIR__}/cbp_negative.bin' (FORMAT blob);
+
+
+statement error
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_negative.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid COPY file header (missing length)
+
+
+statement ok
+CREATE TABLE cbp_three (id INTEGER, payload BYTEA, extra INTEGER);
+
+
+statement error
+COPY cbp_three FROM '${__TEST_DIR__}/cbp.bin' (FORMAT binary);
+----
+db error: ERROR: row field count is 2, expected 3
+
+
+query
+SELECT count(*) AS n FROM cbp_dst;
+----
+n
+200000
+
+
+statement ok
+CREATE TABLE cbp_mixed AS
+SELECT x::INTEGER AS id,
+       decode(repeat('00020000000400000007000000024142', 5) || md5(x::VARCHAR) || md5((x + 1)::VARCHAR), 'hex') AS payload
+FROM range(200000) t(x);
+
+
+statement count 200000
+COPY cbp_mixed TO '${__TEST_DIR__}/cbp_mixed.bin.zst' (FORMAT binary);
+
+
+statement count 200000
+COPY cbp_mixed TO '${__TEST_DIR__}/cbp_mixed.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbp_mixed_dst (id INTEGER, payload BYTEA);
+
+
+statement count 200000
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed.bin.zst' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_mixed_dst
+JOIN cbp_mixed USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement count 1
+COPY (SELECT content || '\x0001'::BYTEA FROM read_blob('${__TEST_DIR__}/cbp_mixed.bin'))
+TO '${__TEST_DIR__}/cbp_mixed_junk.bin.zst' (FORMAT blob);
+
+
+statement error
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed_junk.bin.zst' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: received copy data after EOF marker
+
+
+statement count 1
+COPY (SELECT substr(content, 1, octet_length(content) - 7) FROM read_blob('${__TEST_DIR__}/cbp_mixed.bin'))
+TO '${__TEST_DIR__}/cbp_mixed_cut.bin.zst' (FORMAT blob);
+
+
+statement error
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed_cut.bin.zst' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: truncated row
+
+
+query
+SELECT count(*) AS n FROM cbp_mixed_dst;
+----
+n
+200000
+
+
+statement ok
+CREATE TABLE cbp_types AS
+SELECT x::INTEGER AS id,
+       CASE WHEN x % 5 = 0 THEN NULL ELSE x % 3 = 0 END AS flag,
+       (x % 30000)::SMALLINT AS small,
+       CASE WHEN x % 11 = 0 THEN NULL ELSE md5(x::VARCHAR)::UUID END AS u,
+       ('{"k": ' || x || '}')::JSON AS doc
+FROM range(300000) t(x);
+
+
+statement count 300000
+COPY cbp_types TO '${__TEST_DIR__}/cbp_types.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbp_types_dst (id INTEGER, flag BOOLEAN, small SMALLINT, u UUID, doc JSON);
+
+
+statement count 300000
+COPY cbp_types_dst FROM '${__TEST_DIR__}/cbp_types.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, count(cbp_types_dst.flag) AS flags, count(cbp_types_dst.u) AS uuids
+FROM cbp_types_dst
+JOIN cbp_types USING (id)
+WHERE cbp_types_dst.flag IS NOT DISTINCT FROM cbp_types.flag
+  AND cbp_types_dst.small = cbp_types.small
+  AND cbp_types_dst.u IS NOT DISTINCT FROM cbp_types.u
+  AND cbp_types_dst.doc::VARCHAR = cbp_types.doc::VARCHAR;
+----
+n	total	flags	uuids
+300000	44999850000	240000	272727
+
+
+statement count 1
+COPY (
+  SELECT '\x5047434f50590aff0d0a00'::BYTEA || '\x0000000000555560'::BYTEA
+         || decode(repeat('00020000000400000007000000024142', 349526), 'hex') || substr(content, 20)
+  FROM read_blob('${__TEST_DIR__}/cbp.bin')
+) TO '${__TEST_DIR__}/cbp_long_extension.bin' (FORMAT blob);
+
+
+statement ok
+TRUNCATE cbp_dst;
+
+
+statement count 200000
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_long_extension.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_dst
+JOIN cbp_src USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement ok
+CREATE TABLE cbp_times AS
+SELECT x::INTEGER AS id,
+       DATE '2000-01-01' + (x % 9000)::INTEGER AS d,
+       CASE WHEN x % 7 = 0 THEN NULL ELSE (x / 8.0)::REAL END AS r,
+       (x / 3.0)::DOUBLE PRECISION AS f,
+       TIMESTAMP '2001-02-03 04:05:06' + x * INTERVAL '1 second' AS ts,
+       CASE WHEN x % 9 = 0 THEN NULL ELSE TIMESTAMPTZ '2001-02-03 04:05:06+00' + x * INTERVAL '1 minute' END AS tz
+FROM range(300000) t(x);
+
+
+statement count 300000
+COPY cbp_times TO '${__TEST_DIR__}/cbp_times.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbp_times_dst (id INTEGER, d DATE, r REAL, f DOUBLE PRECISION, ts TIMESTAMP, tz TIMESTAMPTZ);
+
+
+statement count 300000
+COPY cbp_times_dst FROM '${__TEST_DIR__}/cbp_times.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n FROM (SELECT * FROM cbp_times EXCEPT ALL SELECT * FROM cbp_times_dst);
+----
+n
+0
+
+
+statement ok
+CREATE TABLE cbp_edges AS
+SELECT id::INTEGER AS id, repeat('x', len)::BYTEA AS payload
+FROM (VALUES (1, 4194335), (2, 1398065), (3, 1398065), (4, 1398067), (5, 51), (6, 1398064), (7, 1398064),
+             (8, 1398066), (9, 54), (10, 1398032), (11, 1398032), (12, 1398034), (13, 150), (14, 16), (15, 16)) v(id, len);
+
+
+statement count 15
+COPY (SELECT * FROM cbp_edges ORDER BY id) TO '${__TEST_DIR__}/cbp_edges.bin' (FORMAT binary);
+
+
+query
+SELECT octet_length(content) AS bytes FROM read_blob('${__TEST_DIR__}/cbp_edges.bin');
+----
+bytes
+16777342
+
+
+statement ok
+CREATE TABLE cbp_edges_dst (id INTEGER, payload BYTEA);
+
+
+statement count 15
+COPY cbp_edges_dst FROM '${__TEST_DIR__}/cbp_edges.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(octet_length(payload)) AS bytes FROM cbp_edges_dst JOIN cbp_edges USING (id, payload);
+----
+n	bytes
+15	16777111
+
+
+statement count 1
+COPY (SELECT substr(content, 1, 10) FROM read_blob('${__TEST_DIR__}/cbp_mixed.bin'))
+TO '${__TEST_DIR__}/cbp_mixed_head.zst' (FORMAT blob);
+
+
+statement count 1
+COPY (SELECT substr(content, 11) FROM read_blob('${__TEST_DIR__}/cbp_mixed.bin'))
+TO '${__TEST_DIR__}/cbp_mixed_rest.zst' (FORMAT blob);
+
+
+statement count 1
+COPY (
+  SELECT head.content || rest.content
+  FROM read_blob('${__TEST_DIR__}/cbp_mixed_head.zst') head, read_blob('${__TEST_DIR__}/cbp_mixed_rest.zst') rest
+) TO '${__TEST_DIR__}/cbp_mixed_split_header.bin.zst' (FORMAT blob, COMPRESSION 'none');
+
+
+statement ok
+TRUNCATE cbp_mixed_dst;
+
+
+statement count 200000
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed_split_header.bin.zst' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_mixed_dst
+JOIN cbp_mixed USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement count 1
+COPY (SELECT content || '\x28b52ffd2006190000616263'::BYTEA FROM read_blob('${__TEST_DIR__}/cbp_mixed.bin.zst'))
+TO '${__TEST_DIR__}/cbp_mixed_short_frame.bin.zst' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed_short_frame.bin.zst' (FORMAT binary);
+----
+db error: ERROR: Data corruption detected

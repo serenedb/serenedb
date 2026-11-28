@@ -28,8 +28,7 @@
 
 #include "app/command.h"
 #include "server/utils/asio_ns.h"
-
-extern "C" void json_object_seed(size_t seed);
+#include "server/utils/init.h"
 
 namespace {
 
@@ -52,8 +51,8 @@ void SetLargeThreadStackSize() {
 
 int main(int argc, char* argv[]) {
   irs::CheckCpuFeatures(argv[0]);
+  sdb::app::ReserveFileDescriptors();
   SetLargeThreadStackSize();
-  json_object_seed(0);
   irs::InitOptimizeRules();
   return sdb::app::RunCommand(argc, argv);
 }

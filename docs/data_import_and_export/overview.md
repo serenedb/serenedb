@@ -13,17 +13,17 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
 The first step to using a database system is to insert data into that system.
-SereneDB can directly connect to many popular data sources — file formats, cloud storage, and database systems — and offers several data ingestion methods that allow you to easily and efficiently fill up the database.
+SereneDB can directly connect to many popular data sources, such as file formats, cloud storage and database systems, and offers several data ingestion methods that allow you to easily and efficiently fill up the database.
 On this page, we provide an overview of these methods so you can select which one is best suited for your use case.
 
 ## Recommended Import Methods
 
 When importing data from another system into SereneDB, we recommend the following order:
 
-1. If the source system has a bulk export feature, export the data to Parquet or CSV, then load it with SereneDB's [Parquet](../data_import_and_export/parquet/overview.md) or [CSV](../data_import_and_export/csv/overview.md) reader.
-2. If that is not possible, stream the rows over the PostgreSQL [`COPY ... FROM STDIN`](../sql/statements/copy/index.md) protocol. Every PostgreSQL driver exposes it — for example libpq's `PQputCopyData`, psycopg's `copy`, JDBC's `CopyManager` or Go's `pq.CopyIn` — and it is far faster than row-by-row `INSERT`s.
+1. If the source system has a bulk export feature, export the data to Parquet, Arrow or CSV, then load it with SereneDB's [Parquet](../data_import_and_export/parquet/overview.md), [Arrow](../data_import_and_export/arrow/overview.md) or [CSV](../data_import_and_export/csv/overview.md) reader.
+2. If that is not possible, stream the rows over the PostgreSQL [`COPY ... FROM STDIN`](../sql/statements/copy/index.md#stdin-and-stdout) protocol, in the `text`, `csv`, `binary`, `json` or Arrow IPC stream (`arrows`) format. Every PostgreSQL driver exposes it, for example libpq's `PQputCopyData`, psycopg's `copy`, JDBC's `CopyManager` or Go's `pq.CopyIn`, and it is far faster than row-by-row `INSERT`s.
 
-Avoid looping row-by-row (tuple-at-a-time): performing row-by-row inserts — even with prepared statements — is detrimental to performance and results in slow load times. Prefer bulk operations instead.
+Avoid looping row-by-row (tuple-at-a-time): performing row-by-row inserts, even with prepared statements, is detrimental to performance and results in slow load times. Prefer bulk operations instead.
 
 <DocCallout type="bestPractice">
 Unless your data is small (`<100k rows`), avoid using inserts in loops. See the [`INSERT` statement page](../data_import_and_export/insert.md) for more detail.
@@ -39,7 +39,7 @@ For a more detailed description, see the [page on the `INSERT` statement](../dat
 
 ## File Loading: Relative Paths
 
-Use the configuration option [`file_search_path`](../configuration/overview.md#files-object-stores-and-caching) to configure to which “root directories” relative paths are expanded on.
+Use the configuration option [`file_search_path`](../configuration/overview.md#files-object-stores-and-caching) to configure to which "root directories" relative paths are expanded on.
 If `file_search_path` is not set, the working directory is used as the basis for relative paths.
 
 ## File Formats
@@ -100,8 +100,48 @@ Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
 
 For more details, see the [page on JSON loading](../data_import_and_export/json/overview.md).
 
+### Arrow Loading
+
+Arrow IPC files and streams can be loaded and queried using their filename:
+
+<SqlLogicTest id="data_import_and_export/overview/example_014" />
+
+Alternatively, use the [`read_arrow` function](../data_import_and_export/arrow/overview.md#reading-arrow-files):
+
+<SqlLogicTest id="data_import_and_export/overview/example_015" />
+
+Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
+
+<SqlLogicTest id="data_import_and_export/overview/example_016" />
+
+For more details, see the [page on Arrow](../data_import_and_export/arrow/overview.md).
+
+### Avro Loading
+
+Avro files can be loaded and queried using their filename:
+
+<SqlLogicTest id="data_import_and_export/overview/example_018" />
+
+Alternatively, use the [`read_avro` function](../data_import_and_export/avro/overview.md#reading-avro-files):
+
+<SqlLogicTest id="data_import_and_export/overview/example_019" />
+
+Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
+
+<SqlLogicTest id="data_import_and_export/overview/example_020" />
+
+For more details, see the [page on Avro](../data_import_and_export/avro/overview.md).
+
+### Markdown Loading
+
+Markdown files are read a row per file, per section or per block, for example the headings of a file:
+
+<SqlLogicTest id="data_import_and_export/overview/example_017" />
+
+For more details, see the [page on Markdown files](../data_import_and_export/markdown/overview.md).
+
 ### Returning the Filename
 
-In SereneDB the CSV, JSON and Parquet readers support the `filename` virtual column:
+In SereneDB the CSV, JSON, Parquet, Arrow and Avro readers support the `filename` virtual column:
 
 <SqlLogicTest id="data_import_and_export/overview/example_013" />

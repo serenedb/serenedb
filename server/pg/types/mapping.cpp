@@ -564,4 +564,66 @@ bool IsAliasedListDimension(const duckdb::LogicalType& type) {
   return !IsInt2vector(type) && !IsOidvector(type) && !IsMultirange(type);
 }
 
+duckdb::LogicalType ColumnarWrittenType(const duckdb::LogicalType& type) {
+  static const irs::containers::FlatHashSet<std::string_view> kTextAliases = {
+    kTidAlias,
+    kPgLsnAlias,
+    kMacaddrAlias,
+    kMacaddr8Alias,
+    kRegprocAlias,
+    kRegprocedureAlias,
+    kRegoperAlias,
+    kRegoperatorAlias,
+    kRegclassAlias,
+    kRegtypeAlias,
+    kRegroleAlias,
+    kRegnamespaceAlias,
+    kRegconfigAlias,
+    kRegdictionaryAlias,
+    kRegcollationAlias,
+    kInt4rangeAlias,
+    kInt8rangeAlias,
+    kNumrangeAlias,
+    kDaterangeAlias,
+    kTsrangeAlias,
+    kTstzrangeAlias,
+    kInt4multirangeAlias,
+    kInt8multirangeAlias,
+    kNummultirangeAlias,
+    kDatemultirangeAlias,
+    kTsmultirangeAlias,
+    kTstzmultirangeAlias,
+    kPointAlias,
+    kLineAlias,
+    kLsegAlias,
+    kBoxAlias,
+    kPathAlias,
+    kPolygonAlias,
+    kCircleAlias,
+  };
+  if (type.HasAlias() && kTextAliases.contains(type.GetAlias())) {
+    return duckdb::LogicalType::VARCHAR;
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::LIST: {
+      const auto& child = duckdb::ListType::GetChildType(type);
+      auto written = ColumnarWrittenType(child);
+      return written == child ? type
+                              : duckdb::LogicalType::LIST(std::move(written));
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      auto children = duckdb::StructType::GetChildTypes(type);
+      bool changed = false;
+      for (auto& child : children) {
+        auto written = ColumnarWrittenType(child.second);
+        changed = changed || written != child.second;
+        child.second = std::move(written);
+      }
+      return changed ? duckdb::LogicalType::STRUCT(std::move(children)) : type;
+    }
+    default:
+      return type;
+  }
+}
+
 }  // namespace sdb::pg

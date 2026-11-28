@@ -716,8 +716,308 @@ statement ok
 INSERT INTO tbl2
     FROM tbl1;
 
+# DOCS_TEST_END
+
 statement ok
 DETACH IF EXISTS db13;
 
 statement ok
 DETACH IF EXISTS db14;
+
+# DOCS_TEST: value_error
+
+statement ok
+CREATE TABLE readings (sensor INTEGER, reading DOUBLE);
+
+statement ok
+COPY (
+    SELECT sensor, reading
+    FROM (VALUES (1, '1', '20.5'), (2, 'x', '21.0'), (3, '3', 'abc'), (4, '4', '19.75')) AS t(n, sensor, reading)
+    ORDER BY n
+) TO '${__TEST_DIR__}/copy_index_readings.csv' (FORMAT csv);
+
+# DOCS_TEST_RAW
+#| COPY readings FROM 'readings.csv' (FORMAT csv);
+
+# DOCS_TEST_BODY
+
+statement error
+COPY readings FROM '${__TEST_DIR__}/copy_index_readings.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "x"
+
+
+# DOCS_TEST: on_error_ignore
+
+# DOCS_TEST_RAW
+#| COPY readings FROM 'readings.csv' (FORMAT csv, ON_ERROR ignore);
+#|
+#| SELECT *
+#| FROM readings
+#| ORDER BY sensor;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY readings FROM '${__TEST_DIR__}/copy_index_readings.csv' (FORMAT csv, ON_ERROR ignore);
+
+query
+SELECT *
+FROM readings
+ORDER BY sensor;
+----
+sensor	reading
+1	20.5
+4	19.75
+
+# DOCS_TEST: reject_limit
+
+# DOCS_TEST_RAW
+#| COPY readings FROM 'readings.csv' (FORMAT csv, ON_ERROR ignore, REJECT_LIMIT 1);
+
+# DOCS_TEST_BODY
+
+statement error
+COPY readings FROM '${__TEST_DIR__}/copy_index_readings.csv' (FORMAT csv, ON_ERROR ignore, REJECT_LIMIT 1);
+----
+db error: ERROR: skipped more than REJECT_LIMIT (1) rows due to data type incompatibility
+
+
+# DOCS_TEST: stdin_parquet
+
+# DOCS_TEST_BODY
+
+statement error
+COPY readings FROM STDIN (FORMAT parquet);
+----
+db error: ERROR: COPY FROM STDIN (FORMAT parquet) is not supported: parquet requires a regular file
+
+
+# DOCS_TEST: header_match
+
+# DOCS_TEST_RAW
+#| CREATE TABLE cities (name TEXT, population INTEGER);
+#|
+#| COPY (SELECT 'Berlin' AS name, 3850809 AS population) TO 'cities.csv' (FORMAT csv, HEADER);
+#|
+#| COPY cities FROM 'cities.csv' (FORMAT csv, HEADER MATCH);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE cities (name TEXT, population INTEGER);
+
+statement ok
+COPY (SELECT 'Berlin' AS name, 3850809 AS population) TO '${__TEST_DIR__}/copy_index_cities.csv' (FORMAT csv, HEADER);
+
+statement ok
+COPY cities FROM '${__TEST_DIR__}/copy_index_cities.csv' (FORMAT csv, HEADER MATCH);
+
+# DOCS_TEST: header_match_error
+
+# DOCS_TEST_RAW
+#| CREATE TABLE towns (town TEXT, population INTEGER);
+#|
+#| COPY towns FROM 'cities.csv' (FORMAT csv, HEADER MATCH);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE towns (town TEXT, population INTEGER);
+
+statement error
+COPY towns FROM '${__TEST_DIR__}/copy_index_cities.csv' (FORMAT csv, HEADER MATCH);
+----
+db error: ERROR: column name mismatch in header line field 1: got "name", expected "town"
+
+
+# DOCS_TEST: csv_nulls
+
+statement ok
+COPY (
+    SELECT content
+    FROM (VALUES (1, '1,,'), (2, '2,"",'), (3, '3,N,"N"')) AS t(n, content)
+    ORDER BY n
+) TO '${__TEST_DIR__}/copy_index_notes.csv' (FORMAT text);
+
+# DOCS_TEST_RAW
+#| CREATE TABLE notes (id INTEGER, title TEXT, body TEXT);
+#|
+#| COPY notes FROM 'notes.csv' (FORMAT csv);
+#|
+#| SELECT id, title, title IS NULL AS title_is_null, body, body IS NULL AS body_is_null
+#| FROM notes
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE notes (id INTEGER, title TEXT, body TEXT);
+
+statement ok
+COPY notes FROM '${__TEST_DIR__}/copy_index_notes.csv' (FORMAT csv);
+
+query
+SELECT id, title, title IS NULL AS title_is_null, body, body IS NULL AS body_is_null
+FROM notes
+ORDER BY id;
+----
+id	title	title_is_null	body	body_is_null
+1	NULL	t	NULL	t
+2	(empty)	f	NULL	t
+3	N	f	N	f
+
+# DOCS_TEST: csv_force_null
+
+statement ok
+TRUNCATE notes;
+
+# DOCS_TEST_RAW
+#| COPY notes FROM 'notes.csv' (FORMAT csv, NULL 'N', FORCE_NOT_NULL (title), FORCE_NULL (body));
+#|
+#| SELECT id, title, title IS NULL AS title_is_null, body, body IS NULL AS body_is_null
+#| FROM notes
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY notes FROM '${__TEST_DIR__}/copy_index_notes.csv' (FORMAT csv, NULL 'N', FORCE_NOT_NULL (title), FORCE_NULL (body));
+
+query
+SELECT id, title, title IS NULL AS title_is_null, body, body IS NULL AS body_is_null
+FROM notes
+ORDER BY id;
+----
+id	title	title_is_null	body	body_is_null
+1	(empty)	f	(empty)	f
+2	(empty)	f	(empty)	f
+3	N	f	NULL	t
+
+# DOCS_TEST: default_marker
+
+statement ok
+COPY (
+    SELECT content
+    FROM (VALUES (1, '1,shipped,5'), (2, '2,default,default'), (3, '3,"default",2')) AS t(n, content)
+    ORDER BY n
+) TO '${__TEST_DIR__}/copy_index_orders.csv' (FORMAT text);
+
+# DOCS_TEST_RAW
+#| CREATE TABLE orders (id INTEGER, status TEXT DEFAULT 'new', quantity INTEGER DEFAULT 1);
+#|
+#| COPY orders FROM 'orders.csv' (FORMAT csv, DEFAULT 'default');
+#|
+#| SELECT *
+#| FROM orders
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE orders (id INTEGER, status TEXT DEFAULT 'new', quantity INTEGER DEFAULT 1);
+
+statement ok
+COPY orders FROM '${__TEST_DIR__}/copy_index_orders.csv' (FORMAT csv, DEFAULT 'default');
+
+query
+SELECT *
+FROM orders
+ORDER BY id;
+----
+id	status	quantity
+1	shipped	5
+2	new	1
+3	default	2
+
+# DOCS_TEST: encoding
+
+statement ok
+CREATE TABLE words (id INTEGER, word TEXT);
+
+statement ok
+INSERT INTO words VALUES (1, 'café'), (2, 'naïve');
+
+# DOCS_TEST_RAW
+#| COPY words TO 'words.csv' (FORMAT csv, ENCODING 'LATIN1');
+#|
+#| CREATE TABLE words_copy (id INTEGER, word TEXT);
+#|
+#| COPY words_copy FROM 'words.csv' (FORMAT csv, ENCODING 'ISO_8859_1');
+#|
+#| SELECT *
+#| FROM words_copy
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY words TO '${__TEST_DIR__}/copy_index_words.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+statement ok
+CREATE TABLE words_copy (id INTEGER, word TEXT);
+
+statement ok
+COPY words_copy FROM '${__TEST_DIR__}/copy_index_words.csv' (FORMAT csv, ENCODING 'ISO_8859_1');
+
+query
+SELECT *
+FROM words_copy
+ORDER BY id;
+----
+id	word
+1	café
+2	naïve
+
+# DOCS_TEST: encoding_unsupported
+
+# DOCS_TEST_RAW
+#| COPY words TO 'words.csv' (FORMAT csv, ENCODING 'WIN1252');
+
+# DOCS_TEST_BODY
+
+statement error
+COPY words TO '${__TEST_DIR__}/copy_index_words_win1252.csv' (FORMAT csv, ENCODING 'WIN1252');
+----
+db error: ERROR: COPY ENCODING "WIN1252" is not supported
+
+
+# DOCS_TEST: rendering
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 1 AS id, ARRAY[1, 2] AS l, true AS b) TO 'rendered.csv' (FORMAT csv, RENDERING duckdb);
+#|
+#| SELECT rtrim(content, chr(10)) AS content
+#| FROM read_text('rendered.csv');
+#|
+#| CREATE TABLE rendered (id INTEGER, l INTEGER[], b BOOLEAN);
+#|
+#| COPY rendered FROM 'rendered.csv' (FORMAT csv, RENDERING duckdb);
+#|
+#| SELECT *
+#| FROM rendered;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 1 AS id, ARRAY[1, 2] AS l, true AS b) TO '${__TEST_DIR__}/copy_index_rendered.csv' (FORMAT csv, RENDERING duckdb);
+
+query
+SELECT rtrim(content, chr(10)) AS content
+FROM read_text('${__TEST_DIR__}/copy_index_rendered.csv');
+----
+content
+1,"[1, 2]",true
+
+statement ok
+CREATE TABLE rendered (id INTEGER, l INTEGER[], b BOOLEAN);
+
+statement ok
+COPY rendered FROM '${__TEST_DIR__}/copy_index_rendered.csv' (FORMAT csv, RENDERING duckdb);
+
+query
+SELECT *
+FROM rendered;
+----
+id	l	b
+1	{1,2}	t

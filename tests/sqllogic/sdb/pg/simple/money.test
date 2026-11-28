@@ -100,18 +100,16 @@ statement count 1
 COPY (SELECT 6 AS id, 95000000000000000.00::DECIMAL(19, 2) AS m) TO '${__TEST_DIR__}/money_too_large.json' (FORMAT JSON);
 
 
-statement count 1
+statement error
 COPY money_json FROM '${__TEST_DIR__}/money_too_large.json' (FORMAT JSON);
+----
+db error: ERROR: JSON transform error in file "<slt:ignore>", in line 1: bigint out of range
+ If this error occurred during read_json, line/object number information is approximate
+Try setting 'auto_detect' to true, specifying 'format' or 'records' manually, or setting 'ignore_errors' to true.
 
 
 query
-SELECT m::text AS m FROM money_json WHERE id = 6;
+SELECT count(*) AS n FROM money_json WHERE id = 6;
 ----
-m
-$95,000,000,000,000,000.00
-
-
-statement error
-SELECT m + '0'::money FROM money_json WHERE id = 6;
-----
-db error: ERROR: money out of range
+n
+0

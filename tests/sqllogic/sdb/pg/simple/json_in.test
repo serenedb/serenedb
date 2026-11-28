@@ -1,0 +1,29 @@
+query
+SELECT jsonin('{"a": 1}') AS o, jsonin('[1,{"b":null}]') AS a, jsonin('null') AS n;
+----
+o	a	n
+{"a": 1}	[1,{"b":null}]	null
+
+
+statement error
+SELECT jsonin('nope');
+----
+db error: ERROR: Invalid input syntax for type json: nope
+
+
+statement error
+SELECT jsonin('nul');
+----
+db error: ERROR: Invalid input syntax for type json: nul
+
+
+statement error
+SELECT jsonin('[1,nope]');
+----
+db error: ERROR: Invalid input syntax for type json: [1,nope]
+
+
+statement error
+SELECT jsonin('1 2');
+----
+db error: ERROR: Invalid input syntax for type json: 1 2

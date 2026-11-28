@@ -38,8 +38,9 @@ How the index derives a stable per-row identity depends on the view body:
 
 | View body | Row identity | Can be overridden |
 |---|---|---|
-| `SELECT … FROM read_parquet('file')` | The reader's `file_row_number` | — |
+| `SELECT … FROM read_parquet('file')` or `read_arrow('file')` | The reader's `file_row_number` | — |
 | `read_csv` / `read_json` single file | The byte offset within the file | — |
+| `read_avro` single file | The reader's `file_row_number`, which identifies the record in its file | — |
 | Reader over a **glob** (`'…/*.parquet'`) | `(file_index, position)` pair | — |
 | Attached DuckDB / Iceberg table | The source row id / `(file_index, row)` | — |
 | Attached **PostgreSQL** table | The remote `ctid` | `WITH (key_columns = '…')` |
@@ -50,7 +51,7 @@ Row identity is always derived automatically — there is no `pk` index option. 
 
 ## Fast-path sources
 
-A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
+A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: `read_parquet` / `read_arrow` / `read_csv` / `read_json` / `read_avro` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
 
 The view body may shape the source and still qualify as fast-path:
 
@@ -101,7 +102,7 @@ Names in a view body are resolved each time the view is used — first in the vi
   ```
 
   Prefer the catalog to `iceberg_scan('⟨path⟩')`. A metadata-file path pins the view to that one snapshot, so a refresh never sees newer commits; a table-directory path needs a `version-hint.text` file, which catalog-managed tables usually do not have. The catalog always knows the current snapshot, and every refresh loads it.
-- **Parquet, CSV, JSON and text files** — give one path, and use a glob for a dataset that grows: a refresh then re-reads only the files that appeared, changed or disappeared.
+- **Parquet, CSV, JSON, Avro and text files** — give one path, and use a glob for a dataset that grows: a refresh then re-reads only the files that appeared, changed or disappeared.
 - **Attached DuckDB** — attach a database *file*: a table in an in-memory attached database is not a fast-path source.
 - **Attached PostgreSQL and ClickHouse** — matches are re-fetched by key; see [the default key](./external-data.md#the-default-key) and when to [override it](./external-data.md#overriding-the-key-with-key_columns).
 
@@ -168,7 +169,7 @@ What a pass detects — and how much work it does — depends on the source:
 | Source | What a pass detects | Work done |
 | --- | --- | --- |
 | **Iceberg table** | the diff between the indexed snapshot and the table's current one, including row-level deletes | **delta** — only the difference is indexed |
-| **File glob** (Parquet/CSV/JSON, local or S3) | files that appeared, changed or disappeared | **delta** — unchanged files are not re-read |
+| **File glob** (Parquet/CSV/JSON/Avro, local or S3) | files that appeared, changed or disappeared | **delta** — unchanged files are not re-read |
 | **Everything else** (base tables, attached databases, generic views) | any change | **full rebuild** each pass |
 
 Two caveats:

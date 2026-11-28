@@ -174,7 +174,7 @@ statement ok
 COPY (SELECT '\x08002b0102'::bytea) TO '${__TEST_DIR__}/mac_five.bin' (FORMAT binary);
 
 
-statement error (no data left in message|COPY FROM: invalid binary value in column 1)
+statement error (no data left in message|incorrect binary data format)
 COPY mac_bin (m) FROM '${__TEST_DIR__}/mac_five.bin' (FORMAT binary);
 
 
@@ -182,7 +182,7 @@ statement ok
 COPY (SELECT '\x08002b01020304'::bytea) TO '${__TEST_DIR__}/mac_seven.bin' (FORMAT binary);
 
 
-statement error (no data left in message|COPY FROM: invalid binary value in column 1)
+statement error (no data left in message|incorrect binary data format)
 COPY mac_one FROM '${__TEST_DIR__}/mac_seven.bin' (FORMAT binary);
 
 

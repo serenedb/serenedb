@@ -1,0 +1,507 @@
+control substitution on
+
+statement ok
+SET TimeZone = 'UTC';
+
+
+statement ok
+CREATE TYPE ccsvt_pair AS (a INTEGER, b TEXT);
+
+
+statement ok
+CREATE TABLE ccsvt_src (id INTEGER, arr INTEGER[], rec ccsvt_pair, ok BOOLEAN, host INET, net CIDR, mac MACADDR, mac8 MACADDR8, lsn PG_LSN, cash MONEY, c "char", js JSON[], x XML, u UUID, iv INTERVAL, b BYTEA, ts TIMESTAMPTZ);
+
+
+statement ok
+INSERT INTO ccsvt_src VALUES
+  (1, '{1,NULL,3}', ROW(1, 'x,y'), true, '::1', '10.0.0.0/8', '08:00:2b:01:02:03', '08:00:2b:01:02:03:04:05', '16/B374D848', 1.5, 'q', ARRAY['{"a": 1}'::JSON, '[1, 2]'], '<a>b</a>', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '1 day 02:03:04', '\x0102ff', '2024-01-02 03:04:05+00'),
+  (2, '{}', ROW(NULL, ''), false, '192.168.0.1/24', '::/0', '08-00-2b-01-02-04', '0800.2b01.0203.0405', '0/0', -2, 'Z', ARRAY['"s,t"'::JSON], '<r/>', '00000000-0000-0000-0000-000000000000', '-1 mons', '\x', '1999-12-31 23:59:59.5+00'),
+  (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+
+statement ok
+CREATE TABLE ccsvt_lines (l TEXT);
+
+
+statement count 3
+COPY ccsvt_src TO '${__TEST_DIR__}/ccsvt_types.csv' (FORMAT csv);
+
+
+statement count 3
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_types.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsvt_lines ORDER BY l;
+----
+l
+1,"{1,NULL,3}","(1,""x,y"")",t,::1,10.0.0.0/8,08:00:2b:01:02:03,08:00:2b:01:02:03:04:05,16/B374D848,$1.50,q,"{""{\\""a\\"": 1}"",""[1, 2]""}",<a>b</a>,a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11,1 day 02:03:04,\\x0102ff,2024-01-02 03:04:05+00
+2,{},"(,"""")",f,192.168.0.1/24,::/0,08:00:2b:01:02:04,08:00:2b:01:02:03:04:05,0/0,-$2.00,Z,"{""\\""s,t\\""""}",<r/>,00000000-0000-0000-0000-000000000000,-1 mons,\\x,1999-12-31 23:59:59.5+00
+3,,,,,,,,,,,,,,,,
+
+
+statement ok
+CREATE TABLE ccsvt_dst (id INTEGER, arr INTEGER[], rec ccsvt_pair, ok BOOLEAN, host INET, net CIDR, mac MACADDR, mac8 MACADDR8, lsn PG_LSN, cash MONEY, c "char", js JSON[], x XML, u UUID, iv INTERVAL, b BYTEA, ts TIMESTAMPTZ);
+
+
+statement count 3
+COPY ccsvt_dst FROM '${__TEST_DIR__}/ccsvt_types.csv' (FORMAT csv);
+
+
+query
+SELECT id, arr, rec, ok, host, net, mac, mac8, lsn, cash, c, js, x, u, iv, b, ts FROM ccsvt_dst ORDER BY id;
+----
+id	arr	rec	ok	host	net	mac	mac8	lsn	cash	c	js	x	u	iv	b	ts
+1	{1,NULL,3}	(1,"x,y")	t	::1	10.0.0.0/8	08:00:2b:01:02:03	08:00:2b:01:02:03:04:05	16/B374D848	$1.50	q	{"{\\"a\\": 1}","[1, 2]"}	<a>b</a>	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	1 day 02:03:04	\\x0102ff	2024-01-02 03:04:05+00
+2	{}	(,"")	f	192.168.0.1/24	::/0	08:00:2b:01:02:04	08:00:2b:01:02:03:04:05	0/0	-$2.00	Z	{"\\"s,t\\""}	<r/>	00000000-0000-0000-0000-000000000000	-1 mons	\\x	1999-12-31 23:59:59.5+00
+3	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES ('1,xyz,"{""{\""a\"": 1}"",""{}""}",<a/>'), ('2,,{},'), ('3,"",{},""')) v(l))
+TO '${__TEST_DIR__}/ccsvt_in.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement ok
+CREATE TABLE ccsvt_in (id INTEGER, c "char", js JSON[], x XML);
+
+
+statement count 3
+COPY ccsvt_in FROM '${__TEST_DIR__}/ccsvt_in.csv' (FORMAT csv);
+
+
+query
+SELECT id, c, c IS NULL AS c_null, js, x, x IS NULL AS x_null FROM ccsvt_in ORDER BY id;
+----
+id	c	c_null	js	x	x_null
+1	x	f	{"{\\"a\\": 1}","{}"}	<a/>	f
+2	NULL	t	{}	NULL	t
+3	(empty)	f	{}	(empty)	f
+
+
+statement count 1
+COPY (SELECT '4,a,{},<a>' AS l) TO '${__TEST_DIR__}/ccsvt_bad_xml.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error invalid XML content
+COPY ccsvt_in FROM '${__TEST_DIR__}/ccsvt_bad_xml.csv' (FORMAT csv);
+
+
+statement count 1
+COPY (SELECT '4,a,{x},' AS l) TO '${__TEST_DIR__}/ccsvt_bad_json.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error invalid input syntax for type json
+COPY ccsvt_in FROM '${__TEST_DIR__}/ccsvt_bad_json.csv' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE ccsvt_json (id INTEGER, j JSON);
+
+
+statement count 4
+COPY (SELECT * FROM (VALUES ('1,"{""a"" : 1}"'), ('2,"""\u0000"""'), ('3,1e999'), ('4,"{""a"":1,""a"":2}"')) v(l))
+TO '${__TEST_DIR__}/ccsvt_json.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 4
+COPY ccsvt_json FROM '${__TEST_DIR__}/ccsvt_json.csv' (FORMAT csv);
+
+
+query
+SELECT id, j FROM ccsvt_json ORDER BY id;
+----
+id	j
+1	{"a" : 1}
+2	"\\u0000"
+3	1e999
+4	{"a":1,"a":2}
+
+
+statement count 1
+COPY (SELECT '5,1 2' AS l) TO '${__TEST_DIR__}/ccsvt_json_two.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error invalid input syntax for type json
+COPY ccsvt_json FROM '${__TEST_DIR__}/ccsvt_json_two.csv' (FORMAT csv);
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES ('5,"[1,]"'), ('6,-Infinity'), ('7,"[nan, -INF]"')) v(l))
+TO '${__TEST_DIR__}/ccsvt_json_lenient.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+onlyif serenedb
+statement count 3
+COPY ccsvt_json FROM '${__TEST_DIR__}/ccsvt_json_lenient.csv' (FORMAT csv);
+
+
+skipif serenedb
+statement error invalid input syntax for type json
+COPY ccsvt_json FROM '${__TEST_DIR__}/ccsvt_json_lenient.csv' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE ccsvt_mac (m MACADDR, m8 MACADDR8, l PG_LSN, cash MONEY);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('08:00:2b:01:02:03,08:00:2b:01:02:03:04:05,16/B374D848,$1.50'), ('0800.2b01.0204,08002b0102030406,0/1,"-$1,000.25"')) v(l))
+TO '${__TEST_DIR__}/ccsvt_mac.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 2
+COPY ccsvt_mac FROM '${__TEST_DIR__}/ccsvt_mac.csv' (FORMAT csv);
+
+
+query
+SELECT m, m8, l, cash FROM ccsvt_mac ORDER BY m;
+----
+m	m8	l	cash
+08:00:2b:01:02:03	08:00:2b:01:02:03:04:05	16/B374D848	$1.50
+08:00:2b:01:02:04	08:00:2b:01:02:03:04:06	0/1	-$1,000.25
+
+
+statement ok
+CREATE TABLE ccsvt_enc (id INTEGER, t TEXT);
+
+
+statement ok
+INSERT INTO ccsvt_enc VALUES (1, 'café'), (2, 'naïve');
+
+
+statement count 2
+COPY ccsvt_enc TO '${__TEST_DIR__}/ccsvt_latin1.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+
+statement ok
+TRUNCATE ccsvt_lines;
+
+
+statement error
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_latin1.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xe9 0x0a 0x32
+
+
+statement count 2
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_latin1.csv' (FORMAT csv, ENCODING 'LATIN1', DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM ccsvt_lines ORDER BY l;
+----
+l
+1,café
+2,naïve
+
+
+statement error
+COPY ccsvt_enc TO '${__TEST_DIR__}/ccsvt_bad.csv' (FORMAT csv, ENCODING 'nope');
+----
+db error: ERROR: argument to option "encoding" must be a valid encoding name
+
+
+onlyif serenedb
+statement error
+COPY ccsvt_enc TO '${__TEST_DIR__}/ccsvt_win.csv' (FORMAT csv, ENCODING 'WIN1252');
+----
+db error: ERROR: COPY ENCODING "WIN1252" is not supported
+
+
+skipif serenedb
+statement count 2
+COPY ccsvt_enc TO '${__TEST_DIR__}/ccsvt_win.csv' (FORMAT csv, ENCODING 'WIN1252');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE ccsvt_frozen (id INTEGER, t TEXT);
+
+
+statement count 2
+COPY ccsvt_frozen FROM '${__TEST_DIR__}/ccsvt_latin1.csv' (FORMAT csv, ENCODING 'LATIN1', FREEZE);
+
+
+statement ok
+COMMIT;
+
+
+onlyif serenedb
+statement count 2
+COPY ccsvt_frozen FROM '${__TEST_DIR__}/ccsvt_latin1.csv' (FORMAT csv, ENCODING 'LATIN1', FREEZE);
+
+
+skipif serenedb
+statement error
+COPY ccsvt_frozen FROM '${__TEST_DIR__}/ccsvt_latin1.csv' (FORMAT csv, ENCODING 'LATIN1', FREEZE);
+----
+db error: ERROR: cannot perform COPY FREEZE because the table was not created or truncated in the current subtransaction
+
+
+onlyif serenedb
+query
+SELECT count(*) AS n FROM ccsvt_frozen;
+----
+n
+4
+
+
+skipif serenedb
+query
+SELECT count(*) AS n FROM ccsvt_frozen;
+----
+n
+2
+
+
+statement ok
+CREATE TABLE ccsvt_json_shapes (id INTEGER, j JSON);
+
+
+statement count 25
+COPY (SELECT * FROM (VALUES
+  ('1,0'),
+  ('2,-0'),
+  ('3,0.25e-3'),
+  ('4,12E+2'),
+  ('5,"[0, -1.5E+2, true, false, null]"'),
+  ('6,"{""a"": {""b"": [1e5, 2E-1, null]}, ""c"": false}"'),
+  ('7,"""s"""'),
+  ('8,01'),
+  ('9,-'),
+  ('10,1.'),
+  ('11,1e'),
+  ('12,"[1.]"'),
+  ('13,"[1e+]"'),
+  ('14,"[01]"'),
+  ('15,"[-]"'),
+  ('16,"[tru]"'),
+  ('17,"[nul]"'),
+  ('18,"{""a"": nul}"'),
+  ('19,"{""a"": tru}"'),
+  ('20,"[.5]"'),
+  ('21,"[1] x"'),
+  ('22,1 x'),
+  ('23,"{""a"" 1}"'),
+  ('24,"[1, {""b"": x}]"'),
+  ('25,""')) v(l))
+TO '${__TEST_DIR__}/ccsvt_json_shapes.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 7
+COPY ccsvt_json_shapes FROM '${__TEST_DIR__}/ccsvt_json_shapes.csv' (FORMAT csv, ON_ERROR IGNORE);
+
+
+query
+SELECT id, j FROM ccsvt_json_shapes ORDER BY id;
+----
+id	j
+1	0
+2	-0
+3	0.25e-3
+4	12E+2
+5	[0, -1.5E+2, true, false, null]
+6	{"a": {"b": [1e5, 2E-1, null]}, "c": false}
+7	"s"
+
+
+statement error
+COPY (SELECT 'aé€' AS t) TO '${__TEST_DIR__}/ccsvt_euro.csv' (FORMAT csv, ENCODING 'LATIN1');
+----
+db error: ERROR: character with byte sequence 0xe2 0x82 0xac in encoding "UTF8" has no equivalent in encoding "LATIN1"
+
+
+statement error
+COPY (SELECT 'ÿĀ' AS t) TO '${__TEST_DIR__}/ccsvt_amacron.csv' (FORMAT csv, ENCODING 'LATIN1');
+----
+db error: ERROR: character with byte sequence 0xc4 0x80 in encoding "UTF8" has no equivalent in encoding "LATIN1"
+
+
+statement ok
+TRUNCATE ccsvt_lines;
+
+
+statement count 1
+COPY (SELECT 'Ä' AS l) TO '${__TEST_DIR__}/ccsvt_c4.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_c4.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xc4 0x0a
+
+
+statement count 1
+COPY (SELECT 'ü' AS l) TO '${__TEST_DIR__}/ccsvt_fc.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_fc.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xfc
+
+
+statement count 1
+COPY (SELECT chr(128) AS l) TO '${__TEST_DIR__}/ccsvt_80.csv' (FORMAT csv, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_lines FROM '${__TEST_DIR__}/ccsvt_80.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x80
+
+
+statement ok
+CREATE TABLE ccsvt_text (id INTEGER, t TEXT);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES (0, 'tab' || chr(9) || 'here'), (1, chr(9) || 'ÿ')) v(id, t))
+TO '${__TEST_DIR__}/ccsvt_latin1.txt' (FORMAT text, ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_text FROM '${__TEST_DIR__}/ccsvt_latin1.txt' (FORMAT text);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement count 2
+COPY ccsvt_text FROM '${__TEST_DIR__}/ccsvt_latin1.txt' (FORMAT text, ENCODING 'LATIN1');
+
+
+query
+SELECT id, replace(t, chr(9), '<tab>') AS t FROM ccsvt_text ORDER BY id;
+----
+id	t
+0	tab<tab>here
+1	<tab>ÿ
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,a,x'), ('2,ÿ')) v(l))
+TO '${__TEST_DIR__}/ccsvt_extra_bad.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01', ENCODING 'LATIN1');
+
+
+statement error
+COPY ccsvt_text FROM '${__TEST_DIR__}/ccsvt_extra_bad.csv' (FORMAT csv);
+----
+db error: ERROR: extra data after last expected column
+
+
+statement ok
+CREATE TABLE ccsvt_dt (ts TIMESTAMP, tstz TIMESTAMPTZ, t TIME, ttz TIMETZ, iv INTERVAL);
+
+
+statement count 1
+COPY (SELECT 'x' AS l) TO '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_dt (ts) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type timestamp: "x"
+
+
+statement error
+COPY ccsvt_dt (tstz) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type timestamp with time zone: "x"
+
+
+statement error
+COPY ccsvt_dt (t) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type time: "x"
+
+
+statement error
+COPY ccsvt_dt (ttz) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type time with time zone: "x"
+
+
+statement error
+COPY ccsvt_dt (iv) FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type interval: "x"
+
+
+statement ok
+CREATE TYPE ccsvt_mood AS ENUM ('sad', 'happy');
+
+
+statement ok
+CREATE TABLE ccsvt_moods (m ccsvt_mood);
+
+
+statement error (invalid input value for enum|invalid input syntax for type) ccsvt_mood: "x"
+COPY ccsvt_moods FROM '${__TEST_DIR__}/ccsvt_x.csv' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE ccsvt_numarr (id INTEGER, a NUMERIC(4,1)[]);
+
+
+statement count 2
+COPY (SELECT * FROM (VALUES ('1,"{-1.5,.5,12.3,NULL}"'), ('2,{abc}')) v(l))
+TO '${__TEST_DIR__}/ccsvt_numarr.csv' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement count 1
+COPY ccsvt_numarr FROM '${__TEST_DIR__}/ccsvt_numarr.csv' (FORMAT csv, ON_ERROR IGNORE);
+
+
+query
+SELECT id, a FROM ccsvt_numarr ORDER BY id;
+----
+id	a
+1	{-1.5,0.5,12.3,NULL}
+
+
+statement ok
+CREATE TABLE ccsvt_num (n NUMERIC(4,1));
+
+
+statement count 1
+COPY (SELECT '1e5x' AS l) TO '${__TEST_DIR__}/ccsvt_num_exp.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_exp.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "1e5x"
+
+
+statement count 1
+COPY (SELECT '.' AS l) TO '${__TEST_DIR__}/ccsvt_num_dot.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_dot.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "."
+
+
+statement count 1
+COPY (SELECT 'x.1' AS l) TO '${__TEST_DIR__}/ccsvt_num_whole.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_whole.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "x.1"
+
+
+statement count 1
+COPY (SELECT '1.x' AS l) TO '${__TEST_DIR__}/ccsvt_num_fraction.csv' (FORMAT csv);
+
+
+statement error
+COPY ccsvt_num FROM '${__TEST_DIR__}/ccsvt_num_fraction.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type numeric: "1.x"

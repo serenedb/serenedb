@@ -36,7 +36,7 @@ COPY (SELECT 300::SMALLINT AS a) TO '${__TEST_DIR__}/oor_tiny_high.bin' (FORMAT 
 statement error
 COPY oor_tiny FROM '${__TEST_DIR__}/oor_tiny_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -45,7 +45,7 @@ COPY (SELECT -129::SMALLINT AS a) TO '${__TEST_DIR__}/oor_tiny_low.bin' (FORMAT 
 statement error
 COPY oor_tiny FROM '${__TEST_DIR__}/oor_tiny_low.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -60,7 +60,7 @@ COPY (SELECT -1::SMALLINT AS a) TO '${__TEST_DIR__}/oor_utiny_neg.bin' (FORMAT b
 statement error
 COPY oor_utiny FROM '${__TEST_DIR__}/oor_utiny_neg.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -69,7 +69,7 @@ COPY (SELECT 256::SMALLINT AS a) TO '${__TEST_DIR__}/oor_utiny_high.bin' (FORMAT
 statement error
 COPY oor_utiny FROM '${__TEST_DIR__}/oor_utiny_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -84,7 +84,7 @@ COPY (SELECT 70000 AS a) TO '${__TEST_DIR__}/oor_usmall_high.bin' (FORMAT binary
 statement error
 COPY oor_usmall FROM '${__TEST_DIR__}/oor_usmall_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -93,7 +93,7 @@ COPY (SELECT -1 AS a) TO '${__TEST_DIR__}/oor_usmall_neg.bin' (FORMAT binary);
 statement error
 COPY oor_usmall FROM '${__TEST_DIR__}/oor_usmall_neg.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -108,7 +108,7 @@ COPY (SELECT -1::BIGINT AS a) TO '${__TEST_DIR__}/oor_uint_neg.bin' (FORMAT bina
 statement error
 COPY oor_uint FROM '${__TEST_DIR__}/oor_uint_neg.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -117,7 +117,7 @@ COPY (SELECT 4294967296::BIGINT AS a) TO '${__TEST_DIR__}/oor_uint_high.bin' (FO
 statement error
 COPY oor_uint FROM '${__TEST_DIR__}/oor_uint_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -165,7 +165,7 @@ COPY (SELECT TIMESTAMP '3000-01-01 00:00:00' AS a) TO '${__TEST_DIR__}/oor_ts_ns
 statement error
 COPY oor_ts_ns FROM '${__TEST_DIR__}/oor_ts_ns_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -174,7 +174,7 @@ COPY (SELECT TIMESTAMP '1600-01-01 00:00:00' AS a) TO '${__TEST_DIR__}/oor_ts_ns
 statement error
 COPY oor_ts_ns FROM '${__TEST_DIR__}/oor_ts_ns_low.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -183,7 +183,7 @@ COPY (SELECT TIMESTAMPTZ '3000-01-01 00:00:00+00' AS a) TO '${__TEST_DIR__}/oor_
 statement error
 COPY oor_tz_ns FROM '${__TEST_DIR__}/oor_tz_ns_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -201,7 +201,7 @@ printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000
 statement error
 COPY oor_time FROM '${__TEST_DIR__}/oor_time_25h.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 system ok
@@ -210,7 +210,7 @@ printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000
 statement error
 COPY oor_timetz FROM '${__TEST_DIR__}/oor_timetz_zone.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 system ok
@@ -219,7 +219,7 @@ printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000
 statement error
 COPY oor_date FROM '${__TEST_DIR__}/oor_date_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok
@@ -231,7 +231,7 @@ printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000
 statement error
 COPY oor_ts_s FROM '${__TEST_DIR__}/oor_ts_s_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: incorrect binary data format
 
 
 statement ok

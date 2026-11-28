@@ -81,6 +81,9 @@ Passing a `LIST` of keys extracts them all in a single pass, which is faster and
 
 The following scalar JSON functions can be used to gain information about the stored JSON values.
 With the exception of `json_valid(json)`, all JSON functions produce an error when invalid JSON is supplied.
+A function given a path reads only the keys on its way and the value it leads to, so an error elsewhere in the document goes unnoticed; with `SET json_strict_paths = true` it checks the whole document:
+
+<SqlLogicTest id="data_import_and_export/json/json_functions/example_056" />
 
 We support two kinds of notations to describe locations within JSON: [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901) and JSONPath.
 

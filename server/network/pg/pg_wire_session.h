@@ -134,13 +134,15 @@ struct PgServerContext {
 };
 
 // COPY wire format, from info->format (the lowercased copy-function name).
-// Binary and text are serenedb's own (de)serialized PG COPY formats; parquet
-// needs a seekable file; Other (csv / no FORMAT) goes through DuckDB's writer.
 enum class CopyFormat : uint8_t {
   Other,
   Text,
+  Csv,
   Binary,
   Parquet,
+  Arrow,
+  Arrows,
+  Avro,
 };
 
 // COPY direction over a stdin/stdout pipe. The patched parser rewrites STDIN /
@@ -236,6 +238,7 @@ class PgWireSession
   // Stop hook: wake the COPY feeder and interrupt any running query.
   void OnStop() {
     _copy_gate.Kick();
+    _copy_room.Kick();
     if (_cancel_token) {
       _cancel_token->Cancel();
     }
@@ -391,7 +394,8 @@ class PgWireSession
     const duckdb::shared_ptr<duckdb::PreparedStatementEntry>& entry = nullptr,
     bool custom = false);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
-                         std::string_view statement_name);
+                         std::string_view statement_name,
+                         std::string_view portal_name);
 
   std::string_view DatabaseName() const;
   std::string_view UserName() const;
@@ -482,6 +486,7 @@ class PgWireSession
   // then kicks _copy_gate instead of RequestRun.
   std::atomic_bool _copy_route = false;
   Gate _copy_gate;
+  Gate _copy_room;
   std::atomic_bool _feeder_done = false;
   const bool _client = false;
   // Prepared-statement + portal stores (named + anon slots) and the cross-store

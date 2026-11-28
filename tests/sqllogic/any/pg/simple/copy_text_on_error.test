@@ -83,6 +83,27 @@ id	a	n
 
 
 statement ok
+CREATE TABLE cto_pairs (a INTEGER, b INTEGER);
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES ('1', '2'), ('x', 'y'), ('3', '4')) v(a, b))
+TO '${__TEST_DIR__}/cto_pairs.txt' (FORMAT text);
+
+
+statement count 2
+COPY cto_pairs FROM '${__TEST_DIR__}/cto_pairs.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 1);
+
+
+query
+SELECT a, b FROM cto_pairs ORDER BY a;
+----
+a	b
+1	2
+3	4
+
+
+statement ok
 CREATE TABLE cto_many (a INTEGER);
 
 
@@ -136,6 +157,12 @@ db error: ERROR: reject_limit requires a numeric value
 
 
 statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 2.5);
+----
+db error: ERROR: invalid input syntax for type bigint: "2.5"
+
+
+statement error
 COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT text, REJECT_LIMIT 5);
 ----
 db error: ERROR: COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
@@ -151,6 +178,30 @@ statement error
 COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, ON_ERROR IGNORE);
 ----
 db error: ERROR: only ON_ERROR STOP is allowed in BINARY mode
+
+
+statement ok
+CREATE TABLE cto_stop (a INTEGER, b TEXT);
+
+
+statement ok
+INSERT INTO cto_stop VALUES (1, 'x'), (NULL, 'y');
+
+
+statement ok
+COPY cto_stop TO '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary);
+
+
+statement ok
+COPY cto_stop FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, ON_ERROR STOP);
+
+
+query
+SELECT a, b, count(*) AS n FROM cto_stop GROUP BY a, b ORDER BY b;
+----
+a	b	n
+1	x	2
+NULL	y	2
 
 
 statement error
@@ -185,3 +236,90 @@ statement error
 COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, HEADER);
 ----
 db error: ERROR: cannot specify HEADER in BINARY mode
+
+
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, DEFAULT 'x');
+----
+db error: ERROR: cannot specify DEFAULT in BINARY mode
+
+
+statement count 1500000
+COPY (SELECT CASE WHEN g = 1180000 THEN 'x1' WHEN g = 1190000 THEN 'x2' ELSE g::TEXT END AS v FROM generate_series(1, 1500000) g ORDER BY g)
+TO '${__TEST_DIR__}/cto_two_errors.txt' (FORMAT text);
+
+
+statement count 1500000
+COPY (SELECT CASE WHEN g = 1190000 THEN 'x2' ELSE g::TEXT END AS v FROM generate_series(1, 1500000) g ORDER BY g)
+TO '${__TEST_DIR__}/cto_late_error.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE cto_ranges (a INTEGER);
+
+
+onlyif serenedb
+statement error invalid input syntax for type integer: "x[12]"
+COPY cto_ranges FROM '${__TEST_DIR__}/cto_two_errors.txt' (FORMAT text);
+
+
+onlyif serenedb
+statement ok
+SET threads = 1;
+
+
+statement error
+COPY cto_ranges FROM '${__TEST_DIR__}/cto_two_errors.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type integer: "x1"
+
+
+onlyif serenedb
+statement ok
+RESET threads;
+
+
+statement error
+COPY cto_ranges FROM '${__TEST_DIR__}/cto_late_error.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type integer: "x2"
+
+
+query
+SELECT count(*) AS n FROM cto_ranges;
+----
+n
+0
+
+
+statement count 2
+COPY cto_stop FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, LOG_VERBOSITY verbose);
+
+
+statement error
+COPY cto_stop FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, LOG_VERBOSITY loud);
+----
+db error: ERROR: COPY LOG_VERBOSITY "loud" not recognized
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE cto_frozen (a INTEGER, b TEXT);
+
+
+statement count 2
+COPY cto_frozen FROM '${__TEST_DIR__}/cto_stop.bin' (FORMAT binary, FREEZE);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT (SELECT count(*) FROM cto_stop) AS stop, (SELECT count(*) FROM cto_frozen) AS frozen;
+----
+stop	frozen
+6	2

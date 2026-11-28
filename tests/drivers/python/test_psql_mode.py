@@ -62,6 +62,10 @@ def _kw() -> dict[str, str]:
     }
 
 
+def _cells(out: str) -> list[str]:
+    return [cell.strip() for line in out.splitlines() for cell in line.split("|")]
+
+
 def test_psql_help() -> None:
     r = _run(["--help"])
     assert r.returncode == 0
@@ -81,7 +85,7 @@ def test_psql_command_short_flags() -> None:
     r = _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
               "-d", k["dbname"], "-c", "SELECT 1+1 AS sum;"])
     assert r.returncode == 0, r.stderr
-    assert " 2 " in r.stdout, f"unexpected stdout: {r.stdout!r}"
+    assert "2" in _cells(r.stdout), f"unexpected stdout: {r.stdout!r}"
 
 
 def test_psql_command_long_flags() -> None:
@@ -90,7 +94,7 @@ def test_psql_command_long_flags() -> None:
               f"--username={k['user']}", f"--dbname={k['dbname']}",
               "--command=SELECT 10+20 AS sum;"])
     assert r.returncode == 0, r.stderr
-    assert " 30 " in r.stdout, f"unexpected stdout: {r.stdout!r}"
+    assert "30" in _cells(r.stdout), f"unexpected stdout: {r.stdout!r}"
 
 
 def test_psql_positional_dbname_username() -> None:
@@ -98,7 +102,7 @@ def test_psql_positional_dbname_username() -> None:
     r = _run(["-h", k["host"], "-p", k["port"], k["dbname"], k["user"],
               "-c", "SELECT 7*6 AS answer;"])
     assert r.returncode == 0, r.stderr
-    assert " 42 " in r.stdout
+    assert "42" in _cells(r.stdout)
 
 
 def test_psql_env_vars() -> None:
@@ -108,7 +112,7 @@ def test_psql_env_vars() -> None:
         "PGUSER": k["user"], "PGDATABASE": k["dbname"],
     })
     assert r.returncode == 0, r.stderr
-    assert " 101 " in r.stdout
+    assert "101" in _cells(r.stdout)
 
 
 def test_psql_user_default_falls_back_to_os_user() -> None:
@@ -164,11 +168,21 @@ def test_psql_list_databases() -> None:
 
 
 def test_psql_no_password_flag_accepted() -> None:
-    # -w / -W are no-ops in serened (no auth) but must not break parsing.
+    # -w / -W are accepted and ignored (the password comes from PGPASSWORD or ~/.pgpass).
     k = _kw()
     r = _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
               "-d", k["dbname"], "-w", "-c", "SELECT 1;"])
     assert r.returncode == 0, r.stderr
+
+
+def test_psql_timing_prints_the_elapsed_time() -> None:
+    r = _run(_conn_args() + ["-c", "\\timing on", "-c", "SELECT 1 AS a;",
+                             "-c", "SELECT pg_sleep(1.1) AS slept;"])
+    assert r.returncode == 0, r.stderr
+    assert "Timing is on." in r.stdout
+    assert re.search(r"^Time: \d+\.\d{3} ms$", r.stdout, re.M), r.stdout
+    assert re.search(r"^Time: \d{4,}\.\d{3} ms \(00:\d{2}\.\d{3}\)$", r.stdout,
+                     re.M), r.stdout
 
 
 def test_psql_round_trip() -> None:
@@ -188,7 +202,7 @@ def test_psql_round_trip() -> None:
     r = _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
               "-d", k["dbname"], "-c", sql])
     assert r.returncode == 0, f"stderr={r.stderr!r}"
-    assert " 3 " in r.stdout and " 6 " in r.stdout, \
+    assert "3" in _cells(r.stdout) and "6" in _cells(r.stdout), \
         f"row count/sum missing: {r.stdout!r}"
     assert "one,two,three" in r.stdout, \
         f"string_agg missing: {r.stdout!r}"
@@ -285,15 +299,15 @@ def test_psql_tuples_only_suppresses_header() -> None:
     r = _run(_conn_args() + ["-t", "-c", "SELECT 1 AS a, 2 AS b;"])
     assert r.returncode == 0, r.stderr
     lines = [l for l in r.stdout.splitlines() if l.strip()]
-    assert lines == ["1|2"], \
+    assert lines == [" 1 | 2"], \
         f"-t should emit data only: {r.stdout!r}"
 
 
 def test_psql_expanded() -> None:
     r = _run(_conn_args() + ["-x", "-c", "SELECT 1 AS a, 2 AS b;"])
     assert r.returncode == 0, r.stderr
-    # Line mode renders one field per line: "a = 1\nb = 2\n" (with padding).
-    assert "a" in r.stdout and "= 1" in r.stdout and "= 2" in r.stdout, \
+    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    assert lines == ["-[ RECORD 1 ]", "a | 1", "b | 2"], \
         f"-x didn't produce expanded output: {r.stdout!r}"
 
 
@@ -347,7 +361,7 @@ def test_psql_file_short(tmp_path: Path) -> None:
     sql_file.write_text("SELECT 99 AS x;\n")
     r = _run(_conn_args() + ["-f", str(sql_file)])
     assert r.returncode == 0, r.stderr
-    assert " 99 " in r.stdout
+    assert "99" in _cells(r.stdout)
 
 
 def test_psql_file_long(tmp_path: Path) -> None:
@@ -355,7 +369,7 @@ def test_psql_file_long(tmp_path: Path) -> None:
     sql_file.write_text("SELECT 88 AS x;\n")
     r = _run(_conn_args() + [f"--file={sql_file}"])
     assert r.returncode == 0, r.stderr
-    assert " 88 " in r.stdout
+    assert "88" in _cells(r.stdout)
 
 
 def test_psql_list_long() -> None:
@@ -378,7 +392,7 @@ def test_psql_question_mark_is_help() -> None:
 
 
 def test_psql_password_force_short() -> None:
-    # -W must be accepted (no-op since serened has no auth).
+    # -W must be accepted and ignored: serenedb psql never prompts.
     r = _run(_conn_args() + ["-W", "-c", "SELECT 1;"])
     assert r.returncode == 0, r.stderr
 
@@ -398,14 +412,14 @@ def test_psql_tuples_only_long() -> None:
                               "SELECT 1 AS a, 2 AS b;"])
     assert r.returncode == 0, r.stderr
     lines = [l for l in r.stdout.splitlines() if l.strip()]
-    assert lines == ["1|2"], f"unexpected stdout: {r.stdout!r}"
+    assert lines == [" 1 | 2"], f"unexpected stdout: {r.stdout!r}"
 
 
 def test_psql_expanded_long() -> None:
     r = _run(_conn_args() + ["--expanded", "-c",
                               "SELECT 1 AS a, 2 AS b;"])
     assert r.returncode == 0, r.stderr
-    assert "= 1" in r.stdout and "= 2" in r.stdout
+    assert "a | 1" in r.stdout and "b | 2" in r.stdout
 
 
 def test_psql_echo_all_long() -> None:
@@ -541,7 +555,7 @@ def test_psql_flag_overrides_env() -> None:
     r = _run(["-p", k["port"], "-c", "SELECT 1+1 AS sum;"],
              env_extra=env_extra)
     assert r.returncode == 0, r.stderr
-    assert " 2 " in r.stdout
+    assert "2" in _cells(r.stdout)
 
 
 def test_psql_pguser_overrides_user_env() -> None:
@@ -610,6 +624,12 @@ def test_psql_help_interactive_all_is_verbose() -> None:
     assert len(long) > len(short)
 
 
+def test_psql_help_commands_needs_no_server() -> None:
+    r = _run(["-p", "1", "--help=commands"])
+    assert r.returncode == 0, r.stderr
+    assert "\\timing [on|off]" in r.stdout
+
+
 def test_psql_help_unknown_target_errors() -> None:
     # --help=anything-else should fall back to the long-form parser,
     # which can't pass a value to a 0-arg --help. Expect a clear error.
@@ -628,7 +648,7 @@ def test_psql_quiet_suppresses_startup_banner() -> None:
     r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
               "-U", k["user"], "-q", "-c", "SELECT 1+1 AS s;"])
     assert r.returncode == 0, r.stderr
-    assert " 2 " in r.stdout
+    assert "2" in _cells(r.stdout)
 
 
 def test_psql_quiet_long_form() -> None:
@@ -636,7 +656,7 @@ def test_psql_quiet_long_form() -> None:
     r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
               "-U", k["user"], "--quiet", "-c", "SELECT 5;"])
     assert r.returncode == 0, r.stderr
-    assert " 5 " in r.stdout
+    assert "5" in _cells(r.stdout)
 
 
 def test_psql_no_readline_accepted() -> None:
@@ -646,7 +666,7 @@ def test_psql_no_readline_accepted() -> None:
     r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
               "-U", k["user"], "-n", "-c", "SELECT 3;"])
     assert r.returncode == 0, r.stderr
-    assert " 3 " in r.stdout
+    assert "3" in _cells(r.stdout)
 
 
 def test_psql_echo_errors_short() -> None:
@@ -675,7 +695,7 @@ def test_psql_single_transaction_wraps_command() -> None:
     r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
               "-U", k["user"], "-1", "-c", "SELECT 11 AS v;"])
     assert r.returncode == 0, r.stderr
-    assert " 11 " in r.stdout
+    assert "11" in _cells(r.stdout)
 
 
 def test_psql_single_transaction_long_form() -> None:
@@ -684,7 +704,7 @@ def test_psql_single_transaction_long_form() -> None:
               "-U", k["user"], "--single-transaction",
               "-c", "SELECT 22 AS v;"])
     assert r.returncode == 0, r.stderr
-    assert " 22 " in r.stdout
+    assert "22" in _cells(r.stdout)
 
 
 # ---- zero-byte separators --------------------------------------------------
@@ -749,7 +769,7 @@ def test_psql_accepted_and_ignored(flag: str, arg: str | None) -> None:
     r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
               "-U", k["user"], *extra, "-c", "SELECT 99 AS v;"])
     assert r.returncode == 0, r.stderr
-    assert " 99 " in r.stdout
+    assert "99" in _cells(r.stdout)
 
 
 # ---- --pset implementation (format/expanded/null/tuples_only/pager) -------
@@ -793,9 +813,9 @@ def test_pset_expanded_on() -> None:
               "-U", k["user"], "-P", "expanded=on",
               "-c", "SELECT 1 AS id, 'a' AS name;"])
     assert r.returncode == 0, r.stderr
-    # line mode: " id = 1\nname = a"
-    assert "id = 1" in r.stdout
-    assert "name = a" in r.stdout
+    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    assert lines == ["-[ RECORD 1 ]", "id   | 1", "name | a"], \
+        f"unexpected stdout: {r.stdout!r}"
 
 
 def test_pset_expanded_no_value_toggles_on() -> None:
@@ -805,7 +825,7 @@ def test_pset_expanded_no_value_toggles_on() -> None:
               "-U", k["user"], "-P", "expanded",
               "-c", "SELECT 1 AS id;"])
     assert r.returncode == 0, r.stderr
-    assert "id = 1" in r.stdout
+    assert "id | 1" in r.stdout
 
 
 def test_pset_null_string() -> None:
@@ -835,19 +855,30 @@ def test_pset_pager_off_runs_normally() -> None:
               "-U", k["user"], "-P", "pager=off",
               "-c", "SELECT 9 AS v;"])
     assert r.returncode == 0, r.stderr
-    assert " 9 " in r.stdout
+    assert "9" in _cells(r.stdout)
 
 
 def test_pset_unknown_key_warns_but_succeeds() -> None:
-    # unknown key (e.g. `border`) -> warning to stderr, query still runs.
+    # unsupported key (e.g. `linestyle`) -> warning to stderr, query still runs.
+    k = _kw()
+    r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
+              "-U", k["user"], "-P", "linestyle=unicode",
+              "-c", "SELECT 5 AS v;"])
+    assert r.returncode == 0, r.stderr
+    assert "5" in _cells(r.stdout)
+    assert "Warning" in (r.stderr + r.stdout)
+    assert "linestyle" in (r.stderr + r.stdout)
+
+
+def test_pset_border_two() -> None:
     k = _kw()
     r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
               "-U", k["user"], "-P", "border=2",
               "-c", "SELECT 5 AS v;"])
     assert r.returncode == 0, r.stderr
-    assert " 5 " in r.stdout
-    assert "Warning" in (r.stderr + r.stdout)
-    assert "border" in (r.stderr + r.stdout)
+    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    assert lines == ["+---+", "| v |", "+---+", "| 5 |", "+---+", "(1 row)"], \
+        f"unexpected stdout: {r.stdout!r}"
 
 
 def test_pset_unsupported_format_warns() -> None:
@@ -857,7 +888,7 @@ def test_pset_unsupported_format_warns() -> None:
               "-U", k["user"], "-P", "format=asciidoc",
               "-c", "SELECT 8 AS v;"])
     assert r.returncode == 0, r.stderr
-    assert " 8 " in r.stdout
+    assert "8" in _cells(r.stdout)
     assert "Warning" in (r.stderr + r.stdout)
     assert "asciidoc" in (r.stderr + r.stdout)
 
@@ -895,14 +926,13 @@ def test_pset_format_box_is_duckdb_mode() -> None:
 
 
 def test_pset_format_psql_alias_aligned() -> None:
-    # psql `aligned` should map to duckbox (default), which renders a
-    # unicode box with a type row.
     k = _kw()
     r = _run(["-h", k["host"], "-p", k["port"], "-d", k["dbname"],
               "-U", k["user"], "-P", "format=aligned",
               "-c", "SELECT 1 AS id;"])
     assert r.returncode == 0, r.stderr
-    assert "int32" in r.stdout  # duckbox shows type row
+    assert r.stdout == " id \n----\n  1\n(1 row)\n\n", \
+        f"unexpected stdout: {r.stdout!r}"
 
 
 def test_pset_format_warning_mentions_both_namespaces() -> None:
@@ -1460,7 +1490,7 @@ def test_docs_contents_fit_a_narrow_terminal(narrow_docs_terminal) -> None:
 
 def test_docs_hyperlinks_do_not_widen_a_page(narrow_docs_terminal) -> None:
     out = narrow_docs_terminal.send(
-        ".docs clients/serened-psql.md#serenedb_psql#Dot_commands\r",
+        ".docs clients/serened-psql.md#serenedb_psql#Dot_and_backslash_commands\r",
         until=".docs clients/serened-shell.md#serenedb_shell#Dot_commands")
     assert ("\x1b]8;;https://serenedb.com/docs/clients/serened-shell"
             "#dot-commands\x1b\\") in narrow_docs_terminal.raw
@@ -1500,6 +1530,123 @@ def test_docs_tab_completes_names_flags_and_paths(docs_terminal) -> None:
                               "sql/functions/datepart.md")]:
         docs_terminal.send(f"\x15{typed}", until=typed)
         docs_terminal.send("\t", until=completed)
+
+
+@pytest.fixture
+def terminal(tmp_path: Path):
+    terminal = _Terminal(tmp_path, 160)
+    try:
+        yield terminal
+    finally:
+        terminal.close()
+
+
+def test_terminal_backslash_command_ends_a_multi_line_query(terminal) -> None:
+    terminal.send("\\pset format aligned\r", until="Output format is aligned.")
+    terminal.send("SELECT 1 AS a\r", until="SELECT 1 AS a")
+    out = terminal.send("\\gx\r", until="a | 1")
+    assert "-[ RECORD 1 ]" in out
+    terminal.send("SELECT 'x\r", until="SELECT 'x")
+    out = terminal.send("\\x\r", until="\\x")
+    out += terminal.send("y' AS s;\r", until="(1 row)")
+    assert " \\x+" in out
+    assert "Expanded display" not in out
+    os.write(terminal._fd, b"\\pset form\t")
+    time.sleep(0.3)
+    terminal.send("at unaligned\r", until="Output format is unaligned.")
+    terminal.send("\\nosuch\r", until="Try \\? for help.")
+
+
+def test_terminal_psql_output_expands_and_pages(terminal) -> None:
+    wide = "SELECT repeat('x', 100) AS a, repeat('y', 100) AS b;\r"
+    terminal.send("\\pset format aligned\r", until="Output format is aligned.")
+    terminal.send("\\x auto\r", until="Expanded display is used automatically.")
+    terminal.send(wide, until="-[ RECORD 1 ]")
+    out = terminal.send("SELECT 1 AS a, 2 AS b;\r", until="(1 row)")
+    assert " a | b " in out
+    assert "PAGER_USED" not in out
+    out = terminal.send("SELECT i FROM range(60) t(i);\r", until="(60 rows)")
+    assert "PAGER_USED" in out
+    terminal.send("\\pset border 0\r", until="Border style is 0.")
+    terminal.send(wide, until="* Record 1")
+    terminal.send("\\pset border 2\r", until="Border style is 2.")
+    terminal.send(wide, until="+-[ RECORD 1 ]")
+    terminal.send("\\pset pager always\r", until="Pager is always used.")
+    out = terminal.send("SELECT 'one' || 'row' AS s;\r", until="onerow")
+    assert "PAGER_USED" in out
+    out = terminal.send("COPY (SELECT 'copied' || 'out' AS v) TO STDOUT;\r", until="copiedout")
+    assert "PAGER_USED" in out
+
+
+def test_terminal_copy_from_stdin_prompts_for_its_rows(terminal) -> None:
+    terminal.send("CREATE TABLE t(i INTEGER);\r", until="CREATE TABLE t(i INTEGER);")
+    out = terminal.send("COPY t FROM STDIN;\r", until=">> ")
+    assert "Enter data to be copied followed by a newline." in out
+    assert "End with a backslash and a period on a line by itself, or an EOF signal." in out
+    terminal.send("40\r", until=">> ")
+    terminal.send("2\r", until=">> ")
+    terminal.send("\\.\r", until="\\.")
+    terminal.send("SELECT sum(i) * 10 AS total FROM t;\r", until="420")
+
+
+def test_terminal_copy_from_stdin_again_after_an_eof_signal(terminal) -> None:
+    terminal.send("CREATE TABLE t(i INTEGER);\r", until="CREATE TABLE t(i INTEGER);")
+    terminal.send("COPY t FROM STDIN;\r", until=">> ")
+    terminal.send("40\r", until=">> ")
+    os.write(terminal._fd, b"\x04")
+    terminal.send("COPY t FROM STDIN;\r", until=">> ")
+    terminal.send("300\r", until=">> ")
+    terminal.send("\\.\r", until="\\.")
+    terminal.send("SELECT sum(i) * 10 AS total FROM t;\r", until="3400")
+
+
+def test_terminal_recalls_a_backslash_command_from_the_history(tmp_path: Path) -> None:
+    (tmp_path / ".sdb_history").write_text("SELECT 1;\n\\echo 'recalled\\x21'\n")
+    terminal = _Terminal(tmp_path, 160)
+    try:
+        terminal.send("\x1b[A", until="recalled\\x21")
+        terminal.send("\r", until="recalled!")
+    finally:
+        terminal.close()
+
+
+def test_terminal_recalls_a_query_with_a_backslash_line_from_the_history(
+        tmp_path: Path) -> None:
+    (tmp_path / ".sdb_history").write_text("SELECT upper('recall\n\\x\n') AS v;\n")
+    terminal = _Terminal(tmp_path, 160)
+    try:
+        terminal.send("\x1b[A", until="AS v;")
+        terminal.send("\r", until="RECALL")
+    finally:
+        terminal.close()
+
+
+def test_terminal_blank_lines_comments_bail_and_auto_format(terminal) -> None:
+    terminal.send("   \r", until="   ")
+    terminal.send("SELECT upper('after_blank') AS s;\r", until="AFTER_BLANK")
+    os.write(terminal._fd, b"# a note\t")
+    time.sleep(0.3)
+    os.write(terminal._fd, b"\x15")
+    terminal.send(".bail on\r", until=".bail on")
+    terminal.send("SELECT * FROM missing_bail_table;\r", until="missing_bail_table")
+    terminal.send("SELECT upper('still_running') AS s;\r", until="STILL_RUNNING")
+    terminal.send(".auto_format on\r", until=".auto_format on")
+    terminal.send(".singleline\r", until=".singleline")
+    terminal.send(".print dotted\r", until="\ndotted")
+    terminal.send("# a comment\r", until="# a comment")
+    terminal.send("\\echo slashed\r", until="\nslashed")
+    terminal.send("SELECT upper('form' || 'atted') AS s;\r", until="FORMATTED")
+
+
+def test_terminal_psql_pager_for_wide_and_long_results(terminal) -> None:
+    terminal.send("\\pset format aligned\r", until="Output format is aligned.")
+    out = terminal.send("SELECT repeat('x', 200) AS a, 1 AS b;\r", until="(1 row)")
+    assert "PAGER_USED" in out
+    terminal.send("\\x on\r", until="Expanded display is on.")
+    out = terminal.send("SELECT i FROM range(60) t(i);\r", until="i | 59")
+    assert "PAGER_USED" in out
+    out = terminal.send("SELECT repeat('y', 300) AS a;\r", until="-[ RECORD 1 ]")
+    assert "PAGER_USED" in out
 
 
 def test_docs_number_without_a_list_fails() -> None:

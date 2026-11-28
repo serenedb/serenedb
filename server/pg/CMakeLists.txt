@@ -79,6 +79,7 @@ target_sources(
         catalog/views/sdb/pg_stat_progress_create_table_as.cpp
         command_tag.cpp
         copy_in_batches.cpp
+        copy_in_stream.cpp
         copy_batch_builder.cpp
         connection_context.cpp
         types/aclitem.cpp
@@ -88,6 +89,7 @@ target_sources(
         types/float.cpp
         types/function.cpp
         types/geometric.cpp
+        types/json.cpp
         types/mac.cpp
         types/mapping.cpp
         types/money.cpp
@@ -101,6 +103,7 @@ target_sources(
         types/xml.cpp
         serialize.cpp
         deserialize.cpp
+        input_error.cpp
         progress_registry.cpp
         sql_utils.cpp
         option_help.cpp

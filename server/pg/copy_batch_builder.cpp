@@ -28,70 +28,81 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
+#include "pg/copy_binary.h"
+
 namespace sdb::pg {
 namespace {
-
-constexpr std::string_view kSignature{"PGCOPY\n\xFF\r\n\0", 11};
-constexpr size_t kHeaderBytes = 19;
-constexpr int16_t kTrailerFieldCount = -1;
-constexpr int32_t kNullFieldLength = -1;
 
 [[noreturn]] void ThrowFormat(std::string_view message) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                   ERR_MSG("COPY FROM: ", message));
 }
 
-bool EndsRow(std::string_view bytes, size_t pos,
-             size_t backslashes_before) noexcept {
-  const auto run = TrailingBackslashes(bytes.substr(0, pos));
-  return (run == pos ? run + backslashes_before : run) % 2 == 0;
-}
-
-size_t BlankLines(std::string_view rows) noexcept {
-  size_t blank = 0;
-  for (;;) {
-    const auto rest = rows.substr(blank);
-    if (rest.starts_with('\n')) {
-      blank += 1;
-    } else if (rest.starts_with("\r\n")) {
-      blank += 2;
-    } else {
-      return blank;
-    }
-  }
-}
-
 }  // namespace
 
-size_t TrailingBackslashes(std::string_view bytes) noexcept {
-  const auto last = bytes.find_last_not_of('\\');
-  return last == std::string_view::npos ? bytes.size()
-                                        : bytes.size() - last - 1;
+size_t BinaryCopyHeaderExtension(std::string_view header) {
+  if (header.substr(0, kPgCopySignature.size()) != kPgCopySignature) {
+    ThrowFormat("invalid PGCOPY signature");
+  }
+  const auto flags = absl::big_endian::Load32(header.data() + 11);
+  if ((flags & (1U << 16)) != 0) {
+    ThrowFormat("invalid COPY file header (WITH OIDS)");
+  }
+  if (((flags & ~(1U << 16)) >> 16) != 0) {
+    ThrowFormat("unrecognized critical flags in COPY file header");
+  }
+  const auto ext =
+    static_cast<int32_t>(absl::big_endian::Load32(header.data() + 15));
+  if (ext < 0) {
+    ThrowFormat("invalid COPY file header (missing length)");
+  }
+  return static_cast<size_t>(ext);
 }
 
-size_t FindRowEnd(std::string_view bytes, size_t from,
-                  size_t backslashes_before) noexcept {
-  for (auto pos = bytes.find('\n', from); pos != std::string_view::npos;
-       pos = bytes.find('\n', pos + 1)) {
-    if (EndsRow(bytes, pos, backslashes_before)) {
-      return pos;
-    }
+size_t BinaryRowEnd(std::string_view bytes, size_t pos,
+                    std::span<const int32_t> widths) noexcept {
+  const char* const data = bytes.data();
+  const size_t size = bytes.size();
+  if (size - pos < sizeof(int16_t)) {
+    return std::string_view::npos;
   }
-  return std::string_view::npos;
+  const auto fields =
+    static_cast<int16_t>(absl::big_endian::Load16(data + pos));
+  if (fields < 0) {
+    return std::string_view::npos;
+  }
+  SDB_ASSERT(widths.empty() || static_cast<size_t>(fields) == widths.size());
+  pos += sizeof(int16_t);
+  for (int16_t field = 0; field < fields; ++field) {
+    if (size - pos < sizeof(int32_t)) {
+      return std::string_view::npos;
+    }
+    const auto length =
+      static_cast<int32_t>(absl::big_endian::Load32(data + pos));
+    pos += sizeof(int32_t);
+    if (length == kPgCopyNull) {
+      continue;
+    }
+    if (length < 0 ||
+        (!widths.empty() && widths[field] >= 0 && length != widths[field]) ||
+        size - pos < static_cast<size_t>(length)) {
+      return std::string_view::npos;
+    }
+    pos += static_cast<size_t>(length);
+  }
+  return pos;
 }
 
-size_t FindLastRowEnd(std::string_view bytes) noexcept {
-  for (auto end = bytes.size(); end != 0;) {
-    const auto pos = bytes.rfind('\n', end - 1);
-    if (pos == std::string_view::npos) {
-      break;
-    }
-    if (EndsRow(bytes, pos, 0)) {
+size_t WalkBinaryRows(std::string_view bytes, size_t pos,
+                      size_t limit) noexcept {
+  while (pos < limit) {
+    const auto end = BinaryRowEnd(bytes, pos, {});
+    if (end == std::string_view::npos) {
       return pos;
     }
-    end = pos;
+    pos = end;
   }
-  return std::string_view::npos;
+  return pos;
 }
 
 CopyBatch& CopyBatchBuilder::Current() {
@@ -102,107 +113,37 @@ CopyBatch& CopyBatchBuilder::Current() {
 }
 
 std::unique_ptr<CopyBatch> CopyBatchBuilder::Take() {
-  return std::move(_sealed ? _sealed : _batch);
+  return std::move(_batch);
 }
 
-void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
+bool CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
   if (rows.empty()) {
-    return;
+    return false;
   }
-  const auto add = [stable](CopyBatch& batch, std::string_view part) {
-    if (stable) {
-      batch.AddView(part);
-    } else {
-      batch.AddOwned(std::string{part});
-    }
-  };
-  if (_join_blank_lines && !_sealed && Full()) {
-    const auto blank = BlankLines(rows);
-    if (blank != 0) {
-      add(*_batch, rows.substr(0, blank));
-      rows.remove_prefix(blank);
-      if (rows.empty()) {
-        return;
-      }
-    }
-    _sealed = std::move(_batch);
+  if (stable) {
+    Current().AddView(rows);
+  } else {
+    Current().AddOwned(std::string{rows});
   }
-  add(Current(), rows);
+  return stable;
 }
 
-void CopyBatchBuilder::AddRow(std::string row) {
-  if (_join_blank_lines && !_sealed && Full()) {
-    if (BlankLines(row) == row.size()) {
-      _batch->AddOwned(std::move(row));
-      return;
-    }
-    _sealed = std::move(_batch);
+bool CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
+  if (_format == CopyBatchFormat::Binary) {
+    return FeedBinary(bytes, stable);
   }
-  Current().AddOwned(std::move(row));
-}
-
-void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
-  switch (_format) {
-    case CopyBatchFormat::Text:
-      FeedText(bytes, stable);
-      break;
-    case CopyBatchFormat::Binary:
-      FeedBinary(bytes, stable);
-      break;
-    case CopyBatchFormat::Raw:
-      AddRows(bytes, stable);
-      break;
-  }
-}
-
-void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
-  while (!bytes.empty()) {
-    if (!_partial.empty()) {
-      const auto end = FindRowEnd(bytes, 0, TrailingBackslashes(_partial));
-      if (end == std::string_view::npos) {
-        _partial.append(bytes);
-        return;
-      }
-      _partial.append(bytes.data(), end + 1);
-      AddRow(std::exchange(_partial, {}));
-      bytes.remove_prefix(end + 1);
-      continue;
-    }
-    const auto last = FindLastRowEnd(bytes);
-    if (last == std::string_view::npos) {
-      _partial.assign(bytes);
-      return;
-    }
-    AddRows(bytes.substr(0, last + 1), stable);
-    _partial.assign(bytes.substr(last + 1));
-    return;
-  }
+  return AddRows(bytes, stable);
 }
 
 size_t CopyBatchBuilder::FeedHeader(std::string_view bytes) {
   size_t pos = 0;
-  if (_header.size() < kHeaderBytes) {
-    pos = std::min(kHeaderBytes - _header.size(), bytes.size());
+  if (_header.size() < kPgCopyHeader.size()) {
+    pos = std::min(kPgCopyHeader.size() - _header.size(), bytes.size());
     _header.append(bytes.data(), pos);
-    if (_header.size() < kHeaderBytes) {
+    if (_header.size() < kPgCopyHeader.size()) {
       return pos;
     }
-    if (std::string_view{_header}.substr(0, kSignature.size()) != kSignature) {
-      ThrowFormat("invalid PGCOPY signature");
-    }
-    const auto flags = absl::big_endian::Load32(_header.data() + 11);
-    if ((flags & (1U << 16)) != 0) {
-      ThrowFormat("invalid COPY file header (WITH OIDS)");
-    }
-    if (((flags & ~(1U << 16)) >> 16) != 0) {
-      ThrowFormat("unrecognized critical flags in COPY file header");
-    }
-    const auto ext =
-      static_cast<int32_t>(absl::big_endian::Load32(_header.data() + 15));
-    if (ext < 0) {
-      ThrowFormat("invalid COPY file header (missing length)");
-    }
-    _skip = static_cast<size_t>(ext);
+    _skip = BinaryCopyHeaderExtension(_header);
   }
   const auto take = std::min(_skip, bytes.size() - pos);
   _skip -= take;
@@ -220,19 +161,19 @@ bool CopyBatchBuilder::Gather(std::string_view bytes, size_t& pos,
   return _have == need;
 }
 
-void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
+bool CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
   size_t pos = 0;
   if (!_header_done) {
     pos = FeedHeader(bytes);
     if (!_header_done) {
-      return;
+      return false;
     }
   }
   if (_ended) {
     if (pos != bytes.size()) {
       ThrowFormat("received copy data after EOF marker");
     }
-    return;
+    return false;
   }
   constexpr size_t kNone = std::string_view::npos;
   size_t row_begin = _open ? kNone : pos;
@@ -253,6 +194,16 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
   };
   while (pos < bytes.size()) {
     if (!_open) {
+      if (const auto end = WalkBinaryRows(bytes, pos, bytes.size());
+          end != pos) {
+        if (run_begin == kNone) {
+          run_begin = pos;
+        }
+        run_end = end;
+        pos = end;
+        row_begin = pos;
+        continue;
+      }
       _open = true;
       _state = Field::Count;
       _have = 0;
@@ -265,17 +216,15 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
         }
         const auto fields =
           static_cast<int16_t>(absl::big_endian::Load16(_scratch.data()));
-        if (fields == kTrailerFieldCount) {
+        if (fields == kPgCopyTrailer) {
           if (pos != bytes.size()) {
             ThrowFormat("received copy data after EOF marker");
           }
           _partial.clear();
           _open = false;
           _ended = true;
-          if (run_begin != kNone) {
-            AddRows(bytes.substr(run_begin, run_end - run_begin), stable);
-          }
-          return;
+          return run_begin != kNone &&
+                 AddRows(bytes.substr(run_begin, run_end - run_begin), stable);
         }
         if (fields < 0) {
           ThrowFormat("negative field count");
@@ -296,7 +245,7 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
         const auto length =
           static_cast<int32_t>(absl::big_endian::Load32(_scratch.data()));
         _have = 0;
-        if (length == kNullFieldLength || length == 0) {
+        if (length == kPgCopyNull || length == 0) {
           if (++_field == _fields) {
             complete();
           }
@@ -324,31 +273,29 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
       }
     }
   }
-  if (run_begin != kNone) {
+  const bool viewed =
+    run_begin != kNone &&
     AddRows(bytes.substr(run_begin, run_end - run_begin), stable);
-  }
   if (!_open) {
-    return;
+    return viewed;
   }
   if (row_begin == kNone) {
     _partial.append(bytes);
   } else {
     _partial.assign(bytes.substr(row_begin));
   }
+  return viewed;
 }
 
 void CopyBatchBuilder::Finish() {
-  if (_format == CopyBatchFormat::Binary) {
-    if (!_header_done && !_header.empty()) {
-      ThrowFormat("invalid PGCOPY signature");
-    }
-    if (_open) {
-      ThrowFormat("truncated row");
-    }
+  if (_format != CopyBatchFormat::Binary) {
     return;
   }
-  if (!_partial.empty()) {
-    AddRow(std::exchange(_partial, {}));
+  if (!_header_done) {
+    ThrowFormat("invalid PGCOPY signature");
+  }
+  if (_open) {
+    ThrowFormat("truncated row");
   }
 }
 

@@ -103,6 +103,11 @@ int DuckExceptionToErrcode(duckdb::ExceptionType type) {
 // distinguishes, and every file error into io_error.
 int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const auto& extra = error.ExtraInfo();
+  if (const auto sqlstate = extra.find("sqlstate");
+      sqlstate != extra.end() && sqlstate->second.size() == 5) {
+    const auto& code = sqlstate->second;
+    return MAKE_SQLSTATE(code[0], code[1], code[2], code[3], code[4]);
+  }
   if (const auto it = extra.find("errno");
       it != extra.end() && error.Type() == duckdb::ExceptionType::IO) {
     const auto& text = it->second;
@@ -297,6 +302,10 @@ SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   }
   if (auto it = error.ExtraInfo().find("hint"); it != error.ExtraInfo().end()) {
     data.errhint = it->second;
+  }
+  if (auto it = error.ExtraInfo().find("context");
+      it != error.ExtraInfo().end()) {
+    data.context = it->second;
   }
   return data;
 }

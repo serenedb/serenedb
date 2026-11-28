@@ -197,6 +197,32 @@ FROM extracted;
 family	species
 "terrestrial"	["mercury","venus","earth",null]
 
+# DOCS_TEST: example_056
+
+# DOCS_TEST_BODY
+
+control substitution off
+
+query
+SELECT json_extract_string('{"planet": "venus", "moons": [,]}', '$.planet') AS planet;
+----
+planet
+venus
+
+statement ok
+SET json_strict_paths = true;
+
+statement error
+SELECT json_extract_string('{"planet": "venus", "moons": [,]}', '$.planet') AS planet;
+----
+db error: ERROR: Malformed JSON at byte 30 of input: unexpected character.  Input: "{"planet": "venus", "moons": [,]}"
+
+
+statement ok
+RESET json_strict_paths;
+
+control substitution on
+
 # DOCS_TEST: example_017
 
 # DOCS_TEST_BODY
@@ -569,7 +595,7 @@ json_transform
 query error
 SELECT json_transform_strict(j, '{"family": "TINYINT", "coolness": "DOUBLE"}') FROM example;
 ----
-db error: ERROR: Failed to cast value to numerical: "gas_giant"
+db error: ERROR: Failed to cast value to numerical: "terrestrial"
 
 
 # DOCS_TEST: example_048

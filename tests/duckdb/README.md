@@ -86,7 +86,6 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 | `third_party/duckdb_azure` | https://github.com/serenedb/duckdb-azure/pull/2 |
 | `third_party/duckdb_spatial` | https://github.com/serenedb/duckdb-spatial/pull/4 |
 | `third_party/database-connector` | https://github.com/serenedb/database-connector/pull/3 |
-| `third_party/avro` | https://github.com/serenedb/avro/pull/1 |
 
 ### The update of 2026-10-06
 
@@ -115,6 +114,16 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 
 Upstream did not move: the boundaries of 2026-10-06 stand, and every fork's tree is its 2026-10-06 head's. Each patchset was rebuilt one commit per concern, and duckdb's ends with one `regen:` commit in place of the sixteen its pull requests had added.
 
+### nanoarrow, added on 2026-11-18
+
+| submodule | upstream | `main` | merged | ext patches | boundary |
+|---|---|---|---|---|---|
+| `third_party/duckdb_nanoarrow` | duckdb/duckdb-nanoarrow | `e390b9b4f8` | none | none | `e390b9b4f8` |
+| `third_party/nanoarrow` | apache/arrow-nanoarrow | `1292ac00d1` | none | none | `1292ac00d1` |
+
+- duckdb-nanoarrow has no release branches, and DuckDB carries no patches for it. Its review PR starts with the next update; nanoarrow is a library like re2, with none.
+- duckdb-nanoarrow's tests read 24 of arrow-testing's IPC integration files through a nested submodule, which our checkout never initializes: our patchset keeps those files in the fork.
+
 ### Our patchset by area (duckdb core)
 
 - **Parser and grammar:** PostgreSQL's surface in the core grammar (CREATE FUNCTION/PROCEDURE, roles and grants, FDW servers, text search dictionaries, subscriptions, REINDEX, LISTEN/NOTIFY, DISCARD, SET/RESET/SHOW scoping, TRUNCATE CASCADE/RESTART, pg_dump's sequence forms, opclass CREATE INDEX, VACUUM options, SELECT INTO, regex/SIMILAR TO/BETWEEN SYMMETRIC/JSON operators, tokenizer operators) and PostgreSQL literals (booleans, digit separators, ISO 8601 durations, `'{...}'` arrays).
@@ -131,7 +140,7 @@ Upstream did not move: the boundaries of 2026-10-06 stand, and every fork's tree
 
 ### The update recipe
 
-Run it in every fork except avro-c, which has [its own](#avro-c), the parents first (duckdb, then the extensions, then serenedb's gitlinks):
+Run it in every fork, the parents first (duckdb, then the extensions, then serenedb's gitlinks):
 
 ```bash
 cd third_party/<submodule>
@@ -156,31 +165,6 @@ Rules for the rebuilt series:
 - Generated files never carry hand edits. In the merges and the cherry-picks, take upstream's side of a fully generated file; at the end, `scripts/duckdb_family.sh regen` runs DuckDB's generators in DuckDB's order on the last patch commit (`make generate-files`, then `scripts/capi_v2_regen.sh`) and commits everything they change as the update's one `regen:` commit. `regen --check` proves the commit is what the generators produce.
 - Format each commit with `scripts/duckdb_family.sh format` before committing: DuckDB's own `scripts/format.py` with its pinned clang-format 11.0.1, black, cmake-format and typos. Before pushing, `scripts/duckdb_family.sh format --check --range <upstream main>..HEAD <fork>` proves every merge and commit of the series is formatted on its own. Upstream's own unformatted lines are left to a final `--all` pass.
 - Never derive a boundary from authorship or from a local `main`: those refs are stale, and `git merge-base main HEAD` answers far too early.
-
-### avro-c
-
-`third_party/avro` is Apache avro with DuckDB's avro-c changes on top. DuckDB keeps them in [duckdb/duckdb-avro-c](https://github.com/duckdb/duckdb-avro-c): its `patched_new_main` is `new_main`, Apache's 1.11.3 release preparation of 2023-09, then a first `apply patches` commit and one merge per pull request. Its `main` is plain Apache, and its other branches are pull request heads. Apache never merges its release branches into `main`, so the fork doesn't merge `patched_new_main` either. The first-parent history of an avro version branch, oldest first:
-
-1. Apache's `main` at the update;
-2. DuckDB's changes, one commit per entry of `patched_new_main`'s first-parent history after `new_main`: `apply patches`, then each pull request's merge cherry-picked with `-m 1`, as `duckdb-avro-c PR <n>: <title>` by the pull request's author. A change Apache already has is dropped. This tip is the boundary;
-3. our patchset, as in every fork.
-
-An update replays the pull requests taken so far and adds only the ones merged after the last one in the update's table:
-
-```bash
-cd third_party/avro
-git fetch upstream-apache main
-git fetch upstream-duckdb
-git switch --no-track -C mbkkt/update-duckdb upstream-apache/main
-git cherry-pick <previous apache main>..<previous boundary>        # DuckDB's changes taken so far
-for m in $(git rev-list --first-parent --reverse <last merge in the table>..upstream-duckdb/patched_new_main); do
-  git cherry-pick -m 1 --no-commit "$m"                             # a non-merge entry: no -m 1, author "$m"
-  git commit --author="$(git log -1 --format='%an <%ae>' "$m^2")" -m "duckdb-avro-c PR <n>: <title>"
-done
-git cherry-pick <previous boundary>..<previous vYYYY.MM.DD>         # our patchset
-```
-
-Then build, run the avro and iceberg suites, and push the head and the boundary to the review PR's branches. The update's table records Apache's `main`, the last pull request taken and its merge, anything dropped with the reason, and the boundary.
 
 ## Suites and their configs
 

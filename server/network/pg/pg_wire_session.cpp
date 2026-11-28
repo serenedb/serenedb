@@ -22,9 +22,12 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
+#include <simdutf.h>
 
 #include <algorithm>
 #include <array>
@@ -32,8 +35,15 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/formats/copy_fields.hpp>
+#include <duckdb/formats/copy_options.hpp>
+#include <duckdb/formats/row_stream.hpp>
+#include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/parse_iterator.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
@@ -43,17 +53,19 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "catalog/cluster.h"
-#include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
-#include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
 #include "network/pg/login.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/simple_query.h"
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
+#include "pg/copy_in_stream.h"
+#include "pg/input_error.h"
+#include "query/config.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 
@@ -69,6 +81,10 @@ inline constexpr uint32_t kMaxAuthToken = 65535;
 // PG_MAX_SASL_MESSAGE_LENGTH (real client-first/client-final are well under 1
 // KiB).
 inline constexpr uint32_t kMaxSaslMessage = 1024;
+
+inline constexpr size_t kCopyReadBlock = 64 << 10;
+inline constexpr size_t kCopyChunkBytes = 1 << 20;
+inline constexpr size_t kCopyRecvHighWater = 16 << 20;
 
 inline bool PlannedParamType(const duckdb::PreparedStatement& prepared,
                              uint16_t id, duckdb::LogicalType& type) {
@@ -209,12 +225,24 @@ inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
   }
   auto& info = *copy.info;
   CopyFormat format = CopyFormat::Other;
+  const bool encoded_out =
+    !info.is_from && sdb::connector::HasEncodingOption(info);
   if (info.format == "binary") {
     format = CopyFormat::Binary;
   } else if (info.format == "text") {
-    format = CopyFormat::Text;
+    format = encoded_out ? CopyFormat::Other : CopyFormat::Text;
+  } else if (info.format == "csv") {
+    format = encoded_out || sdb::connector::HasForeignCopyOption(info)
+               ? CopyFormat::Other
+               : CopyFormat::Csv;
   } else if (info.format == "parquet") {
     format = CopyFormat::Parquet;
+  } else if (info.format == "arrow") {
+    format = CopyFormat::Arrow;
+  } else if (info.format == "arrows") {
+    format = CopyFormat::Arrows;
+  } else if (info.format == "avro") {
+    format = CopyFormat::Avro;
   }
   // The CSV header default is not decided here: this runs before binding, so it
   // cannot see the format of a target that only resolves later (COPY TO $1).
@@ -299,20 +327,45 @@ inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
          statement.Cast<duckdb::CreateStatement>().info->temporary;
 }
 
-// Binary and text are the native PG COPY formats serenedb (de)serializes
-// itself: TO STDOUT through the wire collector (parallel, zero-copy), FROM
-// STDIN through the bridge. csv and the other DuckDB formats (json/parquet/...)
-// go through DuckDB's own CopyFunction instead.
 inline bool IsNativeCopyFormat(CopyFormat format) {
-  return format == CopyFormat::Binary || format == CopyFormat::Text;
+  return format == CopyFormat::Binary || format == CopyFormat::Text ||
+         format == CopyFormat::Csv;
 }
 
-// The pg-wire CopyResponse overall-format byte (1 = binary, 0 = text): binary
-// PGCOPY and parquet are binary; text/csv/json are text. New binary formats
-// (excel/pdf/...) extend this one spot rather than scattered `== Parquet`
-// tests.
+inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
+  if (info.format != "csv" && info.format != "text" && info.format != "json" &&
+      info.format != "avro") {
+    return false;
+  }
+  for (const auto& [name, values] : info.options) {
+    if (values.empty() || values.back().IsNull()) {
+      continue;
+    }
+    const auto value = absl::AsciiStrToLower(values.back().ToString());
+    if (name == "compression" && value != "none" && value != "uncompressed" &&
+        value != "auto" && value != "auto_detect") {
+      return false;
+    }
+    if (name == "encoding" && value != "utf-8" && value != "utf8") {
+      return false;
+    }
+  }
+  return true;
+}
+
+duckdb::CopyFormat NativeCopyFormat(CopyFormat format) {
+  SDB_ASSERT(IsNativeCopyFormat(format));
+  if (format == CopyFormat::Binary) {
+    return duckdb::CopyFormat::BINARY;
+  }
+  return format == CopyFormat::Csv ? duckdb::CopyFormat::CSV
+                                   : duckdb::CopyFormat::TEXT;
+}
+
 inline bool IsBinaryWireFormat(CopyFormat format) {
-  return format == CopyFormat::Binary || format == CopyFormat::Parquet;
+  return format == CopyFormat::Binary || format == CopyFormat::Parquet ||
+         format == CopyFormat::Arrow || format == CopyFormat::Arrows ||
+         format == CopyFormat::Avro;
 }
 
 // The runnable inner query for a COPY ... TO. `select_statement` is the parsed
@@ -713,6 +766,10 @@ std::shared_ptr<WireSinkContext> PgWireSession<Kind>::MakeWireContext(
     _wire_ctx->task = &*this->_task;
   }
   _wire_ctx->formats.assign(formats.begin(), formats.end());
+  static constexpr auto kRenderings = magic_enum::enum_names<Rendering>();
+  _wire_ctx->duckdb_rendering =
+    GetEnumSetting(*_connection_ctx, "sdb_rendering", kRenderings) ==
+    static_cast<uint32_t>(Rendering::Duckdb);
   return _wire_ctx;
 }
 
@@ -1453,13 +1510,24 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
       ERR_MSG("COPY FROM STDIN (FORMAT parquet) is not supported: "
               "parquet requires a regular file"));
   }
+  if (format == CopyFormat::Arrow) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("COPY FROM STDIN (FORMAT arrow) is not supported: the Arrow "
+              "file format requires a regular file; use FORMAT arrows"));
+  }
   _connection_ctx->copy_stdin_open_count = 0;
   _connection_ctx->copy_stdin_done = false;
   // CopyInResponse's column count: the explicit COPY column list, else the
   // target table's column count (PG sends natts + one per-column format code).
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
-  if (format == CopyFormat::Binary) {
-    sdb::connector::CheckBinaryCopyOptions(copy_info, true);
+  const auto bound_info =
+    sdb::connector::BindCopyOptions(*_connection_ctx, copy_info);
+  if (IsNativeCopyFormat(format)) {
+    duckdb::CheckCopyFormatOptions(
+      duckdb::ParseCopyFormatOptions(NativeCopyFormat(format), true,
+                                     bound_info->options),
+      true);
   }
   auto copy_columns = static_cast<int16_t>(copy_info.select_list.size());
   if (copy_columns == 0) {
@@ -1469,8 +1537,19 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
     }
   }
-  sdb::pg::CopyInBatches batches;
+  const bool scans_stream =
+    format != CopyFormat::Binary && ScansCopyStream(*bound_info);
+  const auto window = duckdb::TaskScheduler::QueryThreads(*_conn->context) *
+                      (scans_stream || format == CopyFormat::Binary
+                         ? sdb::pg::kCopyStreamBatchesPerThread
+                         : sdb::pg::kCopyBatchesPerThread);
+  sdb::pg::CopyInBatches batches{window};
+  batches.OnStarve([this] { _copy_gate.Kick(); });
   _connection_ctx->SetSideChannel(&batches);
+  std::optional<sdb::pg::CopyInStreamOffer> stream;
+  if (scans_stream) {
+    stream.emplace(*_connection_ctx, copy_info.file_path, batches, window);
+  }
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
   WriteCopyInResponse(this->_send, IsBinaryWireFormat(format), copy_columns);
@@ -1496,6 +1575,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   } catch (...) {
     error = std::current_exception();
   }
+  stream.reset();
   // Always join the feeder before the queue (a local) is destroyed; Abort
   // wakes it if the worker errored without draining the client's CopyData.
   // The join is a park (the feeder's last act is RequestRun), keeping the
@@ -1506,6 +1586,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     co_await this->_task->Park();
   }
   _copy_route.store(false, std::memory_order_release);
+  _copy_room.Kick();
   _connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
   if (error) {
     std::rethrow_exception(error);
@@ -1524,12 +1605,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
-  // Only the native PG formats reach here; binary is PGCOPY, text is COPY text.
   const bool binary = format == CopyFormat::Binary;
   auto& copy = statement->Cast<duckdb::CopyStatement>();
-  if (binary) {
-    sdb::connector::CheckBinaryCopyOptions(*copy.info, false);
-  }
+  const auto bound_info =
+    sdb::connector::BindCopyOptions(*_connection_ctx, *copy.info);
+  const auto options = duckdb::ParseCopyFormatOptions(
+    NativeCopyFormat(format), false, bound_info->options);
+  duckdb::CheckCopyFormatOptions(options, false);
   auto inner = ExtractCopyToQuery(copy);
   auto prepared = PrepareInternal(std::move(inner));
   ThrowIfError(*prepared);
@@ -1537,33 +1619,27 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // staging in PendingQueryEnsured never sees this statement.
   StagePendingCopyProgress(*_connection_ctx, *statement);
 
+  std::vector<sdb::pg::VarFormat> formats{sdb::pg::VarFormat::Binary};
+  if (!binary) {
+    formats = sdb::connector::CopyFieldFormats(
+      options, sdb::connector::CopyNames(prepared->GetNames()));
+  }
+
   // CopyOutResponse before arming/PendingQuery (see comment above).
   WriteCopyOutResponse(this->_send, binary,
                        static_cast<int16_t>(prepared->ColumnCount()));
 
-  static constexpr std::array<sdb::pg::VarFormat, 1> kAllBinary{
-    sdb::pg::VarFormat::Binary};
-  static constexpr std::array<sdb::pg::VarFormat, 1> kAllCopyText{
-    sdb::pg::VarFormat::CopyText};
-  auto wire =
-    MakeWireContext(binary ? std::span<const sdb::pg::VarFormat>{kAllBinary}
-                           : std::span<const sdb::pg::VarFormat>{kAllCopyText});
+  auto wire = MakeWireContext(formats);
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
   wire->copy_binary_header = binary;
+  wire->duckdb_rendering =
+    !binary && options.rendering == duckdb::ValueRendering::NATIVE;
   if (!binary) {
-    // The parser splits COPY options: value-form options (DELIMITER '|') land
-    // in info->options, while NULL / HEADER / FORCE_* land in parsed_options.
-    // Consult both before bind so every text option (and the csv-only
-    // rejection) takes effect on the pre-bind STDOUT path.
-    auto opts =
-      sdb::connector::ResolveTextCopyOptions(copy.info->parsed_options);
-    sdb::connector::ResolveTextCopyOptions(copy.info->options, opts);
-    sdb::connector::CheckTextCopyOptions(opts, false);
-    sdb::pg::SetCopyText(wire->proto, opts.delim, std::move(opts.null_str));
-    // PG-compat: COPY ... TO STDOUT (FORMAT text, HEADER) emits the column-name
-    // header line before the rows (committed here, before the drive arms).
-    if (opts.header) {
-      WriteCopyTextHeader(this->_send, prepared->GetNames(), wire->proto);
+    sdb::connector::SetCopyFormat(wire->proto, options,
+                                  prepared->ColumnCount());
+    if (options.header) {
+      WriteCopyHeader(this->_send, prepared->GetNames(), wire->proto,
+                      format == CopyFormat::Csv);
     }
   }
   duckdb::vector<duckdb::Value> params;
@@ -1617,7 +1693,9 @@ yaclib::Task<> PgWireSession<Kind>::WaitCopyInput() {
     co_return {};
   }
   auto [ec, n] =
-    co_await this->_socket.ReadSome(this->_recv.Reserve(kReadBlock)).NoThrow();
+    co_await this->_socket
+      .ReadSome(this->_recv.Reserve(kCopyReadBlock, kCopyChunkBytes))
+      .NoThrow();
   if (ec || n == 0) {
     this->Stop();
     co_return {};
@@ -1634,6 +1712,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   const bool is_text = format == CopyFormat::Text;
   absl::Cleanup done_guard = [this, task = this->_task] {
     _feeder_done.store(true, std::memory_order_release);
+    _copy_room.Kick();
     SDB_IF_FAILURE("copy_feeder_done_wake") {
       absl::SleepFor(absl::Seconds(2));
     }
@@ -1655,11 +1734,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
-  CopyEodScanner scanner;
-  sdb::pg::CopyBatchBuilder builder{is_text ? sdb::pg::CopyBatchFormat::Text
-                                    : format == CopyFormat::Binary
-                                      ? sdb::pg::CopyBatchFormat::Binary
-                                      : sdb::pg::CopyBatchFormat::Raw};
+  duckdb::CopyEndMarkerScanner scanner;
+  sdb::pg::CopyBatchBuilder builder{sdb::pg::CopyBatchFormat::Raw,
+                                    sdb::pg::kCopyBatchBytes};
   bool eod = false;
   bool failed = false;
   message::Chain retained;
@@ -1700,8 +1777,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
              "unexpected EOF during COPY from stdin");
         co_return {};
       }
-      co_await publish();
-      batches.Flush();
+      if (!feeding() || batches.Starving()) {
+        co_await publish();
+      }
       co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
@@ -1732,15 +1810,16 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await publish();
-          batches.Flush();
+          if (!feeding() || batches.Starving()) {
+            co_await publish();
+          }
           co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
         const auto take = std::min<uint64_t>(body, chunk.size());
         if (feeding()) {
-          const auto piece = chunk.substr(0, take);
           guarded([&] {
+            const auto piece = chunk.substr(0, take);
             if (is_text) {
               const auto scanned = scanner.Scan(piece);
               builder.Feed(scanned.carry, false);
@@ -1756,8 +1835,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
           }
         }
         this->_recv.Consume(take);
+        _copy_room.Kick();
         body -= take;
-        if (builder.Ready()) {
+        if (builder.Ready() || !feeding()) {
           co_await publish();
         }
       }
@@ -1984,7 +2064,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
 template<SocketKind Kind>
 BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
                                             const Statement& stmt,
-                                            std::string_view statement_name) {
+                                            std::string_view statement_name,
+                                            std::string_view portal_name) {
   const auto& prepared = stmt.GetPrepared();
   const auto input_formats = ParseBindFormats(cursor);
   if (cursor.size() < sizeof(uint16_t)) {
@@ -2032,24 +2113,49 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
     auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
     const auto field = cursor.substr(0, length);
     duckdb::Value out;
-    bool decoded =
-      !IsDeclaredNumeric(stmt, i) ||
-      sdb::pg::DeclaredNumericType(
-        field, format, stmt.ParamOids()[i] == sdb::pg::kNumericArray, type);
-    if (decoded) {
-      sdb::pg::ValueSink sink{type, out};
-      decoded = sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format)(
-        dctx, field, sink);
-    }
-    if (!decoded) {
-      if (format == sdb::pg::VarFormat::Binary) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
-          ERR_MSG("incorrect binary data format in bind parameter ", i + 1));
+    bool decoded = false;
+    std::exception_ptr error;
+    if ((format == sdb::pg::VarFormat::Text ||
+         (sdb::pg::ReceivesText(type) && !IsDeclaredNumeric(stmt, i))) &&
+        (!simdutf::validate_utf8(field.data(), field.size()) ||
+         std::memchr(field.data(), '\0', field.size()))) {
+      error = std::make_exception_ptr(irs::SqlException{
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE),
+                       ERR_MSG(duckdb::CopyInvalidUtf8(field))),
+        std::source_location::current()});
+    } else {
+      try {
+        if (!IsDeclaredNumeric(stmt, i) ||
+            sdb::pg::DeclaredNumericType(
+              field, format, stmt.ParamOids()[i] == sdb::pg::kNumericArray,
+              type)) {
+          sdb::pg::ValueSink sink{type, out};
+          decoded = sdb::pg::GetDeserialization<sdb::pg::ValueSink>(
+            type, format)(dctx, field, sink);
+        }
+      } catch (const duckdb::ConversionException&) {
+      } catch (const duckdb::InvalidInputException&) {
+      } catch (const duckdb::OutOfRangeException&) {
+      } catch (const irs::SqlException&) {
+        error = std::current_exception();
       }
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-        ERR_MSG("invalid input syntax for bind parameter ", i + 1));
+    }
+    if (!decoded && !error) {
+      error = format == sdb::pg::VarFormat::Binary
+                ? std::make_exception_ptr(irs::SqlException{
+                    SQL_ERROR_DATA(
+                      ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+                      ERR_MSG("incorrect binary data format in bind parameter ",
+                              i + 1)),
+                    std::source_location::current()})
+                : sdb::pg::InputError(*_connection_ctx, type, field);
+    }
+    if (error) {
+      sdb::pg::ThrowInContext(
+        error, portal_name.empty()
+                 ? absl::StrCat("unnamed portal parameter $", i + 1, " = '...'")
+                 : absl::StrCat("portal \"", portal_name, "\" parameter $",
+                                i + 1, " = '...'"));
     }
     values.emplace_back(std::move(out));
     cursor.remove_prefix(length);
@@ -2216,7 +2322,8 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     // the parameter types come from the plan, so a plan re-bound against DDL
     // this session has since done must be the one that describes them.
     RevalidatePlan(statement);
-    portal.bind_info = ParseBindVars(payload, statement, statement_name);
+    portal.bind_info =
+      ParseBindVars(payload, statement, statement_name, portal_name);
   }
   portal.plan = statement.Plan();
   portal.bound_after_abort = _txn_state->StatusByte() == 'E';
@@ -2925,8 +3032,15 @@ yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::PumpRecv() {
   for (;;) {
+    const bool copy = _copy_route.load(std::memory_order_acquire);
+    if (copy && this->_recv.Backlog() >= kCopyRecvHighWater) {
+      co_await _copy_room.Wait(*this->_ioexec);
+      continue;
+    }
     auto [ec, n] =
-      co_await this->_socket.ReadSome(this->_recv.Reserve(kReadBlock))
+      co_await this->_socket
+        .ReadSome(copy ? this->_recv.Reserve(kCopyReadBlock, kCopyChunkBytes)
+                       : this->_recv.Reserve(kReadBlock))
         .NoThrow();
     if (ec || n == 0) {
       co_return {};

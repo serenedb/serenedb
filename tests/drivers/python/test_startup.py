@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 
 import psycopg
@@ -510,6 +511,48 @@ def test_startup_parameters_on_a_unix_socket(tmp_path: Path,
                     "unix_startup", "5s")
     finally:
         server.stop()
+
+
+def test_copy_and_binds_on_a_unix_socket_and_over_tls(tmp_path: Path,
+                                                       socket_dir: Path) -> None:
+    pem = Path(__file__).resolve().parents[3] / "resources" / "ca.pem"
+    reserved = reserve_port()
+    tls_port = reserved.getsockname()[1]
+    server = _Server(tmp_path / "data",
+                     f"postgres://{socket_dir}?port=5432,"
+                     f"postgres://127.0.0.1:{tls_port}?sslmode=require"
+                     f"&cert={pem}&key={pem}")
+    targets = [{"host": str(socket_dir), "port": 5432},
+               {"host": "127.0.0.1", "port": tls_port, "sslmode": "require"}]
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                psycopg.connect(user="postgres", dbname="postgres",
+                                **targets[0]).close()
+                break
+            except psycopg.OperationalError:
+                assert (server.proc.poll() is None
+                        and time.monotonic() < deadline), server.output()
+                time.sleep(0.2)
+        _wait_listening(server, tls_port)
+        for k, target in enumerate(targets):
+            with psycopg.connect(user="postgres", dbname="postgres",
+                                 autocommit=True, **target) as conn:
+                table = f"transport_copy_{k}"
+                conn.execute(f"CREATE TABLE {table} (x INT, label TEXT)")
+                with conn.cursor() as cur:
+                    with cur.copy(f"COPY {table} FROM STDIN") as cp:
+                        cp.write(b"1\tone\n")
+                        time.sleep(0.2)
+                        cp.write(b"2\ttwo\n")
+                    cur.execute(f"SELECT count(*), sum(x) FROM {table}")
+                    assert cur.fetchone() == (2, 3)
+                    cur.execute("SELECT %b::numeric + 1", [Decimal("1.5")])
+                    assert cur.fetchone() == (Decimal("2.5"),)
+    finally:
+        server.stop()
+        reserved.close()
 
 
 def _qemu_x86_64() -> str | None:

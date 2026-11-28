@@ -1,0 +1,36 @@
+control substitution on
+
+statement error
+COPY (SELECT range AS a, 'x' || range AS b FROM range(3000000)) TO '/dev/full' (FORMAT csv);
+----
+db error: ERROR: Could not write file "/dev/full": No space left on device
+
+
+statement error
+COPY (SELECT range AS a FROM range(3000000)) TO '/dev/full' (FORMAT csv, COMPRESSION gzip);
+----
+db error: ERROR: Could not write file "/dev/full": No space left on device
+
+
+statement error
+COPY (SELECT range AS a FROM range(3000000)) TO '/dev/full' (FORMAT json);
+----
+db error: ERROR: Could not write file "/dev/full": No space left on device
+
+
+statement count 0
+COPY (SELECT 1 AS a WHERE false) TO '${__TEST_DIR__}/copy_to_full_device_empty.csv.gz' (FORMAT csv, COMPRESSION gzip, HEADER);
+
+
+query
+SELECT count(*) AS n FROM read_csv('${__TEST_DIR__}/copy_to_full_device_empty.csv.gz', header = true, columns = {'a': 'INTEGER'});
+----
+n
+0
+
+
+query
+SELECT 1 AS ok;
+----
+ok
+1

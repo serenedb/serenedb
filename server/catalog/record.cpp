@@ -116,13 +116,13 @@ std::span<uint8_t> ReadView(duckdb::BinaryDeserializer& object,
     uint32_t size = 0;
     if (stream.GetCapacity() - at < sizeof(size)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                      ERR_MSG("the WALholds a damaged record"));
+                      ERR_MSG("the WAL holds a damaged record"));
     }
     std::memcpy(&size, stream.GetData() + at, sizeof(size));
     at += sizeof(size);
     if (size > stream.GetCapacity() - at) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                      ERR_MSG("the WALholds a damaged record"));
+                      ERR_MSG("the WAL holds a damaged record"));
     }
     stream.SetPosition(at + size);
     bytes = {stream.GetData() + at, size};
@@ -406,7 +406,7 @@ duckdb::TableCatalogEntry& LoggedTable(BaseCatalog& catalog,
                                        duckdb::idx_t oid) {
   auto table = catalog.FindRelation(transaction, oid);
   SDB_ENSURE(table && table->type == duckdb::CatalogType::TABLE_ENTRY,
-             "the WALchanges a missing table ", oid);
+             "the WAL changes a missing table ", oid);
   return table->Cast<duckdb::TableCatalogEntry>();
 }
 
@@ -440,7 +440,7 @@ void QualifyInLoggedSchema(BaseCatalog& catalog,
   }
   const auto entry = catalog.LookupOid(transaction, info.schema_oid);
   SDB_ENSURE(entry && entry->type == duckdb::CatalogType::SCHEMA_ENTRY,
-             "the WALcreates in a missing schema ", info.schema_oid);
+             "the WAL creates in a missing schema ", info.schema_oid);
   const auto& schema = entry->Cast<duckdb::SchemaCatalogEntry>();
   auto path = schema.GetParentSchemaPath(transaction);
   path.push_back(schema.name);
@@ -817,7 +817,7 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
       catalog.ReplayCreate(context, std::move(content.info));
       return;
     case ChangeKind::Alter: {
-      SDB_ENSURE(content.alter, "the WALalters entry ", oid,
+      SDB_ENSURE(content.alter, "the WAL alters entry ", oid,
                  " without saying how");
       auto& info = *content.alter;
       info.bind_mode = duckdb::AlterBindMode::SKIP_BINDING;
@@ -849,7 +849,7 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
             it = ColumnNotNull(info, table, made_constraints);
           }
           SDB_ENSURE(it != made_constraints.end(),
-                     "the WALcreates constraint \"", created.name,
+                     "the WAL creates constraint \"", created.name,
                      "\" on table ", oid, " that replay did not make");
           (*it)->constraint_name = created.name;
           (*it)->oid = created.oid;
@@ -862,7 +862,7 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
     }
     case ChangeKind::Drop: {
       auto entry = catalog.LookupOid(transaction, oid);
-      SDB_ENSURE(entry, "the WALdrops a missing entry ", oid);
+      SDB_ENSURE(entry, "the WAL drops a missing entry ", oid);
       if (change.owner) {
         LoggedTable(catalog, transaction, change.owner)
           .DropTrigger(transaction, entry->name, false);
@@ -875,7 +875,7 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
       break;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                  ERR_MSG("the WALholds an unknown catalog change"));
+                  ERR_MSG("the WAL holds an unknown catalog change"));
 }
 
 void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
@@ -894,7 +894,7 @@ void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
       } else if (entry->type == duckdb::CatalogType::INDEX_ENTRY) {
         store = entry->Cast<InvertedIndexEntry>().Storage();
       }
-      SDB_ENSURE(store, "the WALwrites a missing table ", oid);
+      SDB_ENSURE(store, "the WAL writes a missing table ", oid);
       replay = store->Replay();
     }
   }
@@ -975,10 +975,10 @@ RecordBuffer CatalogOnly(const CatalogRecord& record) {
 
 uint32_t CatalogSize(std::span<const uint8_t> payload) {
   uint32_t size = 0;
-  SDB_ENSURE(payload.size() >= sizeof(size), "the WALholds a cut record");
+  SDB_ENSURE(payload.size() >= sizeof(size), "the WAL holds a cut record");
   std::memcpy(&size, payload.data(), sizeof(size));
   SDB_ENSURE(size <= payload.size() - sizeof(size),
-             "the WALholds a damaged record");
+             "the WAL holds a damaged record");
   return size;
 }
 
@@ -1382,7 +1382,7 @@ BaseCatalog* InstanceCatalog(duckdb::ClientContext& context, duckdb::idx_t id) {
     }
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                  ERR_MSG("the WALnames a missing catalog ", id));
+                  ERR_MSG("the WAL names a missing catalog ", id));
 }
 
 bool ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,

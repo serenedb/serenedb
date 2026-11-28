@@ -36,7 +36,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
-#include <mutex>
 #include <string>
 
 #include "catalog/base_catalog.h"
@@ -693,36 +692,13 @@ void Transactions::MaintainLog(Lsn end) {
       })
       .Detach();
   }
-  auto tail_limit = std::max(Log::kTailBytes, _log->HistoryBytes());
-  SDB_IF_FAILURE("fold_log_tail") { tail_limit = 0; }
-  if (_log->TailBytes() > tail_limit &&
-      !_folding_tail.exchange(true, std::memory_order_acq_rel)) {
-    Runtime::Get()
-      .Run([this] {
-        absl::Cleanup done = [this] {
-          _folding_tail.store(false, std::memory_order_release);
-        };
-        if (const std::unique_lock round{_truncate_mutex, std::try_to_lock}) {
-          Lsn bound = 0;
-          {
-            const CommittedView view;
-            bound = CommitEnd(view.Snapshot()).value_or(0);
-          }
-          _log->FoldTail(bound, &CatalogPart, &CompactHistory);
-        }
-        SDB_PARK_ONCE_ON_FAILURE("pause_after_log_tail_fold");
-      })
-      .Detach();
-  }
   const auto covered = _log->Covered();
-  if (end <= covered ||
-      end - covered <=
-        std::max<uint64_t>(_max_log_bytes.load(std::memory_order_relaxed),
-                           _log->SnapshotBytes()) ||
-      _log->NewestChunk() <= _log->Oldest()) {
-    return;
-  }
-  TruncateInBackground();
+  MaintainInBackground(
+    end > covered &&
+    end - covered >
+      std::max<uint64_t>(_max_log_bytes.load(std::memory_order_relaxed),
+                         _log->SnapshotBytes()) &&
+    _log->NewestChunk() > _log->Oldest());
 }
 
 void Transactions::SettleLog() {
@@ -731,24 +707,36 @@ void Transactions::SettleLog() {
   }
   const auto covered = _log->Covered();
   const auto end = _log->End();
-  if (end > covered && end - covered >= _log->SnapshotBytes()) {
-    TruncateInBackground();
-  }
+  MaintainInBackground(end > covered && end - covered >= _log->SnapshotBytes());
 }
 
-void Transactions::TruncateInBackground() {
-  if (search::IsBackupActive() ||
+void Transactions::MaintainInBackground(bool snapshot_due) {
+  const bool snapshot = snapshot_due && !search::IsBackupActive();
+  auto tail_limit = std::max(Log::kTailBytes, _log->HistoryBytes());
+  SDB_IF_FAILURE("fold_log_tail") { tail_limit = 0; }
+  if ((!snapshot && _log->TailBytes() <= tail_limit) ||
       _truncating.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   Runtime::Get()
-    .Run([this] {
+    .Run([this, snapshot] {
       absl::Cleanup done = [this] {
         _truncating.store(false, std::memory_order_release);
       };
-      if (const auto status = TruncateLog(); !status.ok()) {
-        SDB_WARN(GENERAL, "log truncation failed: ", status.message());
+      if (snapshot) {
+        if (const auto status = TruncateLog(); !status.ok()) {
+          SDB_WARN(GENERAL, "log truncation failed: ", status.message());
+        }
+      } else {
+        absl::MutexLock round{&_truncate_mutex};
+        Lsn bound = 0;
+        {
+          const CommittedView view;
+          bound = CommitEnd(view.Snapshot()).value_or(0);
+        }
+        _log->FoldTail(bound, &CatalogPart, &CompactHistory);
       }
+      SDB_PARK_ONCE_ON_FAILURE("pause_after_log_maintenance");
     })
     .Detach();
 }

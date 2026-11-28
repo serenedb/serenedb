@@ -26,7 +26,7 @@ SET sdb_faults = '-pause_cover_after_collect:parked';
 
 connection creator
 statement ok
-SET sdb_faults = 'pause_after_log_tail_fold';
+SET sdb_faults = 'pause_after_log_maintenance';
 
 
 connection creator
@@ -40,26 +40,26 @@ CREATE TABLE ctfc_during (id INT);
 
 
 connection creator
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_after_log_tail_fold:parked';
-
-
-connection creator
-statement ok
-CREATE TABLE ctfc_while_folding (id INT);
-
-
-connection creator
-statement ok
-SET sdb_faults = 'pause_after_log_tail_fold:release';
-
-
-connection creator
 statement ok
 SET sdb_faults = 'pause_cover_after_collect:release';
 
 
 wait
+
+
+connection creator
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_after_log_maintenance:parked';
+
+
+connection creator
+statement ok
+CREATE TABLE ctfc_while_maintaining (id INT);
+
+
+connection creator
+statement ok
+SET sdb_faults = 'pause_after_log_maintenance:release';
 
 
 connection creator
@@ -84,7 +84,7 @@ SELECT relname FROM pg_class WHERE relname LIKE 'ctfc_%' ORDER BY relname;
 relname
 ctfc_before
 ctfc_during
-ctfc_while_folding
+ctfc_while_maintaining
 
 
 connection after_crash

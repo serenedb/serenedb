@@ -150,6 +150,51 @@ def test_a_server_moves_between_log_directories_after_a_checkpointed_stop(
             assert again.stop() == 0, again.output()
 
 
+def test_a_lost_log_directory_is_abandoned_by_name(tmp_path: Path) -> None:
+    with FakeS3() as fake:
+        url = f"s3://bucket/lost-{tmp_path.name}"
+        env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
+                                  "AWS_SECRET_ACCESS_KEY": "secret"})
+
+        lost = _Server(url, tmp_path / "a", env)
+        try:
+            assert lost.wait_ready(), lost.output()
+            with lost.connect() as conn:
+                conn.execute("CREATE TABLE t (a INT)")
+                conn.execute("INSERT INTO t VALUES (1)")
+                conn.execute("CHECKPOINT")
+                conn.execute("INSERT INTO t VALUES (2)")
+        finally:
+            lost.kill()
+        lost_id = (tmp_path / "a" / "logs" / "LOCK").read_text()
+
+        wrong = _Server(url, tmp_path / "b", env, "--abandon_log=0123")
+        try:
+            assert not wrong.wait_ready(timeout=30)
+            assert wrong.proc.wait(timeout=30) != 0
+            assert f"--abandon_log={lost_id}" in wrong.output()
+        finally:
+            wrong.kill()
+
+        taken = _Server(url, tmp_path / "b", env, f"--abandon_log={lost_id}")
+        try:
+            assert taken.wait_ready(), taken.output()
+            assert _count(taken) == 1
+            with taken.connect() as conn:
+                conn.execute("INSERT INTO t VALUES (3)")
+        finally:
+            taken.kill()
+        assert fake.objects[("bucket", f"lost-{tmp_path.name}/LOCK")].data.decode() == \
+            (tmp_path / "b" / "logs" / "LOCK").read_text()
+
+        again = _Server(url, tmp_path / "b", env)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _count(again) == 2
+        finally:
+            assert again.stop() == 0, again.output()
+
+
 def test_an_object_store_server_directory_needs_local_directories(
         tmp_path: Path) -> None:
     result = subprocess.run(

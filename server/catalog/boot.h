@@ -70,7 +70,8 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
                                               const ServerDirectory& layout);
 
-void InitCatalog(bool default_database, bool require_existing);
+void InitCatalog(bool default_database, bool require_existing,
+                 const std::string& abandon_log);
 
 void CloseLog();
 

@@ -67,6 +67,11 @@ ABSL_FLAG(bool, require_existing, false,
           "Refuse to start when the server directory holds no server, "
           "instead of creating a new one.");
 
+ABSL_FLAG(std::string, abandon_log, "",
+          "The id of a lost log directory that owns a server directory on an "
+          "object store: the server starts from its last snapshot, and the "
+          "commits that only that log holds are lost.");
+
 ABSL_FLAG(bool, checkpoint_at_stop, false,
           "End every clean stop with a checkpoint and an empty log directory, "
           "so the server can start anywhere from its server directory alone.");
@@ -124,6 +129,7 @@ StorageConfig ReadStorageConfig() {
     .layout = ReadServerDirectory(
       lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory))),
     .require_existing = absl::GetFlag(FLAGS_require_existing),
+    .abandon_log = absl::GetFlag(FLAGS_abandon_log),
   };
   const auto& directory = config.layout.directory;
   if (duckdb::Path::IsRemote(directory)) {
@@ -151,7 +157,8 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
     network::pg::hba::SetHbaConfig(config.hba_config);
   }
   try {
-    catalog::InitCatalog(config.default_database, config.require_existing);
+    catalog::InitCatalog(config.default_database, config.require_existing,
+                         config.abandon_log);
     _search.Start();
   } catch (...) {
     Close();

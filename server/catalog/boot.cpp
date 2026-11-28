@@ -80,9 +80,13 @@ std::optional<std::string> ReadServerLock(duckdb::FileSystem& fs,
 }
 
 void TakeServerLock(duckdb::FileSystem& fs, const ServerDirectory& layout,
-                    const std::string& log_id) {
+                    const std::string& log_id, bool replace) {
   const auto path = fs.JoinPath(layout.directory, kLockFile);
   try {
+    if (replace) {
+      irs::WriteWhole(fs, path, log_id, true);
+      return;
+    }
     const auto file =
       fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
                           duckdb::FileFlags::FILE_FLAGS_EXCLUSIVE_CREATE);
@@ -284,7 +288,8 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
           .transaction_manager = duckdb::make_uniq<TransactionManager>(db)};
 }
 
-void InitCatalog(bool default_database, bool require_existing) {
+void InitCatalog(bool default_database, bool require_existing,
+                 const std::string& abandon_log) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
@@ -294,18 +299,27 @@ void InitCatalog(bool default_database, bool require_existing) {
     !layout.InMemory() && duckdb::Path::IsRemote(layout.directory);
   std::string log_id;
   std::optional<std::string> owner;
+  bool abandoned = false;
   if (!layout.InMemory()) {
     BeginStorageWork();
     if (remote) {
       log_id = irs::ReadWhole<std::string>(
         duckdb::QueryContext{}, fs, fs.JoinPath(layout.LogDir(), kLockFile));
       owner = ReadServerLock(fs, layout);
-      if (owner && *owner != log_id) {
+      abandoned = owner && *owner != log_id && *owner == abandon_log;
+      if (owner && *owner != log_id && !abandoned) {
         SDB_FATAL(STARTUP, "the server directory '", layout.directory,
                   "' belongs to the log directory ", *owner,
                   ", which may hold commits its snapshot does not have: "
-                  "start the server with that log directory, or stop it with "
-                  "--checkpoint_at_stop first");
+                  "start the server with that log directory, stop it with "
+                  "--checkpoint_at_stop first, or, when it is lost, start "
+                  "with --abandon_log=",
+                  *owner, " and lose those commits");
+      }
+      if (abandoned) {
+        SDB_WARN(STARTUP, "starting '", layout.directory,
+                 "' from its snapshot without the log directory ", *owner,
+                 ": the commits only that log holds are lost");
       }
     } else {
       backup::PrepareServerDirectory(layout);
@@ -332,8 +346,10 @@ void InitCatalog(bool default_database, bool require_existing) {
   if (!layout.InMemory()) {
     auto log =
       std::make_unique<Log>(fs, layout.LogDir(), layout.SnapshotPath());
-    const bool takeover = remote && !owner;
-    if (created || takeover) {
+    const bool takeover = remote && (!owner || abandoned);
+    if (abandoned && !created) {
+      Log::Discard(fs, layout.LogDir(), layout.SnapshotPath());
+    } else if (created || takeover) {
       log->Clear();
     }
     const auto target = [&](duckdb::idx_t id) {
@@ -348,10 +364,10 @@ void InitCatalog(bool default_database, bool require_existing) {
       &CatalogPart);
     transactions.SetReplaying(false);
     initialized = replayed.snapshot;
-    clean = clean || replayed.clean;
+    clean = !abandoned && (clean || replayed.clean);
     log->SetIdentity(AdoptIdentity(replayed.identity, remote));
     if (takeover) {
-      TakeServerLock(fs, layout, log_id);
+      TakeServerLock(fs, layout, log_id, abandoned);
     }
     fs.CreateDirectoryExtended(
       layout.StoreDir(),

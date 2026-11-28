@@ -36,6 +36,7 @@ struct StorageConfig {
   std::string hba_config;
   bool default_database = true;
   bool require_existing = false;
+  std::string abandon_log;
 };
 
 catalog::ServerDirectory ReadServerDirectory(std::string directory);

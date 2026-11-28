@@ -24,6 +24,7 @@
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/function/cast/cast_statistics.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/stats_writer.hpp>
 #include <duckdb/storage/statistics/string_stats.hpp>
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
@@ -83,15 +84,6 @@ uint64_t DistinctWith(const irs::FieldTermRange& terms, uint64_t unseen) {
                                once / sampled * static_cast<double>(unseen));
 }
 
-bool ExactBounds(const duckdb::BaseStatistics& stats) {
-  const auto exact = [](duckdb::StringStatsType type) {
-    return type == duckdb::StringStatsType::EXACT_STATS ||
-           type == duckdb::StringStatsType::EMPTY_STATS;
-  };
-  return exact(duckdb::StringStats::GetMinType(stats)) &&
-         exact(duckdb::StringStats::GetMaxType(stats));
-}
-
 duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
   const ScanBindData& bind, const irs::CompositeReader& reader,
   duckdb::idx_t column_index, uint64_t& distinct) {
@@ -109,10 +101,10 @@ duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
     duckdb::StringStats::CreateEmpty(duckdb::LogicalType::VARCHAR).ToUnique();
   if (const auto* terms =
         reader.GetTermRange(field_id, irs::StringLayout::kStrings)) {
-    duckdb::StringStats::SetMin(*bounds, AsStringT(terms->min),
-                                duckdb::StringStatsType::EXACT_STATS);
-    duckdb::StringStats::SetMax(*bounds, AsStringT(terms->max),
-                                duckdb::StringStatsType::EXACT_STATS);
+    duckdb::StatsWriter<duckdb::string_t> writer{duckdb::LogicalType::VARCHAR};
+    writer.Update(AsStringT(terms->min));
+    writer.Update(AsStringT(terms->max));
+    writer.Merge(*bounds);
     distinct = DistinctWith(*terms, RowsOnlyDocs(reader));
   }
   for (const auto& segment : reader) {
@@ -121,7 +113,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
     }
     const auto* columns = segment.GetColReader();
     const auto* values = columns ? columns->Column(column) : nullptr;
-    if (!values || !ExactBounds(values->MergedStatistics())) {
+    if (!values) {
       return nullptr;
     }
     bounds->Merge(values->MergedStatistics());
@@ -171,9 +163,9 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
                 .ToUnique();
     }
     duckdb::StringStats::SetMin(*stats, duckdb::StringStats::Min(*bounds),
-                                duckdb::StringStatsType::EXACT_STATS);
+                                duckdb::StringStats::GetMinType(*bounds));
     duckdb::StringStats::SetMax(*stats, duckdb::StringStats::Max(*bounds),
-                                duckdb::StringStatsType::EXACT_STATS);
+                                duckdb::StringStats::GetMaxType(*bounds));
   }
   if (stats && stats->GetDistinctCount() == 0) {
     auto distinct = KeyDistinct(bind, reader, column);

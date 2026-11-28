@@ -87,6 +87,113 @@ v
 
 
 statement ok
+CREATE TABLE ctn_prefixed_lines (l TEXT);
+
+
+statement ok
+INSERT INTO ctn_prefixed_lines VALUES ('1_000'), ('0x1F'), ('-0x10'), ('0o17'), ('0B101'), ('0x_1f'), (' -1_2_3 ');
+
+
+statement count 7
+COPY ctn_prefixed_lines TO '${__TEST_DIR__}/ctn_prefixed.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctn_prefixed (v INTEGER);
+
+
+statement count 7
+COPY ctn_prefixed FROM '${__TEST_DIR__}/ctn_prefixed.txt' (FORMAT csv);
+
+
+query
+SELECT v FROM ctn_prefixed ORDER BY v;
+----
+v
+-123
+-16
+5
+15
+31
+31
+1000
+
+
+statement ok
+CREATE TABLE ctn_bad_lines (l TEXT);
+
+
+statement ok
+INSERT INTO ctn_bad_lines VALUES ('1__0');
+
+
+statement count 1
+COPY ctn_bad_lines TO '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+
+
+statement error
+COPY ctn_prefixed FROM '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type integer: "1__0"
+
+
+statement ok
+UPDATE ctn_bad_lines SET l = '_1';
+
+
+statement count 1
+COPY ctn_bad_lines TO '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+
+
+statement error
+COPY ctn_prefixed FROM '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type integer: "_1"
+
+
+statement ok
+UPDATE ctn_bad_lines SET l = '0x';
+
+
+statement count 1
+COPY ctn_bad_lines TO '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+
+
+statement error
+COPY ctn_prefixed FROM '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type integer: "0x"
+
+
+statement ok
+UPDATE ctn_bad_lines SET l = '0x8000_0000';
+
+
+statement count 1
+COPY ctn_bad_lines TO '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+
+
+statement error
+COPY ctn_prefixed FROM '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+----
+db error: ERROR: value "0x8000_0000" is out of range for type integer
+
+
+statement ok
+UPDATE ctn_bad_lines SET l = '99999999999x';
+
+
+statement count 1
+COPY ctn_bad_lines TO '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+
+
+statement error
+COPY ctn_prefixed FROM '${__TEST_DIR__}/ctn_bad.txt' (FORMAT text);
+----
+db error: ERROR: value "99999999999x" is out of range for type integer
+
+
+statement ok
 CREATE TABLE ctn_float_lines (l TEXT);
 
 

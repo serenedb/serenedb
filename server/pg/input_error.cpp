@@ -34,6 +34,7 @@
 
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
+#include "pg/integer_text.h"
 #include "pg/types/logical.h"
 #include "pg/types/mapping.h"
 
@@ -149,6 +150,33 @@ bool Number(std::string_view text) {
          (fraction.empty() || Digits(fraction, '_'));
 }
 
+bool IntegerOutOfRange(const duckdb::LogicalType& type, std::string_view text) {
+  const auto range = [&]<typename T>() {
+    T value;
+    return ParseIntegerText(text, value) == IntegerText::Range;
+  };
+  switch (type.InternalType()) {
+    case duckdb::PhysicalType::INT8:
+      return range.template operator()<int8_t>();
+    case duckdb::PhysicalType::INT16:
+      return range.template operator()<int16_t>();
+    case duckdb::PhysicalType::INT32:
+      return range.template operator()<int32_t>();
+    case duckdb::PhysicalType::INT64:
+      return range.template operator()<int64_t>();
+    case duckdb::PhysicalType::UINT8:
+      return range.template operator()<uint8_t>();
+    case duckdb::PhysicalType::UINT16:
+      return range.template operator()<uint16_t>();
+    case duckdb::PhysicalType::UINT32:
+      return range.template operator()<uint32_t>();
+    case duckdb::PhysicalType::UINT64:
+      return range.template operator()<uint64_t>();
+    default:
+      return Digits(Unsigned(absl::StripAsciiWhitespace(text)), '_');
+  }
+}
+
 }  // namespace
 
 std::exception_ptr InputError(duckdb::ClientContext& context,
@@ -190,7 +218,7 @@ std::exception_ptr InputError(duckdb::ClientContext& context,
   }
   const auto name = TypeName(context, type);
   if ((decimal && Number(trimmed)) ||
-      (type.IsIntegral() && Digits(Unsigned(trimmed), '_'))) {
+      (type.IsIntegral() && IntegerOutOfRange(type, value))) {
     return Error(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE, "value \"", value,
                  "\" is out of range for type ", name);
   }

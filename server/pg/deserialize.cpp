@@ -73,6 +73,7 @@
 #include "icu-helpers.hpp"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/datetime_text.h"
+#include "pg/integer_text.h"
 #include "pg/types/char.h"
 #include "pg/types/geometric.h"
 #include "pg/types/inet.h"
@@ -835,10 +836,10 @@ const char* ReadLimit(const DeserializeContext& ctx, std::string_view data) {
             : data.size());
 }
 
-// PG's numeric input accepts surrounding whitespace, a leading '+', and (for
-// floats) inf/nan: the flags cover the leading whitespace + plus, `general`
-// keeps inf/nan, and the field must otherwise be fully consumed (trailing
-// whitespace is skip-only at the head, so drop it here) to reject junk.
+// PG's float input accepts surrounding whitespace, a leading '+' and inf/nan:
+// the flags cover the leading whitespace + plus, `general` keeps inf/nan, and
+// the field must otherwise be fully consumed (trailing whitespace is skip-only
+// at the head, so drop it here) to reject junk.
 template<typename T>
 struct NumberText {
   template<typename Sink>
@@ -850,11 +851,13 @@ struct NumberText {
       fast_float::chars_format::skip_white_space};
     T value;
     if constexpr (std::is_integral_v<T>) {
-      if (duckdb::FastInteger(data.data(), data.size(), ReadLimit(ctx, data),
-                              value)) {
-        sink.Fixed(value);
-        return true;
+      if (!duckdb::FastInteger(data.data(), data.size(), ReadLimit(ctx, data),
+                               value) &&
+          ParseIntegerText(data, value) != IntegerText::Ok) {
+        return false;
       }
+      sink.Fixed(value);
+      return true;
     } else if constexpr (std::is_same_v<T, double>) {
       if (duckdb::FastDouble(data.data(), data.size(), ReadLimit(ctx, data),
                              value, '.')) {

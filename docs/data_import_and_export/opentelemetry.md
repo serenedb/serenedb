@@ -78,7 +78,7 @@ The same payload produces the same rows in either encoding.
 
 Request bodies may be compressed with any coding the HTTP listener supports — `gzip` (the collector's default), `zstd`, `br`, `deflate`, `lz4`, `zxc` or `snappy`; see [HTTP Compression](../configuration/http_compression.md). An unsupported `Content-Encoding` answers `415`, and a corrupt compressed body `400`, both before the payload is decoded.
 
-A request body is at most 100 MiB, and a larger one answers `413`. The limit applies to the body after decompression too. A listener that also serves other APIs (`?api=otel&api=es`) applies the largest of their limits to every request.
+A request body is at most 100 MiB, and a larger one answers `413`. The limit applies to the body after decompression too. A listener that also serves other APIs (`?api=otel&api=mcp`) applies the largest of their limits to every request.
 
 ### Batching
 
@@ -119,7 +119,7 @@ exporters:
 
 Errors of the export itself use `google.rpc.Status`, encoded the same way as the request: `400` for an undecodable payload.
 
-Authentication is the HTTP layer's usual Basic auth against the catalog roles.
+Authentication is the HTTP layer's usual Basic auth against the catalog roles, decided by the [client authentication rules](../security/client_authentication.md) as a `psql` login is.
 
 ### Mapping
 

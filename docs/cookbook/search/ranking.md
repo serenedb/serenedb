@@ -36,16 +36,16 @@ TF-IDF has no ceiling on repeats and ignores length unless you pass `with_norms`
 
 ### How IDF is calculated
 
-IDF measures how rare a word is in the searched column. With `N` rows that have a value in the column and `n` of them containing the word, the textbook IDF is `log(N / n)`: the rarer the word, the higher its weight. Both scorers use a smoothed form of it:
+IDF measures how rare a word is in the searched column. With `N` rows that have a value in the column and `df` of them containing the word, the textbook IDF is `log(N / df)`: the rarer the word, the higher its weight. Both scorers use a smoothed form of it:
 
 ```
-TF-IDF:  idf = ln(1 + (N + 1) / (n + 1))
-BM25:    idf = ln(1 + (N - n + 0.5) / (n + 0.5))
+TF-IDF:  idf = ln(1 + (N + 1) / (df + 1))
+BM25:    idf = ln(1 + (N - df + 0.5) / (df + 0.5))
 ```
 
-The classic BM25 IDF, `ln((N - n + 0.5) / (n + 0.5))`, turns negative for a word in more than half the rows; the `1 +` inside the logarithm keeps both forms positive.
+The classic BM25 IDF, `ln((N - df + 0.5) / (df + 0.5))`, turns negative for a word in more than half the rows; the `1 +` inside the logarithm keeps both forms positive.
 
-In the shared dataset all 10 movies have a description and "alien" occurs in one of them, so `N = 10` and `n = 1`:
+In the shared dataset all 10 movies have a description and "alien" occurs in one of them, so `N = 10` and `df = 1`:
 
 ```
 TF-IDF:  idf = ln(1 + 11 / 2)    = ln 6.5   ≈ 1.872

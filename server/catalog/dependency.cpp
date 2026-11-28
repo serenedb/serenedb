@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
@@ -224,7 +223,7 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
     auto& context = transaction.GetContext();
     if (auto database = duckdb::DatabaseManager::Get(context).GetDatabase(
           context, subject.name)) {
-      absl::flat_hash_set<duckdb::idx_t> seen;
+      irs::containers::FlatHashSet<duckdb::idx_t> seen;
       database->GetCatalog().Cast<BaseCatalog>().Oids().ForEachForeignDependent(
         transaction, [&](duckdb::CatalogEntry& member) {
           if (!seen.insert(member.oid).second) {
@@ -340,7 +339,7 @@ class Closure {
   }
 
   duckdb::CatalogTransaction _transaction;
-  absl::flat_hash_set<duckdb::idx_t> _seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> _seen;
 };
 
 enum class Kind : uint8_t {
@@ -1189,7 +1188,7 @@ void RefuseUnfollowable(duckdb::CatalogTransaction transaction,
                         std::span<const Edge> edges,
                         std::span<const duckdb::idx_t> moving, bool rewrites) {
   std::vector<std::string> lines;
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   size_t hidden = 0;
   for (const auto& edge : edges) {
     if (Unfollowable(edge, rewrites) &&
@@ -1249,7 +1248,7 @@ void DropClosure(duckdb::CatalogTransaction transaction,
     return;
   }
   auto& context = transaction.GetContext();
-  absl::flat_hash_set<duckdb::idx_t> hidden;
+  irs::containers::FlatHashSet<duckdb::idx_t> hidden;
   for (const auto& edge : closure.edges) {
     if (!Shown(transaction, *edge.dependent)) {
       hidden.insert(edge.dependent->oid);
@@ -1328,6 +1327,19 @@ void DropClosure(duckdb::CatalogTransaction transaction,
   }
 }
 
+void CollectNestedDependents(duckdb::CatalogTransaction transaction,
+                             duckdb::CatalogEntry& schema,
+                             NamingDependents& dependents) {
+  schema.Cast<Schema>().ScanMembers(
+    transaction, [&](duckdb::CatalogEntry& member) {
+      if (member.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        CollectNestedDependents(transaction, member, dependents);
+      } else if (!member.internal) {
+        CollectNamingDependents(transaction, member, dependents);
+      }
+    });
+}
+
 }  // namespace
 
 void ScanSubjects(duckdb::CatalogTransaction transaction,
@@ -1360,7 +1372,7 @@ void ScanSubjects(duckdb::CatalogTransaction transaction,
 
 void ScanDependents(duckdb::CatalogTransaction transaction,
                     duckdb::CatalogEntry& subject, EdgeVisitor visit) {
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : DirectDependents(transaction, subject)) {
     if (!seen.insert(edge.dependent->oid).second) {
       continue;
@@ -1502,7 +1514,7 @@ void RefuseDroppingTogether(duckdb::CatalogTransaction transaction,
     });
   };
   std::vector<std::string> lines;
-  absl::flat_hash_set<duckdb::idx_t> hidden;
+  irs::containers::FlatHashSet<duckdb::idx_t> hidden;
   for (auto& entry : entries) {
     const Closure closure{transaction, entry};
     for (const auto& edge : closure.edges) {
@@ -1628,7 +1640,7 @@ void FollowReferences(duckdb::CatalogTransaction transaction,
       parent.Alter(transaction, replace);
     }
   };
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : DirectDependents(transaction, table)) {
     if (edge.part == Part::Constraint &&
         edge.dependent->type == duckdb::CatalogType::TABLE_ENTRY &&
@@ -1723,7 +1735,7 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& table,
                         const duckdb::Identifier& old_column,
                         const duckdb::Identifier& new_column) {
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : DirectDependents(transaction, table)) {
     auto& dependent = *edge.dependent;
     if (!seen.insert(dependent.oid).second) {
@@ -1837,11 +1849,11 @@ void DropColumnReaders(duckdb::CatalogTransaction transaction,
                        bool cascade) {
   std::vector<duckdb::CatalogEntry*> readers;
   std::vector<std::string> lines;
-  absl::flat_hash_set<duckdb::idx_t> hidden;
+  irs::containers::FlatHashSet<duckdb::idx_t> hidden;
   auto& context = transaction.GetContext();
   for (const auto column : columns) {
     const auto& name = table.GetColumns().GetColumn(column).Name();
-    absl::flat_hash_set<duckdb::idx_t> seen;
+    irs::containers::FlatHashSet<duckdb::idx_t> seen;
     for (const auto& edge : DirectDependents(transaction, table)) {
       auto& dependent = *edge.dependent;
       if (!seen.insert(dependent.oid).second) {
@@ -1947,18 +1959,51 @@ void FollowColumnOids(duckdb::CatalogTransaction transaction,
   }
 }
 
+bool IsNested(duckdb::CatalogTransaction transaction,
+              const duckdb::CatalogEntry& schema) {
+  return !schema.Cast<duckdb::SchemaCatalogEntry>()
+            .GetParentSchemaPath(transaction)
+            .empty();
+}
+
+void CollectNamingDependents(duckdb::CatalogTransaction transaction,
+                             duckdb::CatalogEntry& subject,
+                             NamingDependents& dependents) {
+  for (const auto& edge : DirectDependents(transaction, subject)) {
+    if ((edge.part != Part::Owned ||
+         edge.dependent->type == duckdb::CatalogType::TRIGGER_ENTRY) &&
+        dependents.seen.insert(edge.dependent->oid).second) {
+      dependents.lines.push_back(DependsLine(*edge.dependent, subject));
+    }
+  }
+}
+
+void RefuseDependents(const duckdb::CatalogEntry& subject,
+                      const NamingDependents& dependents) {
+  if (!dependents.lines.empty()) {
+    ThrowDependents(subject, dependents.lines);
+  }
+}
+
 void FollowSchemaRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& schema,
                         const duckdb::Identifier& new_name,
                         std::vector<PendingDefault>& defaults) {
+  const bool nested = IsNested(transaction, schema);
+  NamingDependents dependents;
   std::vector<duckdb::CatalogEntry*> members;
   schema.Cast<Schema>().ScanMembers(
     transaction, [&](duckdb::CatalogEntry& member) {
-      if (!member.internal &&
-          member.type != duckdb::CatalogType::SCHEMA_ENTRY) {
+      if (member.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        CollectNestedDependents(transaction, member, dependents);
+      } else if (!member.internal) {
+        if (nested) {
+          CollectNamingDependents(transaction, member, dependents);
+        }
         members.push_back(&member);
       }
     });
+  RefuseDependents(schema, dependents);
   for (auto* member : members) {
     Follow(transaction, *member, new_name, member->name, defaults);
   }

@@ -635,7 +635,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeLatLngRect) {
   })");
 
   irs::geo::ShapeContainer shape;
-  json::ParseRegion(json.value(), shape);
+  irs::tests::ParseRegion(json.value(), shape);
   ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
 
   {
@@ -752,7 +752,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizePolygon) {
   })");
 
   irs::geo::ShapeContainer shape;
-  json::ParseRegion(json.value(), shape);
+  irs::tests::ParseRegion(json.value(), shape);
   ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
 
   {
@@ -871,7 +871,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeLineString) {
   })");
 
   irs::geo::ShapeContainer shape;
-  json::ParseRegion(json.value(), shape);
+  irs::tests::ParseRegion(json.value(), shape);
   ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polyline, shape.type());
 
   {
@@ -1000,7 +1000,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPolygon) {
   })");
 
   irs::geo::ShapeContainer shape;
-  json::ParseRegion(json.value(), shape);
+  irs::tests::ParseRegion(json.value(), shape);
   ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Polygon, shape.type());
 
   {
@@ -1055,7 +1055,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPoint) {
   })");
 
   irs::geo::ShapeContainer shape;
-  json::ParseRegion(json.value(), shape);
+  irs::tests::ParseRegion(json.value(), shape);
   ASSERT_EQ(irs::geo::ShapeContainer::Type::S2Multipoint, shape.type());
 
   {
@@ -1216,7 +1216,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizeMultiPolyLine) {
   })");
 
   irs::geo::ShapeContainer shape;
-  json::ParseRegion(json.value(), shape);
+  irs::tests::ParseRegion(json.value(), shape);
   ASSERT_EQ(ShapeContainer::Type::S2Multipolyline, shape.type());
 
   {
@@ -1299,7 +1299,7 @@ TEST(GeoJsonTokenizerSourceTest, tokenizePoint) {
   })");
 
   ShapeContainer shape;
-  json::ParseRegion(json.value(), shape);
+  irs::tests::ParseRegion(json.value(), shape);
   ASSERT_EQ(ShapeContainer::Type::S2Point, shape.type());
 
   {

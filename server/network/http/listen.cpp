@@ -108,6 +108,7 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
   const std::string_view url = spec.url;
   auto options = std::make_shared<HttpListenOptions>();
   options->https = https;
+  std::string_view alone;
   for (const auto& [key, value] : params) {
     if (key == "api") {
       const auto* api = Registry<http::Api>::Find(value);
@@ -115,6 +116,9 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
         SDB_FATAL(
           GENERAL, "unknown api '", value, "' in endpoint '", url,
           "' (known: ", absl::StrJoin(Registry<http::Api>::Names(), ", "), ")");
+      }
+      if (api->own_listener || !api->login) {
+        alone = value;
       }
       if (!absl::c_linear_search(options->apis, api)) {
         options->apis.push_back(api);
@@ -152,6 +156,11 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
     SDB_FATAL(GENERAL, "http endpoint '", url,
               "' requires ?api= (e.g. ?api=es); there is no default api");
   }
+  if (!alone.empty() && options->apis.size() > 1) {
+    SDB_FATAL(GENERAL, "api '", alone, "' in endpoint '", url,
+              "' needs a listener of its own: serve the other apis on "
+              "another endpoint");
+  }
   return options;
 }
 
@@ -184,6 +193,8 @@ class HttpListener final : public AcceptorBase {
     _deps.max_connections =
       spec.max_connections.value_or(context.max_connections);
     _deps.max_body_bytes = http::MaxBodyBytes(options.apis);
+    _deps.login = absl::c_all_of(
+      options.apis, [](const http::Api* api) { return api->login; });
     _deps.cancel = &context.cancel;
     _deps.sessions = &context.sessions;
     _deps.cors_origins = _cors_origins;
@@ -220,15 +231,15 @@ std::unique_ptr<AcceptorBase> ListenHttp(const ListenContext& context,
   const std::string_view database = options.database.empty()
                                       ? irs::StaticStrings::kDefaultDatabase
                                       : std::string_view{options.database};
-  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
-        database, [](const catalog::DatabaseCatalogEntry&) {})) {
-    SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
-              "' does not exist");
-  }
   for (const auto* api : options.apis) {
     if (api->start) {
       api->start(spec);
     }
+  }
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+        database, [](const catalog::DatabaseCatalogEntry&) {})) {
+    SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
+              "' does not exist");
   }
   SetTimeouts();
   return std::make_unique<HttpListener>(context, spec);

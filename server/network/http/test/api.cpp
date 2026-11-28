@@ -35,16 +35,25 @@ std::unique_ptr<HttpHandler> Handler() {
 }
 
 constexpr auto kRoutes = std::to_array<Route>({
-  {HttpMethod::Post, "/_test/echo", Handler<Endpoint::Echo>},
-  {HttpMethod::Get, "/_test/ping", Handler<Endpoint::Ping>},
-  {HttpMethod::Get, "/_test/bytes", Handler<Endpoint::Bytes>},
-  {HttpMethod::Post, "/_test/fuzz", Handler<Endpoint::Fuzz>},
-  {HttpMethod::Get, "/_test/status", Handler<Endpoint::Status>},
-  {HttpMethod::Get, "/_test/session_user", Handler<Endpoint::SessionUser>},
-  {HttpMethod::Get, "/_test/is_superuser", Handler<Endpoint::IsSuperuser>},
+  {HttpMethod::Post, "/test/echo", Handler<Endpoint::Echo>},
+  {HttpMethod::Get, "/test/ping", Handler<Endpoint::Ping>},
+  {HttpMethod::Get, "/test/bytes", Handler<Endpoint::Bytes>},
+  {HttpMethod::Post, "/test/fuzz", Handler<Endpoint::Fuzz>},
+  {HttpMethod::Get, "/test/status", Handler<Endpoint::Status>},
+  {HttpMethod::Get, "/test/session_user", Handler<Endpoint::SessionUser>},
+  {HttpMethod::Get, "/test/is_superuser", Handler<Endpoint::IsSuperuser>},
+  {HttpMethod::Post, "/test/copy", Handler<Endpoint::Copy>,
+   SessionScope::Request},
 });
 
 SDB_HTTP_API kTest{"test", kRoutes, kEsMaxBodyBytes};
+
+constexpr auto kOpenRoutes = std::to_array<Route>({
+  {HttpMethod::Get, "/test/ping", Handler<Endpoint::Ping>},
+  {HttpMethod::Get, "/test/session_user", Handler<Endpoint::SessionUser>},
+});
+
+SDB_HTTP_API kOpen{"test-open", Api{.routes = kOpenRoutes, .login = false}};
 
 }  // namespace
 }  // namespace sdb::network::http::test

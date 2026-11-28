@@ -231,14 +231,13 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"typcollation">([](const auto& row) { return row.Base().collation; }));
 
   static constexpr auto kRowType = Shape<kSql, const duckdb::CatalogEntry>(
-    Col<"oid">([](const auto& relation) { return RowTypeOid(relation.oid); }),
+    Col<"oid">([](const auto& relation) { return RowTypeOid(relation); }),
     Col<"typname">(&duckdb::CatalogEntry::name),
     Col<"typnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
     Col<"typowner">(
       [](const auto& relation) { return relation.permissions.owner; }),
-    Col<"typarray">([](const auto& relation) {
-      return TypeArrayOid(RowTypeOid(relation.oid));
-    }),
+    Col<"typarray">(
+      [](const auto& relation) { return TypeArrayOid(RowTypeOid(relation)); }),
     TypeColumns([](const auto&) -> const BuiltinType& { return kComposite; },
                 [](const auto&) { return kComposite.align; }),
     kTypeTraits, Col<"typrelid">(&duckdb::CatalogEntry::oid),
@@ -292,7 +291,8 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     requires std::is_same_v<Relation, duckdb::TableCatalogEntry> ||
              std::is_same_v<Relation, duckdb::ViewCatalogEntry>
   void Row(const Relation& relation) {
-    const auto oid = RowTypeOid(relation.oid);
+    const auto oid = relation.row_type_oid;
+    SDB_ASSERT(oid != kInvalidOid);
     Emit<kRowType>(relation, Visible(oid));
     Emit<kArrayType>({relation, oid, kComposite.align, nullptr, _arrays},
                      Visible(TypeArrayOid(oid)));

@@ -335,8 +335,7 @@ void SeekBackwardsAndNextFive(const irs::ColReader& reader,
 irs::ColumnWriter& OpenBlobColumnSmallRg(irs::ColWriter& w, irs::field_id id,
                                          uint32_t row_group_size) {
   return w.OpenColumn(id, duckdb::LogicalType::BLOB,
-                      /*skip_validity=*/false, row_group_size,
-                      duckdb::CompressionType::COMPRESSION_AUTO);
+                      {.row_group_size = row_group_size});
 }
 
 }  // namespace
@@ -710,7 +709,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_dense_column_dense_mask) {
     EXPECT_EQ(col->RowCount(), kDocsCount);
     // Multi-row-group: the writer must have produced >1 data RG given the
     // small row_group_size we chose.
-    EXPECT_GT(col->DataRgCount(), 1u);
+    EXPECT_GT(col->DataBlocks().size(), 1u);
 
     // Full scan: every doc visited, payload always empty.
     {
@@ -812,7 +811,7 @@ TEST_P(IndexColumnTestCase,
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
     EXPECT_EQ(col->RowCount(), kDocsCount);
-    EXPECT_GT(col->DataRgCount(), 1u);
+    EXPECT_GT(col->DataBlocks().size(), 1u);
 
     VisitAndExpect(reader, *col, kDocsCount, always_present, MakePayload);
     FetchAndExpect(reader, *col, kDocsCount, always_present, MakePayload);
@@ -939,7 +938,7 @@ TEST_P(IndexColumnTestCase,
     ASSERT_TRUE(reader.HasColumn(kId));
     EXPECT_EQ(col->RowCount(), kDocsCount);
     // 4096 rows / 1024 per RG -> 4 data RGs.
-    EXPECT_GT(col->DataRgCount(), 1u);
+    EXPECT_GT(col->DataBlocks().size(), 1u);
 
     VisitAndExpect(reader, *col, kDocsCount, always_present, same_payload);
     FetchAndExpect(reader, *col, kDocsCount, always_present, same_payload);
@@ -1045,7 +1044,7 @@ TEST_P(IndexColumnTestCase,
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
     EXPECT_EQ(col->RowCount(), kDocsCount);
-    EXPECT_GT(col->DataRgCount(), 1u);
+    EXPECT_GT(col->DataBlocks().size(), 1u);
 
     // Full scan: every doc visited in order, decoded payload matches.
     {
@@ -1376,7 +1375,7 @@ TEST_P(IndexColumnTestCase,
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
     EXPECT_EQ(col->RowCount(), kDocsCount);
-    EXPECT_GT(col->DataRgCount(), 1u);
+    EXPECT_GT(col->DataBlocks().size(), 1u);
 
     // Full scan smoke check: cs Reader's data-side scan runs without
     // throwing and reports payloads for present docs. The data-side

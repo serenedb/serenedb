@@ -47,6 +47,11 @@ class EmptyTermReader final : public irs::TermReader {
   }
 
   SeekTermIterator::ptr iterator(
+    const LevenshteinPrefixAcceptor&) const noexcept final {
+    return SeekTermIterator::empty();
+  }
+
+  SeekTermIterator::ptr iterator(
     const RegexpConjunction&) const noexcept final {
     return SeekTermIterator::empty();
   }
@@ -57,7 +62,9 @@ class EmptyTermReader final : public irs::TermReader {
 
   PostingMeta Lookup(bytes_view) const noexcept final { return {}; }
   void LookupBatch(size_t, TermAt, FoundTerm) const noexcept final {}
-  void VisitRange(bytes_view, bytes_view, RangeVisitor) const noexcept final {}
+  bool CoverRange(bytes_view, bytes_view, TermVisitor) const noexcept final {
+    return false;
+  }
 
   void ReadDocs(bytes_view, Acceptor acceptor) const noexcept final {}
   void ReadDocs(const PostingMeta&, Acceptor) const noexcept final {}

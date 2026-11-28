@@ -1,0 +1,22 @@
+control substitution on
+
+statement ok
+COPY (SELECT [[1::BIGINT]] AS a) TO '${__TEST_DIR__}/rpsd.parquet' (FORMAT PARQUET)
+
+query
+SELECT a FROM read_parquet('${__TEST_DIR__}/rpsd.parquet', schema = map {
+  'a': {name: 'a', type: 'BIGINT[][]', default_value: NULL},
+  'l': {name: 'l', type: 'BIGINT[][]', default_value: [range(100000)]}})
+WHERE l IS NOT NULL
+----
+a
+{{1}}
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/rpsd.parquet', schema = map {
+  'a': {name: 'a', type: 'BIGINT[][]', default_value: NULL},
+  'l': {name: 'l', type: 'BIGINT[][]', default_value: [range(100000)]}})
+WHERE l IS NULL
+----
+n
+0

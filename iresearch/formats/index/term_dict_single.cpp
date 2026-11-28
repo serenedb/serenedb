@@ -127,6 +127,7 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
   _meta.norm = head.text.norm;
   _meta.dict = {.layout = head.layout, .member = head.member};
   key_width = head.width;
+  single_valued = true;
   SDB_ENSURE(head.text.total_freq <= std::numeric_limits<uint32_t>::max(),
              "term dictionary: total frequency ", head.text.total_freq,
              " exceeds uint32_t::max");
@@ -139,13 +140,8 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
   }
   std::array<byte_type, kMaxRecordBytes> record{};
   std::memcpy(record.data(), head.record.data(), size);
-  if (PostingsReader::decode(record.data(), head.features, _single) != size ||
-      head.record_inline.size() != _single.inline_size) {
+  if (PostingsReader::decode(record.data(), head.features, _single) != size) {
     corrupted();
-  }
-  if (_single.inline_size != 0) {
-    _single.inline_data = owner.KeepInline(
-      ViewCast<byte_type>(std::string_view{head.record_inline}));
   }
 }
 
@@ -160,7 +156,12 @@ SeekTermIterator::ptr SingleTermReader::iterator(
 
 SeekTermIterator::ptr SingleTermReader::iterator(
   const LevenshteinAcceptor& a) const {
-  return SingleFor(*this, a);
+  return a.Visit([&](const auto& typed) { return SingleFor(*this, typed); });
+}
+
+SeekTermIterator::ptr SingleTermReader::iterator(
+  const LevenshteinPrefixAcceptor& a) const {
+  return a.Visit([&](const auto& typed) { return SingleFor(*this, typed); });
 }
 
 SeekTermIterator::ptr SingleTermReader::iterator(
@@ -182,11 +183,12 @@ void SingleTermReader::LookupBatch(size_t count, TermAt term,
   }
 }
 
-void SingleTermReader::VisitRange(bytes_view from, bytes_view to,
-                                  RangeVisitor visit) const {
+bool SingleTermReader::CoverRange(bytes_view from, bytes_view to,
+                                  TermVisitor visit) const {
   if ((from.empty() || from <= min()) && (to.empty() || min() < to)) {
     visit(min(), _single);
   }
+  return false;
 }
 
 PostingsHandles SingleTermReader::Handles() const noexcept {

@@ -46,10 +46,7 @@ struct ScramVerifier {
 struct Credential {
   std::optional<ScramVerifier> scram;
   std::optional<std::string> md5;
-  int64_t valid_until = 0;
 };
-
-bool PasswordExpired(const Credential& credential);
 
 class CredentialProvider {
  public:

@@ -72,13 +72,13 @@ A string operand is normally analyzed by the column's dictionary. The `::tokeniz
 
 ## Relationship to `VARCHAR`
 
-`TSQUERY` is reinterpret-compatible with `VARCHAR`, so a string flows into a `TSQUERY` position automatically (it is then analyzed as described above, unless its text is a [query expression](#query-text)). A `TSQUERY` only has meaning inside an `@@` predicate against an indexed column; it is not a general-purpose stored type.
+`TSQUERY` is reinterpret-compatible with `VARCHAR`, so a string flows into a `TSQUERY` position automatically (it is then analyzed as described above, unless its text is a [query expression](#query-text)). A `BYTEA` value flows in the same way, whether or not its bytes are valid UTF-8; only casting one that is not valid UTF-8 to `TSQUERY` outside an `@@` match is an error. A `TSQUERY` only has meaning inside an `@@` predicate against an indexed column; it is not a general-purpose stored type.
 
 ## Query text in a string {#query-text}
 
 A string on the right of `@@`, whether a literal or a bound parameter, runs as a query when its whole text is a query expression. Such text is made only of full-text constructor calls such as `ts_phrase`, `ts_like`, `ts_any` or `to_tsquery`, the `||`, `&&`, `!!`, `##` and `^` operators, casts to `TSQUERY` or to its modifiers (`::tokenize`, `::boost`, `::slop`, `::score`, `::merge`, `::min_match`), and constants. So `body @@ 'ts_like(''qu%'')'` is a `LIKE` match, not a search for the words `ts_like` and `qu`. Any other text is analyzed as words and never executed: text that names another function, a column or a subquery, and text such as `2024-10-05` whose value is not a `TSQUERY`.
 
-This is also the text a `TSQUERY` value with modifiers reads back as, through the `VARCHAR` cast or over the wire: `('fox red'::TSQUERY)::min_match(2)` reads back as `'fox red'::min_match(2)`, and that text sent as a parameter is the same query again, threshold included. Modifier values in the text are checked as they are in SQL, so a parameter whose text is `'lazy'::boost(-1)` fails with `boost() factor must be >= 0, got -1` instead of being searched as words.
+This is also the text a `TSQUERY` value with modifiers reads back as, through the `VARCHAR` cast or over the wire: `('fox red'::TSQUERY)::min_match(2)` reads back as `'fox red'::min_match(2)`, and that text sent as a parameter is the same query again, threshold included. Modifier values in the text are checked as they are in SQL, so a parameter whose text is `'lazy'::boost(-1)` fails with `boost() factor must be >= 0, got -1` instead of being searched as words. So are the argument names of `ts_levenshtein` and `ts_phrase`: `ts_levenshtein('le', 1, perfix := 'app')` fails with `ts_levenshtein has no argument named perfix`.
 
 Below, the string runs as two phrases, so `quick red fox` does not match although it has `fox`, and the parameter's text carries a threshold of all three words:
 

@@ -91,7 +91,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
   };
 
   void collect(irs::byte_type* stats, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (collector_finish) {
       collector_finish(stats, field, term);
     }
@@ -680,7 +680,7 @@ TEST(GeoDistanceFilterTest, query) {
       ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
         irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         irs::geo::coding::Options::Invalid, nullptr));
-      const auto dist = lhs.distanceFromCentroid(rhs.centroid());
+      const auto dist = irs::tests::DistanceFromCentroid(lhs, rhs.centroid());
       if (dist < 100 || dist > 2000) {
         continue;
       }
@@ -713,7 +713,7 @@ TEST(GeoDistanceFilterTest, query) {
       ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
         irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         irs::geo::coding::Options::Invalid, nullptr));
-      const auto dist = lhs.distanceFromCentroid(rhs.centroid());
+      const auto dist = irs::tests::DistanceFromCentroid(lhs, rhs.centroid());
       if (dist >= 2000) {
         continue;
       }
@@ -832,7 +832,7 @@ TEST(GeoDistanceFilterTest, query) {
       ASSERT_TRUE(ParseShape<irs::geo::Parsing::OnlyPoint>(
         irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         irs::geo::coding::Options::Invalid, nullptr));
-      const auto dist = lhs.distanceFromCentroid(rhs.centroid());
+      const auto dist = irs::tests::DistanceFromCentroid(lhs, rhs.centroid());
       if (dist <= 2000) {
         continue;
       }

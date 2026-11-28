@@ -51,8 +51,8 @@ class PieceTermIterator : public SeekTermIterator {
     : _field{&field},
       _matches{std::move(matches)},
       _payloads{std::move(payloads)},
-      _count{_matches.size()},
-      _filtered{true} {
+      _count{_matches.size()} {
+    SDB_ASSERT(Filtered());
     if constexpr (kHasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
     }
@@ -84,7 +84,7 @@ class PieceTermIterator : public SeekTermIterator {
   }
 
   SeekResult seek_ge(bytes_view target) final {
-    if (_filtered) {
+    if (Filtered()) {
       _at = static_cast<size_t>(
         absl::c_lower_bound(_matches, target,
                             [&](uint32_t entry, bytes_view term) {
@@ -117,7 +117,8 @@ class PieceTermIterator : public SeekTermIterator {
   }
 
  private:
-  size_t Entry() const noexcept { return _filtered ? _matches[_at] : _at; }
+  bool Filtered() const noexcept { return !_matches.empty(); }
+  size_t Entry() const noexcept { return Filtered() ? _matches[_at] : _at; }
 
   bool Stand() noexcept {
     if (_at >= _count) {
@@ -142,7 +143,6 @@ class PieceTermIterator : public SeekTermIterator {
   size_t _count;
   size_t _at = 0;
   Position _position = Position::Before;
-  bool _filtered = false;
 };
 
 template<typename A>
@@ -180,10 +180,8 @@ void PieceTermReader::Add(bytes_view term, const PostingMeta& meta) {
   SDB_ASSERT(_entries.empty() || TermOf(_entries.size() - 1) < term);
   _entries.push_back({.begin = static_cast<uint32_t>(_terms.size()),
                       .size = static_cast<uint32_t>(term.size()),
-                      .inline_at = static_cast<uint32_t>(_inline.size()),
                       .meta = meta});
   _terms.append(term);
-  _inline.append(meta.Inline());
 }
 
 void PieceTermReader::Seal(uint64_t docs, uint64_t total_freq) {
@@ -191,11 +189,6 @@ void PieceTermReader::Seal(uint64_t docs, uint64_t total_freq) {
              "piece: total frequency ", total_freq, " exceeds uint32_t::max");
   _docs = docs;
   _freq.value = static_cast<uint32_t>(total_freq);
-  _inline.append(term_dict::kSlack, 0);
-  for (auto& entry : _entries) {
-    entry.meta.inline_data =
-      entry.meta.inline_size == 0 ? nullptr : _inline.data() + entry.inline_at;
-  }
 }
 
 size_t PieceTermReader::LowerBound(bytes_view term) const noexcept {
@@ -227,7 +220,12 @@ SeekTermIterator::ptr PieceTermReader::iterator(const RegexpAcceptor& a) const {
 
 SeekTermIterator::ptr PieceTermReader::iterator(
   const LevenshteinAcceptor& a) const {
-  return Filtered(*this, a);
+  return a.Visit([&](const auto& typed) { return Filtered(*this, typed); });
+}
+
+SeekTermIterator::ptr PieceTermReader::iterator(
+  const LevenshteinPrefixAcceptor& a) const {
+  return a.Visit([&](const auto& typed) { return Filtered(*this, typed); });
 }
 
 SeekTermIterator::ptr PieceTermReader::iterator(
@@ -255,24 +253,24 @@ void PieceTermReader::LookupBatch(size_t count, TermAt term,
 }
 
 void PieceTermReader::ReadDocs(bytes_view term, Acceptor acceptor) const {
-  term_dict::ReadPostingDocs(*this, Lookup(term), acceptor);
+  ReadPostingDocs(*this, Lookup(term), acceptor);
 }
 
 void PieceTermReader::ReadDocs(const PostingMeta& meta,
                                Acceptor acceptor) const {
-  term_dict::ReadPostingDocs(*this, meta, acceptor);
+  ReadPostingDocs(*this, meta, acceptor);
 }
 
-void PieceTermReader::VisitRange(bytes_view from, bytes_view to,
-                                 RangeVisitor visit) const {
-  for (auto i = from.empty() ? 0 : LowerBound(from); i != _entries.size();
-       ++i) {
-    const auto term = TermOf(i);
-    if (!to.empty() && !(term < to)) {
-      return;
+bool PieceTermReader::CoverRange(bytes_view from, bytes_view to,
+                                 TermVisitor visit) const {
+  const size_t begin = from.empty() ? 0 : LowerBound(from);
+  const size_t end = to.empty() ? _entries.size() : LowerBound(to);
+  for (auto i = begin; i < end; ++i) {
+    if (!visit(TermOf(i), _entries[i].meta)) {
+      break;
     }
-    visit(term, _entries[i].meta);
   }
+  return false;
 }
 
 void PieceTermReader::SampleTerms(

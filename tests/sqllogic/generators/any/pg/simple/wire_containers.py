@@ -4,7 +4,6 @@ CAUSES = {
     "typmod": "Type modifiers are dropped or rejected",
     "numeric": "A bare numeric is DECIMAL(18,3)",
     "json_array": "json[] reads and prints text as one JSON array instead of an array literal",
-    "empty_bit": "An empty bit string becomes B'0'",
     "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
 }
 
@@ -39,7 +38,7 @@ TYPES = [
     ("uuid", ["'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'"]),
     ("json", ["'{\"a\": 1}'", "'[1, 2]'", "'\"s\"'"], {"json_array": {"empty", "nested"}}),
     ("bit(3)", ["B'101'", "B'000'"]),
-    ("varbit", ["B'1'", "B''"], {"empty_bit": VALUED}),
+    ("varbit", ["B'1'", "B''"]),
     ("inet", ["'192.168.0.1'", "'::1/128'"]),
     ("cidr", ["'10.0.0.0/8'"]),
     ("macaddr", ["'08:00:2b:01:02:03'"]),

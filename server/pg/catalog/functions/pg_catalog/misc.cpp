@@ -46,6 +46,7 @@
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
+#include <duckdb/execution/operator/helper/physical_reset.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -624,32 +625,53 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
   const auto& caller = duckdb::Role(state);
-  duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool,
-                                   duckdb::string_t>(
-    args.data[0], args.data[1], args.data[2], result, args.size(),
-    [&](duckdb::string_t name, duckdb::string_t value,
-        bool is_local) -> duckdb::string_t {
-      const duckdb::Identifier setting{AsView(name)};
-      if constexpr (kSecurityDefinerBody) {
-        if (const auto access = duckdb::Settings::GetAccess(context, setting);
-            access && access->session_identity) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-            ERR_MSG("cannot set parameter \"", GetOriginalName(AsView(name)),
-                    "\" within security-definer function"));
-        }
+  absl::MutexLock lock{&ConnectionContext::Get(context).SettingWritesMutex()};
+  const auto names = args.data[0].Values<duckdb::string_t>();
+  const auto values = args.data[1].Values<duckdb::string_t>();
+  const auto locals = args.data[2].Values<bool>();
+  const auto apply = [&](duckdb::idx_t row) {
+    const auto name = names[row];
+    if (!name.IsValid()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                      ERR_MSG("SET requires parameter name"));
+    }
+    const duckdb::Identifier setting{AsView(name.GetValue())};
+    if constexpr (kSecurityDefinerBody) {
+      if (const auto access = duckdb::Settings::GetAccess(context, setting);
+          access && access->session_identity) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("cannot set parameter \"",
+                                GetOriginalName(AsView(name.GetValue())),
+                                "\" within security-definer function"));
       }
-      duckdb::PhysicalSet::SetVariable(
-        context, setting,
-        is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::AUTOMATIC,
-        duckdb::Value{value}, true, &caller);
-      duckdb::Value current;
-      const bool ok = context.TryGetCurrentSetting(setting, current);
-      SDB_ASSERT(ok);
-      return duckdb::StringVector::AddString(
-        result,
-        duckdb::Settings::FormatDisplayValue(context, current).ToString());
-    });
+    }
+    const auto local = locals[row];
+    const auto scope = local.IsValid() && local.GetValue()
+                         ? duckdb::SetScope::LOCAL
+                         : duckdb::SetScope::AUTOMATIC;
+    if (const auto value = values[row]; value.IsValid()) {
+      duckdb::PhysicalSet::SetVariable(context, setting, scope,
+                                       duckdb::Value{value.GetValue()}, true,
+                                       &caller);
+    } else {
+      duckdb::PhysicalReset::ResetVariable(context, setting, scope, true,
+                                           &caller);
+    }
+    duckdb::Value current;
+    const bool ok = context.TryGetCurrentSetting(setting, current);
+    SDB_ASSERT(ok);
+    return duckdb::Settings::FormatDisplayValue(context, current).ToString();
+  };
+  if (absl::c_all_of(args.data, [](const duckdb::Vector& vector) {
+        return vector.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR;
+      })) {
+    result.Reference(duckdb::Value{apply(0)}, duckdb::count_t(args.size()));
+    return;
+  }
+  auto out = duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    out.WriteValue(duckdb::string_t{apply(row)});
+  }
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> BindSetConfig(
@@ -1611,6 +1633,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{
       {text, text, boolean}, text, SetConfigFunction<false>};
     function.SetBindCallback(BindSetConfig);
+    function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     function.SetFallible();
     function.SetRequiresOrderedExecution(true);
     ExtendScalar(loader, "set_config", VOLATILE, nullptr, {function});

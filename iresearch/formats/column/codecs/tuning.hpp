@@ -1,0 +1,43 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <magic_enum/magic_enum.hpp>
+
+#include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/hint.hpp"
+#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+
+namespace irs::codecs {
+namespace numeric {
+
+inline constexpr uint8_t kLongRuns = 1;
+
+}  // namespace numeric
+
+struct ColumnTuning {
+  Hint hints[magic_enum::enum_count<CodecType>()];
+  StringTuning strings;
+  uint32_t dictionary_entries = 0;
+  uint32_t row_group = 0;
+};
+
+}  // namespace irs::codecs

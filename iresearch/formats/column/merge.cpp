@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/merge.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -40,6 +39,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 
 namespace irs {
 namespace {
@@ -163,7 +163,7 @@ std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
   std::span<const MergeSource> sources,
   const IndexFieldOptions* field_options) {
   std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
-  absl::flat_hash_set<field_id> seen_ids;
+  containers::FlatHashSet<field_id> seen_ids;
   for (const auto& s : sources) {
     if (!s.col_reader) {
       continue;
@@ -252,9 +252,15 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                         ? field_options->GetColumnOptions(field_id_v)
                         : ColumnOptions{};
 
-    auto& cw =
-      output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
-                        row_group_size, opts.compression);
+    auto& cw = output.OpenColumn(
+      field_id_v, first_col->Type(),
+      {
+        .skip_validity = opts.skip_validity,
+        .row_group_size = row_group_size,
+        .compression = opts.compression,
+        .codec_params =
+          field_options ? field_options->CodecParams(opts) : ColCodecParams{},
+      });
     const bool annotated =
       field_options && !field_options->AnnFields(field_id_v).empty();
     if (annotated) {

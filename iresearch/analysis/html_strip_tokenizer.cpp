@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <util/utf.h>
 
 #include <algorithm>
 #include <array>
@@ -32,7 +33,6 @@
 #include <string_view>
 
 #include "iresearch/analysis/text/classify/block_masks.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -402,8 +402,9 @@ class TextRuns {
   }
 
   void AppendCodePoint(uint32_t cp) {
-    auto* out = reinterpret_cast<byte_type*>(Grow(utf8_utils::kMaxCharSize));
-    _word_size -= utf8_utils::kMaxCharSize - utf8_utils::FromChar32(cp, out);
+    auto* out = Grow(re2::UTFmax);
+    const re2::Rune rune = cp;
+    _word_size -= re2::UTFmax - re2::runetochar(out, &rune);
   }
 
   const char* ExtendWord(const char* p, const char* last) {

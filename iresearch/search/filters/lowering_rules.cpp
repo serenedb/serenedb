@@ -96,7 +96,7 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   const auto target = TargetOf(node);
   bstring buf;
   auto lowered = ExecuteWildcard(
-    buf, node.options().term,
+    buf, node.options().term, node.options().bytes,
     [&](bytes_view term) { return target.Term(term); },
     [&](bytes_view prefix) { return target.Prefix(prefix); },
     [](bytes_view) -> Filter::ptr { return nullptr; });
@@ -124,18 +124,15 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
 }
 
 bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
-                                     const OptimizeContext&) {
+                                     const OptimizeContext& ctx) {
   auto& node = irs::utils::downCast<ByEditDistance>(*slot);
   const auto& opts = node.options();
-  if (opts.max_distance != 0) {
+  if (opts.max_distance != 0 ||
+      (opts.starts_with && !ScoreIsIgnored(node, ctx) &&
+       !ScoreIsConstant(node, ctx))) {
     return false;
   }
-  auto filter = TargetOf(node).Make<ByTerm>();
-  auto& term = filter->mutable_options()->term;
-  term.reserve(opts.prefix.size() + opts.term.size());
-  term += opts.prefix;
-  term += opts.term;
-  slot = std::move(filter);
+  slot = LowerExactLevenshtein(TargetOf(node), opts);
   return true;
 }
 
@@ -237,8 +234,11 @@ void LowerNode(Filter::ptr& slot) {
                        node.GetBoost());
   } else if (type == Type<ByEditDistance>::id()) {
     auto& node = irs::utils::downCast<ByEditDistance>(*slot);
-    slot = LowerLevenshtein(node.field_id(), node.dict(), node.options(),
-                            node.GetBoost());
+    const auto& opts = node.options();
+    slot =
+      opts.max_distance == 0
+        ? LowerScoredExactLevenshtein(TargetOf(node), opts)
+        : LowerLevenshtein(node.field_id(), node.dict(), opts, node.GetBoost());
   }
 }
 

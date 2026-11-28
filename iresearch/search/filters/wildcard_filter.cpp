@@ -41,7 +41,8 @@ Filter::ptr LowerWildcard(irs::field_id id, DictRef dict,
     .id = id, .dict = dict, .boost = boost, .merge = options.merge};
   bstring buf;
   return ExecuteWildcard(
-    buf, options.term, [&](bytes_view term) { return target.Term(term); },
+    buf, options.term, options.bytes,
+    [&](bytes_view term) { return target.Term(term); },
     [&](bytes_view prefix) { return target.Prefix(prefix); },
     [&](bytes_view pattern) {
       return target.Automaton(pattern, WildcardPattern(options.bytes));
@@ -62,7 +63,7 @@ Filter::ptr CreateByWildcard(irs::field_id id, DictRef dict, bytes_view term,
 TermPredicate::ptr ByWildcard::CompileTermPredicate() const {
   bstring buf;
   return ExecuteWildcard(
-    buf, options().term,
+    buf, options().term, options().bytes,
     [](bytes_view term) -> TermPredicate::ptr {
       return MakeTermPredicate(
         [term = bstring{term}](bytes_view key) { return key == term; });

@@ -85,6 +85,13 @@ irs::containers::NodeHashMap<FunctionKey,
 std::vector<StaticView> gViews;
 irs::containers::FlatHashMap<Key, const StaticView*> gViewsByName;
 irs::containers::FlatHashMap<duckdb::idx_t, const StaticView*> gViewsByOid;
+irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> gRuleRelations;
+
+void AddRule(duckdb::idx_t rule, duckdb::idx_t relation) {
+  [[maybe_unused]] const auto inserted =
+    gRuleRelations.try_emplace(rule, relation).second;
+  SDB_ASSERT(inserted);
+}
 
 std::string_view ViewSql(const SystemView& view) {
   const auto* written =
@@ -101,6 +108,8 @@ void AddSystemView(duckdb::Parser& parser, const SystemView& view) {
   info->sql = ViewSql(view);
   info->temporary = true;
   info->internal = true;
+  info->rule_oid = view.rule;
+  info->row_type_oid = static_cast<duckdb::idx_t>(view.row_type);
   parser.statements.clear();
   info->query = duckdb::CreateViewInfo::ParseSelect(parser, info->sql);
   const auto& stored = gViews.emplace_back(
@@ -108,6 +117,7 @@ void AddSystemView(duckdb::Parser& parser, const SystemView& view) {
     SystemPermissions(view.superuser_only), view.oid, view.options);
   gViewsByName.emplace(Key{view.schema, view.name}, &stored);
   gViewsByOid.emplace(view.oid, &stored);
+  AddRule(view.rule, view.oid);
 }
 
 duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
@@ -208,6 +218,9 @@ void InitSystemTables() {
   for (auto* table : gTables) {
     table->Init();
     gTablesByName.emplace(Key{table->Sql().schema, table->Sql().name}, table);
+    if (table->Sql().relkind == 'v') {
+      AddRule(table->Sql().rule, table->Sql().oid);
+    }
   }
   for (auto* table : kSystemTableFunctions) {
     table->Init();
@@ -323,6 +336,11 @@ const StaticView* GetSystemView(std::string_view schema,
 const StaticView* FindSystemView(duckdb::idx_t oid) {
   const auto it = gViewsByOid.find(oid);
   return it == gViewsByOid.end() ? nullptr : it->second;
+}
+
+duckdb::idx_t SystemRuleRelation(duckdb::idx_t rule) {
+  const auto it = gRuleRelations.find(rule);
+  return it == gRuleRelations.end() ? kInvalidOid : it->second;
 }
 
 duckdb::idx_t SystemRelationOid(std::string_view schema,

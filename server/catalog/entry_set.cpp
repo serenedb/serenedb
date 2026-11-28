@@ -21,7 +21,6 @@
 #include "catalog/entry_set.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 
 #include <duckdb/catalog/acl.hpp>
 #include <duckdb/catalog/catalog_entry/database_entry.hpp>
@@ -30,6 +29,7 @@
 #include <duckdb/catalog/catalog_entry/role_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_versions.hpp>
 #include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/catalog/schema_info.hpp>

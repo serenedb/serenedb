@@ -21,7 +21,6 @@
 #include "iresearch/search/filters/range_rules.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
 #include <iterator>
@@ -36,9 +35,11 @@
 #include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/granular_range_filter.hpp"
+#include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs::optimizer {
 namespace {
@@ -208,26 +209,6 @@ bool MergeComplementaryRanges(BooleanFilter& node, const OptimizeContext& ctx) {
   return true;
 }
 
-size_t EraseFilters(std::vector<Filter::ptr>& filters, auto predicate) {
-  auto tail = filters.begin();
-  for (auto it = tail, end = filters.end(); it != end; ++it) {
-    if (!predicate(**it)) {
-      if (tail != it) {
-        std::iter_swap(tail, it);
-      }
-      ++tail;
-    }
-  }
-  const auto erased = static_cast<size_t>(std::distance(tail, filters.end()));
-  filters.erase(tail, filters.end());
-  return erased;
-}
-
-bool AnyFilter(std::span<const Filter::ptr> filters, auto predicate) {
-  return absl::c_any_of(
-    filters, [&](const Filter::ptr& child) { return predicate(*child); });
-}
-
 bool Accepts(const ByRangeOptions& options, bytes_view term) noexcept {
   return RangeMinAcceptor{&options.range}(term) &&
          RangeMaxAcceptor{&options.range}(term);
@@ -245,35 +226,119 @@ const ByRangeOptions* AsRange(const Filter& child) noexcept {
            : nullptr;
 }
 
-field_id FieldOf(const Filter& child) noexcept {
-  if (AsPrefix(child) != nullptr) {
-    return irs::utils::downCast<ByPrefix>(child).field_id();
-  }
-  if (AsRange(child) != nullptr) {
-    return irs::utils::downCast<ByRange>(child).field_id();
-  }
-  return field_limits::invalid();
+bool IsFuzzy(const Filter& child) noexcept {
+  return child.type() == Type<ByEditDistance>::id();
 }
 
-DictRef DictOf(const Filter& child) noexcept {
+const ByEditDistanceOptions& FuzzyOptions(const Filter& child) noexcept {
+  return irs::utils::downCast<ByEditDistance>(child).options();
+}
+
+const ByEditDistanceOptions* AsUncappedFuzzy(const Filter& child) noexcept {
+  if (!IsFuzzy(child)) {
+    return nullptr;
+  }
+  const auto& options = FuzzyOptions(child);
+  return options.max_terms == 0 ? &options : nullptr;
+}
+
+bool AtDistanceZero(const ByEditDistanceOptions& options,
+                    bytes_view term) noexcept {
+  if (!term.starts_with(options.prefix)) {
+    return false;
+  }
+  term.remove_prefix(options.prefix.size());
+  return options.starts_with ? term.starts_with(options.term)
+                             : term == bytes_view{options.term};
+}
+
+struct FieldKey {
+  field_id field = field_limits::invalid();
+  DictRef dict;
+
+  bool operator==(const FieldKey&) const = default;
+};
+
+FieldKey KeyOf(const Filter& child) noexcept {
   if (AsPrefix(child) != nullptr) {
-    return irs::utils::downCast<ByPrefix>(child).dict();
+    const auto& prefix = irs::utils::downCast<ByPrefix>(child);
+    return {.field = prefix.field_id(), .dict = prefix.dict()};
   }
   if (AsRange(child) != nullptr) {
-    return irs::utils::downCast<ByRange>(child).dict();
+    const auto& range = irs::utils::downCast<ByRange>(child);
+    return {.field = range.field_id(), .dict = range.dict()};
+  }
+  if (IsFuzzy(child)) {
+    const auto& fuzzy = irs::utils::downCast<ByEditDistance>(child);
+    return {.field = fuzzy.field_id(), .dict = fuzzy.dict()};
   }
   return {};
 }
 
 bool CoversTerm(const Filter& child, const TermClause& clause) noexcept {
-  if (FieldOf(child) != clause.field || DictOf(child) != clause.dict) {
+  if (KeyOf(child) != FieldKey{.field = clause.field, .dict = clause.dict}) {
     return false;
   }
   if (const auto* prefix = AsPrefix(child); prefix != nullptr) {
     return bytes_view{clause.term}.starts_with(prefix->term);
   }
+  if (const auto* fuzzy = AsUncappedFuzzy(child); fuzzy != nullptr) {
+    return AtDistanceZero(*fuzzy, clause.term);
+  }
   const auto* range = AsRange(child);
   return range != nullptr && Accepts(*range, clause.term);
+}
+
+bool Covers(const Filter& wider, const Filter& narrower) noexcept {
+  if (KeyOf(wider) != KeyOf(narrower)) {
+    return false;
+  }
+  if (const auto* fuzzy = AsUncappedFuzzy(wider); fuzzy != nullptr) {
+    if (const auto* prefix = AsPrefix(narrower); prefix != nullptr) {
+      return fuzzy->starts_with && AtDistanceZero(*fuzzy, prefix->term);
+    }
+    if (!IsFuzzy(narrower)) {
+      return false;
+    }
+    const auto& other = FuzzyOptions(narrower);
+    return other.term == fuzzy->term && other.prefix == fuzzy->prefix &&
+           other.provider == fuzzy->provider &&
+           other.with_transpositions == fuzzy->with_transpositions &&
+           other.max_distance <= fuzzy->max_distance &&
+           (fuzzy->starts_with || !other.starts_with);
+  }
+  const auto* prefix = AsPrefix(wider);
+  return prefix != nullptr && IsFuzzy(narrower) &&
+         bytes_view{FuzzyOptions(narrower).prefix}.starts_with(prefix->term);
+}
+
+size_t DropRedundant(std::vector<Filter::ptr>& filters, bool required) {
+  std::vector<const Filter*> fuzzies;
+  for (const auto& child : filters) {
+    if (IsFuzzy(*child)) {
+      fuzzies.push_back(child.get());
+    }
+  }
+  if (fuzzies.empty()) {
+    return 0;
+  }
+  std::vector<const Filter*> live;
+  live.reserve(filters.size());
+  for (const auto& child : filters) {
+    live.push_back(child.get());
+  }
+  return EraseFilters(filters, [&](const Filter& child) {
+    const bool redundant =
+      absl::c_any_of(IsFuzzy(child) ? live : fuzzies, [&](const Filter* other) {
+        return other != &child &&
+               (required ? Covers(child, *other) : Covers(*other, child));
+      });
+    if (redundant) {
+      std::erase(live, &child);
+      std::erase(fuzzies, &child);
+    }
+    return redundant;
+  });
 }
 
 bool CoveredTerm(std::span<const Filter::ptr> filters,
@@ -295,8 +360,8 @@ class PrefixIndex {
     _map.reserve(count);
     for (const auto& child : filters) {
       if (const auto* prefix = AsPrefix(*child); prefix != nullptr) {
-        _map.try_emplace(Key{FieldOf(*child), DictOf(*child), prefix->term},
-                         Entry{child.get()});
+        const auto [field, dict] = KeyOf(*child);
+        _map.try_emplace(Key{field, dict, prefix->term}, Entry{child.get()});
       }
     }
     for (auto& [key, entry] : _map) {
@@ -317,7 +382,8 @@ class PrefixIndex {
     if (prefix == nullptr) {
       return false;
     }
-    const auto it = _map.find(Key{FieldOf(child), DictOf(child), prefix->term});
+    const auto [field, dict] = KeyOf(child);
+    const auto it = _map.find(Key{field, dict, prefix->term});
     SDB_ASSERT(it != _map.end());
     const auto& entry = it->second;
     return entry.first != &child ||
@@ -330,8 +396,7 @@ class PrefixIndex {
       return false;
     }
     const bytes_view term{prefix->term};
-    const auto field = FieldOf(child);
-    const auto dict = DictOf(child);
+    const auto [field, dict] = KeyOf(child);
     for (size_t size = 0; size <= term.size(); ++size) {
       if (_map.contains(Key{field, dict, term.substr(0, size)})) {
         return true;
@@ -348,7 +413,7 @@ class PrefixIndex {
   };
   using Key = std::tuple<field_id, DictRef, bytes_view>;
 
-  absl::flat_hash_map<Key, Entry> _map;
+  containers::FlatHashMap<Key, Entry> _map;
 };
 
 bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
@@ -359,14 +424,14 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
   bool changed = false;
   auto& excluded = node.Bucket(Occur::MustNot);
   PrefixIndex excluded_index;
-  const bool has_excluded = excluded_index.Build(excluded.filters, 1);
+  const bool has_excluded = excluded_index.Build(excluded.filters, 1) ||
+                            AnyFilter(excluded.filters, IsFuzzy);
   for (const auto occur : {Occur::Must, Occur::Should, Occur::MustNot}) {
     if (occur == Occur::Should && node.MinShouldMatch() > 1) {
       continue;
     }
     auto& bucket = node.Bucket(occur);
     const bool required = occur == Occur::Must;
-    const bool optional = occur == Occur::Should;
 
     if (occur != Occur::MustNot) {
       const auto before = bucket.terms.size();
@@ -382,7 +447,10 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
       }
       if (has_excluded &&
           EraseFilters(bucket.filters, [&](const Filter& child) {
-            return excluded_index.Covers(child);
+            return excluded_index.Covers(child) ||
+                   AnyFilter(excluded.filters, [&](const Filter& wider) {
+                     return Covers(wider, child);
+                   });
           }) != 0) {
         if (required) {
           empty_node = true;
@@ -412,14 +480,7 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
                    return index.Subsumed(child, required);
                  }) != 0;
     }
-    if (optional) {
-      auto& must = node.Bucket(Occur::Must);
-      const auto before = bucket.terms.size();
-      std::erase_if(bucket.terms, [&](const TermClause& clause) {
-        return CoveredTerm(must.filters, clause);
-      });
-      changed |= bucket.terms.size() != before;
-    }
+    changed |= DropRedundant(bucket.filters, required) != 0;
   }
   return changed;
 }

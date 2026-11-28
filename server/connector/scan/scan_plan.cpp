@@ -42,17 +42,20 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/search/explain/plan.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/column_id.h"
+#include "connector/explain_output.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
 #include "connector/row_position.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
+#include "connector/vector_explain.h"
 
 namespace sdb::connector {
 namespace {
@@ -63,6 +66,9 @@ std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
   }
   if (col_id == kInvertedIndexOffsetsId) {
     return MakeOffsetsType();
+  }
+  if (col_id == kInvertedIndexExplainId) {
+    return duckdb::LogicalType::VARIANT();
   }
   if (col_id == kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
@@ -340,37 +346,6 @@ void BuildDualFilters(ScanGlobalState& state,
   }
 }
 
-void AddDeferredColumnFilter(ScanGlobalState& state,
-                             DeferredColumnFilter&& deferred) {
-  using ColFilter = ScanGlobalState::ColFilter;
-  auto existing = absl::c_find_if(state.col_filters, [&](const ColFilter& cf) {
-    return cf.field == deferred.column && !cf.is_score && !cf.is_dynamic &&
-           !cf.optional && !cf.row_gather && cf.extract_path.empty() &&
-           cf.row_fields.empty();
-  });
-  if (existing != state.col_filters.end()) {
-    auto conjunction = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
-      duckdb::ExpressionType::CONJUNCTION_AND);
-    conjunction->GetChildrenMutable().push_back(
-      duckdb::ExpressionFilter::GetExpressionFilter(*existing->filter,
-                                                    "AddDeferredColumnFilter")
-        .expr->Copy());
-    conjunction->GetChildrenMutable().push_back(
-      std::move(duckdb::ExpressionFilter::GetExpressionFilter(
-                  *deferred.filter, "AddDeferredColumnFilter")
-                  .expr));
-    deferred.filter =
-      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(conjunction));
-  }
-  const auto& owned =
-    state.deferred_filters.emplace_back(std::move(deferred.filter));
-  auto& cf = existing != state.col_filters.end()
-               ? *existing
-               : state.col_filters.emplace_back();
-  cf.field = deferred.column;
-  BindExpressionFilter(cf, *owned, std::move(deferred.type));
-}
-
 std::optional<ColumnId> FetchableColumn(
   const ScanBindData& bind, const duckdb::ColumnIndex& column_index) {
   const auto bind_col = column_index.GetPrimaryIndex();
@@ -389,9 +364,6 @@ void ApplyDeferredClaim(ScanGlobalState& state, DeferredBuild&& built) {
   state.owned_where = std::move(built.filter);
   state.owned_index_only = std::move(built.index_only);
   state.owned_where_scorers = std::move(built.scorers);
-  for (auto& column_filter : built.column_filters) {
-    AddDeferredColumnFilter(state, std::move(column_filter));
-  }
   for (auto& dual : built.dual_filters) {
     const auto& owned =
       state.deferred_filters.emplace_back(std::move(dual.filter));
@@ -600,6 +572,8 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       if (const auto virtual_type = VirtualIndexColumnType(catalog_col_id)) {
         if (catalog_col_id == kInvertedIndexScoreId) {
           state.score_output_idx = proj;
+        } else if (catalog_col_id == kInvertedIndexExplainId) {
+          state.explain_output_idx = proj;
         }
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         state.projected_types.push_back(*virtual_type);
@@ -870,6 +844,41 @@ void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
   }
 }
 
+std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
+                                                       uint32_t seg) {
+  if (const auto* vs = g.vector_scorer) {
+    return std::make_unique<DistanceExplainer>(
+      (*g.reader)[seg], *vs, g.Bind().DisplayColumnName(vs->field_id));
+  }
+  const auto& seg_query = g.queries[seg];
+  SDB_ASSERT(seg_query && g.scorer_obj);
+  return irs::explain::MakePlan(*seg_query, *g.scorer_obj, g.explain_stats,
+                                *g.filter);
+}
+
+void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
+                       uint32_t seg, std::span<const irs::doc_id_t> docs,
+                       const duckdb::Vector* scores,
+                       duckdb::DataChunk& output) {
+  if (!g.ScanExplain()) {
+    return;
+  }
+  f.explain_rows.clear();
+  if (seg != f.explain_seg) {
+    f.explainer = MakeExplainer(g, seg);
+    f.explain_seg = seg;
+  }
+  const auto* returned =
+    scores ? duckdb::FlatVector::GetData<irs::score_t>(*scores) : nullptr;
+  for (size_t i = 0; i < docs.size(); ++i) {
+    f.explain_rows.push_back(f.explainer->Explain(
+      docs[i],
+      returned ? std::optional<irs::score_t>{returned[i]} : std::nullopt));
+  }
+  WriteExplanations(f.explain_rows, g.Bind(),
+                    output.data[g.explain_output_idx]);
+}
+
 void BuildOffsetsOutputs(ScanGlobalState& g) {
   for (const auto& req : g.Bind().offsets.requests) {
     if (req.bind_column == duckdb::DConstants::INVALID_INDEX) {
@@ -901,6 +910,7 @@ void BuildFetchedCopy(ScanGlobalState& g) {
     }
   };
   produced(g.score_output_idx);
+  produced(g.explain_output_idx);
   produced(g.tableoid_output_idx);
   produced(g.doc_address_output_idx);
   for (const auto& output : g.offsets_outputs) {
@@ -936,6 +946,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
+  WriteChunkExplain(f, g, batch.seg, batch.docs, batch.score_vec, output);
   WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   if (g.ScanScore() && g.vector_scorer && g.vector_scorer->PerRow()) {

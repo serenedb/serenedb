@@ -27,6 +27,7 @@
 
 #include "filter.hpp"
 #include "iresearch/search/detail/term_acceptor.hpp"
+#include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
@@ -51,6 +52,10 @@ struct ByEditDistanceAllOptions {
   uint8_t max_distance{0};
 
   bool with_transpositions{false};
+
+  bool starts_with{false};
+
+  bool bytes{false};
 };
 
 struct ByEditDistanceOptions : ByEditDistanceAllOptions {
@@ -60,8 +65,10 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
   ScoreMergeType merge{ScoreMergeType::Max};
 
   bool operator==(const ByEditDistanceOptions& rhs) const noexcept {
-    return term == rhs.term && max_distance == rhs.max_distance &&
+    return term == rhs.term && prefix == rhs.prefix &&
+           max_distance == rhs.max_distance &&
            with_transpositions == rhs.with_transpositions &&
+           starts_with == rhs.starts_with && bytes == rhs.bytes &&
            max_terms == rhs.max_terms && merge == rhs.merge;
   }
 };
@@ -108,6 +115,8 @@ struct LevenshteinAutomatonOptions {
   uint32_t utf8_target_size{1};
   byte_type no_distance{1};
   bool with_transpositions{false};
+  bool starts_with{false};
+  bool bytes{false};
   bool with_ties{false};
   size_t max_terms{};
   ScoreMergeType merge{ScoreMergeType::Max};
@@ -115,13 +124,15 @@ struct LevenshteinAutomatonOptions {
   LevenshteinAutomatonOptions() = default;
   LevenshteinAutomatonOptions(const ParametricDescription& d,
                               ByEditDistanceAllOptions::pdp_f provider,
-                              bool with_transpositions, bytes_view prefix,
-                              bytes_view term, size_t max_terms);
+                              bool with_transpositions, bool starts_with,
+                              bool bytes, bytes_view prefix, bytes_view term,
+                              size_t max_terms);
 
   bool operator==(const LevenshteinAutomatonOptions& rhs) const noexcept {
     return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
            no_distance == rhs.no_distance &&
            with_transpositions == rhs.with_transpositions &&
+           starts_with == rhs.starts_with && bytes == rhs.bytes &&
            with_ties == rhs.with_ties && max_terms == rhs.max_terms &&
            merge == rhs.merge;
   }
@@ -150,5 +161,11 @@ class LevenshteinAutomatonFilter final
 
 Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
                              const ByEditDistanceOptions& opts, score_t boost);
+
+Filter::ptr LowerExactLevenshtein(const FieldTarget& target,
+                                  const ByEditDistanceOptions& opts);
+
+Filter::ptr LowerScoredExactLevenshtein(const FieldTarget& target,
+                                        const ByEditDistanceOptions& opts);
 
 }  // namespace irs

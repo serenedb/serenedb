@@ -20,8 +20,6 @@
 
 #include "replication/conninfo.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
@@ -36,6 +34,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -117,10 +117,10 @@ std::vector<std::string> SplitList(std::string_view value) {
   return absl::StrSplit(value, ',');
 }
 
-using Options = absl::flat_hash_map<std::string, std::string>;
+using Options = irs::containers::FlatHashMap<std::string, std::string>;
 
 bool ParseServiceFile(const std::string& path, std::string_view service,
-                      const absl::flat_hash_set<std::string>& keywords,
+                      const irs::containers::FlatHashSet<std::string>& keywords,
                       Options& options) {
   std::ifstream file{path};
   if (!file) {
@@ -164,7 +164,7 @@ bool ParseServiceFile(const std::string& path, std::string_view service,
   return found;
 }
 
-void ApplyService(const absl::flat_hash_set<std::string>& keywords,
+void ApplyService(const irs::containers::FlatHashSet<std::string>& keywords,
                   Options& options) {
   std::string service;
   if (const auto it = options.find("service"); it != options.end()) {
@@ -276,7 +276,7 @@ ConnInfo ParseConnInfo(std::string_view conninfo) {
     PQfreemem(error);
     InvalidConnInfo(reason);
   }
-  absl::flat_hash_set<std::string> keywords;
+  irs::containers::FlatHashSet<std::string> keywords;
   Options options;
   for (const auto* option = parsed.get(); option->keyword; ++option) {
     keywords.emplace(option->keyword);

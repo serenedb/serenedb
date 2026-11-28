@@ -45,8 +45,6 @@ class ApproxQuery : public QueryBuilderImpl<ApproxQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
  private:
   QueryBuilder::ptr _approx;
   score_t _boost;

@@ -38,6 +38,8 @@ class SingleTermReader final : public TermReader {
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
+  SeekTermIterator::ptr iterator(
+    const LevenshteinPrefixAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;
   SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final;
 
@@ -51,8 +53,8 @@ class SingleTermReader final : public TermReader {
   void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const final {
     ReadPostingDocs(*this, meta, acceptor);
   }
-  void VisitRange(bytes_view from, bytes_view to,
-                  RangeVisitor visit) const final;
+  bool CoverRange(bytes_view from, bytes_view to,
+                  TermVisitor visit) const final;
 
   PostingsHandles Handles() const noexcept final;
 

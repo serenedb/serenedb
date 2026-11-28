@@ -111,11 +111,12 @@ class Serened:
                  http=None):
         self.binary = str(binary)
         self.host = host
-        self.http = http
-        self.reserved = [reserve_port() for _ in range(2 if http else 1)]
+        self.http = (http,) if isinstance(http, str) else tuple(http or ())
+        self.reserved = [reserve_port() for _ in range(1 + len(self.http))]
         self.ports = [sock.getsockname()[1] for sock in self.reserved]
         self.port = self.ports[0]
-        self.http_port = self.ports[1] if http else None
+        self.http_ports = self.ports[1:]
+        self.http_port = self.http_ports[0] if self.http_ports else None
         self.owns_datadir = datadir is None
         self.datadir = datadir or tempfile.mkdtemp(prefix=prefix, dir=datadir_root)
         self.extra_args = list(extra_args)
@@ -135,8 +136,8 @@ class Serened:
 
     def argv(self):
         listen = f"postgres://{self.host}:{self.port}"
-        if self.http:
-            listen += f",http://{self.host}:{self.http_port}?{self.http}"
+        for params, port in zip(self.http, self.http_ports):
+            listen += f",http://{self.host}:{port}?{params}"
         return [self.binary, self.datadir, f"--listen={listen}",
                 f"--auth_timeout={self.auth_timeout}"] + self.extra_args
 
@@ -214,6 +215,7 @@ class Serened:
         return self.start(timeout=timeout)
 
     def stop(self, keep_datadir=False):
+        died = self.proc is not None and self.proc.poll() not in (None, 0)
         self.graceful_stop(timeout=30)
         self.kill()
         for sock in self.reserved:
@@ -224,8 +226,20 @@ class Serened:
             except OSError:
                 pass
             self._log_fh = None
+        if died:
+            self.keep_logs()
         if self.owns_datadir and not keep_datadir:
             shutil.rmtree(self.datadir, ignore_errors=True)
+
+    def keep_logs(self):
+        dest = os.environ.get("SDB_DRV_JUNIT")
+        if not dest or not self.log_path:
+            return
+        os.makedirs(dest, exist_ok=True)
+        for generation in range(1, self.generation + 1):
+            path = self.log_path if generation == 1 else f"{self.log_path}.{generation}"
+            if os.path.exists(path):
+                shutil.copy(path, os.path.join(dest, f"serened-{self.port}-{generation}.log"))
 
     def preserve_datadir(self, dest_root):
         os.makedirs(dest_root, exist_ok=True)

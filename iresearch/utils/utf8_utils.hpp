@@ -150,35 +150,6 @@ IRS_FORCE_INLINE inline uint32_t ToChar32(const byte_type*& it) noexcept {
   return ToChar32Impl<false>(it, nullptr);
 }
 
-inline constexpr uint32_t FromChar32(uint32_t cp, byte_type* begin) noexcept {
-  if (cp < 0x80) {
-    begin[0] = static_cast<byte_type>(cp);
-    return 1;
-  }
-  auto convert = [](uint32_t cp, uint32_t mask = 0x3F, uint32_t header = 0x80) {
-    return static_cast<byte_type>((cp & mask) | header);
-  };
-
-  if (cp < 0x800) {
-    begin[0] = convert(cp >> 6, 0x1F, 0xC0);
-    begin[1] = convert(cp);
-    return 2;
-  }
-
-  if (cp < 0x10000) {
-    begin[0] = convert(cp >> 12, 0xF, 0xE0);
-    begin[1] = convert(cp >> 6);
-    begin[2] = convert(cp);
-    return 3;
-  }
-
-  begin[0] = convert(cp >> 18, 0x7, 0xF0);
-  begin[1] = convert(cp >> 12);
-  begin[2] = convert(cp >> 6);
-  begin[3] = convert(cp);
-  return 4;
-}
-
 template<bool Checked, typename OutputIterator>
 inline bool ToUTF32(bytes_view data, OutputIterator&& out) {
   const auto* begin = data.data();

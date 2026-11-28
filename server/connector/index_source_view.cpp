@@ -127,7 +127,7 @@ void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
       cast_input.data[c].Reference(_tf_target.data[c]);
     }
   }
-  cast_input.SetCardinality(row_count);
+  cast_input.SetChildCardinality(row_count);
   for (duckdb::idx_t c = 0; c < _real_proj_slots.size(); ++c) {
     if (_cast_executors[c]) {
       _cast_executors[c]->ExecuteExpression(cast_input,

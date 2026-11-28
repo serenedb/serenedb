@@ -21,6 +21,7 @@
 #include <benchmark/benchmark.h>
 #include <stringzilla/utf8_norm/serial.h>
 #include <stringzilla/utf8_wordbreaks/serial.h>
+#include <util/utf.h>
 #if defined(__x86_64__)
 #include <stringzilla/utf8_norm/icelake.h>
 #include <stringzilla/utf8_norm/skylake.h>
@@ -38,7 +39,6 @@
 #include <iresearch/analysis/text/sz/stringzilla.hpp>
 #include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <iresearch/analysis/text/words/unicode.hpp>
-#include <iresearch/utils/utf8_utils.hpp>
 #include <random>
 #include <span>
 #include <string>
@@ -56,10 +56,9 @@ constexpr sz_normal_form_t kForm = sz_normal_form_nfc_k;
 
 using Values = std::vector<std::string>;
 
-std::string Encode(uint32_t cp) {
-  std::string out(irs::utf8_utils::kMaxCharSize, '\0');
-  out.resize(irs::utf8_utils::FromChar32(
-    cp, reinterpret_cast<irs::byte_type*>(out.data())));
+std::string Encode(re2::Rune cp) {
+  std::string out(re2::UTFmax, '\0');
+  out.resize(re2::runetochar(out.data(), &cp));
   return out;
 }
 

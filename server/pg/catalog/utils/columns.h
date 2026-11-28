@@ -157,10 +157,6 @@ std::vector<int16_t> ExpressionAttnums(
 
 std::string ExpressionText(const duckdb::ParsedExpression& expression);
 
-const duckdb::TableCatalogEntry& SiblingTable(
-  duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
-  const duckdb::Identifier& name);
-
 const duckdb::TableCatalogEntry& TriggerTable(
   duckdb::CatalogTransaction transaction,
   const duckdb::TriggerCatalogEntry& trigger);
@@ -174,7 +170,7 @@ template<typename R>
 const duckdb::UniqueConstraint* ReferencedKey(
   const duckdb::TableCatalogEntry& target, const R& attnums) {
   for (const auto& key : KeyIndexes(target)) {
-    if (absl::c_equal(KeyAttnums(target.GetColumns(), key), attnums)) {
+    if (absl::c_is_permutation(KeyAttnums(target.GetColumns(), key), attnums)) {
       return &key;
     }
   }

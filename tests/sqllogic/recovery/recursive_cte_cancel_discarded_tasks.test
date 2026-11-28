@@ -1,0 +1,26 @@
+statement ok
+SET threads = 4
+
+statement ok
+SET sdb_faults = 'recursive_cte_task_lost'
+
+statement ok
+SET statement_timeout = '500ms'
+
+statement error
+WITH RECURSIVE t(i, n) AS (SELECT range, 0 FROM range(100000) UNION ALL SELECT i, n + 1 FROM t WHERE n < 3) SELECT count(*) FROM t
+----
+db error: ERROR: canceling statement due to statement timeout
+
+
+statement ok
+RESET statement_timeout
+
+statement ok
+RESET sdb_faults
+
+query
+WITH RECURSIVE t(i, n) AS (SELECT range, 0 FROM range(100000) UNION ALL SELECT i, n + 1 FROM t WHERE n < 3) SELECT count(*) AS c FROM t
+----
+c
+400000

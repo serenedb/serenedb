@@ -73,6 +73,8 @@ constexpr auto kRoutes = std::to_array<Route>({
   {HttpMethod::Get, "/:index/_refresh", Handler<Endpoint::Refresh>},
   {HttpMethod::Get, "/:index/_count", Handler<Endpoint::Count>},
   {HttpMethod::Post, "/:index/_count", Handler<Endpoint::Count>},
+  {HttpMethod::Get, "/:index/_explain/:id", Handler<Endpoint::Explain>},
+  {HttpMethod::Post, "/:index/_explain/:id", Handler<Endpoint::Explain>},
   {HttpMethod::Get, "/:index/_search", Handler<Endpoint::Search>},
   {HttpMethod::Post, "/:index/_search", Handler<Endpoint::Search>},
   {HttpMethod::Get, "/_search/scroll", Handler<Endpoint::Scroll>},
@@ -80,7 +82,9 @@ constexpr auto kRoutes = std::to_array<Route>({
   {HttpMethod::Delete, "/_search/scroll", Handler<Endpoint::ClearScroll>},
 });
 
-SDB_HTTP_API kEs{"es", kRoutes, kEsMaxBodyBytes};
+SDB_HTTP_API kEs{"es", Api{.routes = kRoutes,
+                           .max_body_bytes = kEsMaxBodyBytes,
+                           .own_listener = true}};
 
 }  // namespace
 }  // namespace sdb::network::http::es

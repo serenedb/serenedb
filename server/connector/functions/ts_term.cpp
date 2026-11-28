@@ -47,7 +47,9 @@ void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
   };
   // SetupTermClause declines for unsupported column types (it is shared with
   // the speculative comparison path); under ts_* syntax that is a user error.
-  if (auto s = SetupTermClause(clause, column_info, value); !s.ok()) {
+  const auto exact = ExactColumnValue(column_info.logical_type, value);
+  SDB_ASSERT(exact);
+  if (auto s = SetupTermClause(clause, column_info, *exact); !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(s.message()),
       ERR_HINT("The value's type must match the column's indexed type."));

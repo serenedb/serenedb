@@ -306,6 +306,7 @@ void ClusterCatalog::Initialize(bool load_builtin) {
   _tablespaces.SetDefaults(
     duckdb::make_uniq<BuiltinTablespaces>(*this, _layout.engine));
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
+  _tablespaces.CreateDefaults(data);
   for (const auto* name : {"information_schema", "pg_catalog"}) {
     duckdb::CreateSchemaInfo info;
     info.SetQualifiedName(

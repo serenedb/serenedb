@@ -1,0 +1,132 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY pms_en AS split_text()
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE pms_merge (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX pms_merge_idx ON pms_merge
+  USING inverted(id, body pms_en);
+
+
+statement ok
+INSERT INTO pms_merge VALUES
+  (1, 'apple'), (2, 'apple avocado'), (3, 'apple apricot avocado'), (4, 'banana');
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE body @@ ts_starts_with('a')::merge('sum') ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	3
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE body @@ to_tsquery('a*')::merge('sum') ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	3
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE body @@ to_tsquery('/a.*/')::merge('sum') ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	3
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE body @@ ts_any(ARRAY[ts_starts_with('a')])::merge('sum') ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	3
+
+
+query
+SELECT count(*) AS n FROM pms_merge_idx
+WHERE body @@ to_tsquery('a*')::score('bm25(1.2, 0.75)');
+----
+n
+3
+
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE (body @@ ts_starts_with('a') AND NOT body @@ 'apricot')::merge('sum')
+ORDER BY id;
+----
+id	score
+1	1
+2	2
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE (body @@ ts_starts_with('app') OR body @@ ts_starts_with('avo'))
+ORDER BY id;
+----
+id	score
+1	1
+2	2
+3	2
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE (body @@ ts_starts_with('app') OR body @@ ts_starts_with('avo'))::merge('max')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE ((body @@ ts_starts_with('app') OR body @@ ts_starts_with('avo'))
+       AND NOT body @@ 'banana')::merge('max')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE body @@ ts_any(ARRAY[to_tsquery('app* OR avo*')])::merge('max')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1
+
+
+query
+SELECT id, BM25(pms_merge_idx.tableoid) AS score FROM pms_merge_idx
+WHERE body @@ to_tsquery('(app* OR avo*) AND NOT banana')::merge('max')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	1

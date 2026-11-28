@@ -87,7 +87,6 @@ struct FilterContext {
     search_path;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
-  WideRanges wide_ranges = WideRanges::Build;
   uint32_t* min_match = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
@@ -106,7 +105,6 @@ struct FilterContext {
       .search_path = search_path,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
-      .wide_ranges = wide_ranges,
       .min_match = min_match,
     };
   }
@@ -137,12 +135,6 @@ struct FilterContext {
   }
 
   FilterContext WithoutMinMatch() const { return WithMinMatch(nullptr); }
-
-  FilterContext Claimed() const {
-    FilterContext ctx = *this;
-    ctx.wide_ranges = WideRanges::Build;
-    return ctx;
-  }
 };
 
 inline uint32_t TakeMinMatch(const FilterContext& ctx) {
@@ -202,14 +194,6 @@ inline const duckdb::vector<duckdb::Value>& ListOrArrayChildren(
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-// For ts_* callers, where an unfilterable column type is a user error:
-// throws THROW_SQL_ERROR("Unsupported type id ... for filter").
-void ValidateFilterType(duckdb::LogicalTypeId type_id);
-
-bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
-duckdb::Value CastConstant(const duckdb::Value& value,
-                           duckdb::LogicalTypeId type_id);
-
 struct ArgError {
   std::string_view label;
   std::string_view hint;
@@ -217,63 +201,22 @@ struct ArgError {
 
 void GetVarcharArg(const duckdb::Expression& expr, std::string& out,
                    ArgError err);
+inline bool IsBlob(const duckdb::Expression& expr) {
+  return expr.GetReturnType().id() == duckdb::LogicalTypeId::BLOB;
+}
+inline bool ComparesBytes(const SearchColumnInfo& column_info,
+                          const duckdb::BoundFunctionExpression& func) {
+  return column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
+         IsBlob(*func.GetChildren()[0]);
+}
 void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 
-// Dispatches `value` as the numeric type the sink indexed for `type_id`
-// (TIME_TZ order-preserving remap, raw INT64 for types BIGINT casts can't
-// represent) and invokes `f` with it.
-template<typename F>
-void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
-                      F&& f) {
-  if (value.type().id() != type_id) {
-    WithNumericValue(type_id, CastConstant(value, type_id), std::forward<F>(f));
-    return;
-  }
-  using enum duckdb::LogicalTypeId;
-  switch (type_id) {
-    case TINYINT:
-    case SMALLINT:
-    case INTEGER:
-    case UTINYINT:
-    case USMALLINT:
-    case DATE:
-      f(value.GetValue<int32_t>());
-      break;
-    case TIME_TZ:
-      f(term_dict::TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
-      break;
-    case BIGINT:
-    case UINTEGER:
-    case TIME:
-    case TIME_NS:
-    case TIMESTAMP:
-    case TIMESTAMP_TZ:
-    case TIMESTAMP_SEC:
-    case TIMESTAMP_MS:
-    case TIMESTAMP_NS:
-    case TIMESTAMP_TZ_NS:
-      if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
-        f(value.GetValueUnsafe<int64_t>());
-      } else {
-        f(value.GetValue<int64_t>());
-      }
-      break;
-    case FLOAT:
-      f(value.GetValue<float>());
-      break;
-    case DOUBLE:
-      f(value.GetValue<double>());
-      break;
-    default:
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("Expected a numeric value, got type id ",
-                static_cast<int>(type_id)),
-        ERR_HINT("The value's type must match the column's indexed type."));
-  }
-}
+void AddNumericRange(BoolTarget target, const FilterContext& ctx,
+                     const SearchColumnInfo& info, const duckdb::Value* min,
+                     bool min_strict, const duckdb::Value* max,
+                     bool max_strict);
 
 // Throws THROW_SQL_ERROR on invalid arguments: ts_* syntax is only
 // reachable through the inverted index, so there is no fallback plan.
@@ -326,12 +269,14 @@ struct LevenshteinArgs {
   std::string text;
   int64_t distance = 1;
   bool with_transpositions = true;
+  bool starts_with = false;
+  bool bytes = false;
   // Literal prefix that must match exactly; only the suffix beyond it
   // participates in edit-distance computation. Empty by default.
   std::string prefix;
 };
 LevenshteinArgs ParseLevenshteinArgs(
-  const duckdb::BoundFunctionExpression& func);
+  const duckdb::BoundFunctionExpression& func, const SearchColumnInfo& column);
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out,
                                size_t max_terms);

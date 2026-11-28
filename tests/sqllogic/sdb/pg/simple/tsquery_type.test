@@ -436,6 +436,24 @@ t
 ts_between(0.50, 2, true, false)
 
 query
+SELECT ts_le(123456789::REAL)::text AS t;
+----
+t
+ts_le('1.2345679e+08'::REAL)
+
+query
+SELECT ts_le(123456789::REAL)::text::tsquery::text AS t;
+----
+t
+ts_le('1.2345679e+08'::REAL)
+
+query
+SELECT ts_between(1e-5, 0.5::DOUBLE, true, true)::text AS t;
+----
+t
+ts_between('1e-05'::DOUBLE, '0.5'::DOUBLE, true, true)
+
+query
 SELECT tsquery_phrase(ts_phrase('a'), tsquery_phrase(ts_phrase('b'), 'c'::tsquery, 2), 3)::text AS t;
 ----
 t

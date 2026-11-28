@@ -26,7 +26,7 @@
 
 #include "network/credentials.h"
 #include "network/http/common.h"
-#include "network/pg/hba.h"
+#include "network/pg/login.h"
 
 namespace sdb::network::http {
 
@@ -95,11 +95,15 @@ class HttpAuthenticator {
   bool Enabled() const noexcept { return _credentials != nullptr; }
 
   AuthResult Authenticate(std::string_view authorization_header,
-                          bool is_loopback, pg::hba::ClientInfo client) const;
+                          const pg::LoginPeer& peer,
+                          std::string_view database) const;
 
  private:
-  AuthResult Basic(std::string_view payload, bool is_loopback,
-                   pg::hba::ClientInfo client) const;
+  AuthResult Basic(std::string_view payload, const pg::LoginPeer& peer,
+                   std::string_view database) const;
+  AuthResult Password(std::string_view user, std::string_view password,
+                      const pg::LoginPeer& peer,
+                      std::string_view database) const;
   AuthResult ApiKey(std::string_view payload) const;
   AuthResult Bearer(std::string_view payload) const;
 

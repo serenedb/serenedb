@@ -1,0 +1,61 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE snd_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE snd_${__DATABASE__}.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO snd_${__DATABASE__}.public.t VALUES (1), (2);
+
+
+query
+SELECT count(*) AS database_rows FROM snd_${__DATABASE__}.t;
+----
+database_rows
+2
+
+
+statement ok
+CREATE SCHEMA snd_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE snd_${__DATABASE__}.t (a INTEGER);
+
+
+statement ok
+INSERT INTO snd_${__DATABASE__}.t VALUES (7);
+
+
+query
+SELECT count(*) AS schema_rows FROM snd_${__DATABASE__}.t;
+----
+schema_rows
+1
+
+
+query
+SELECT count(*) AS database_rows FROM snd_${__DATABASE__}.public.t;
+----
+database_rows
+2
+
+
+statement ok
+DROP SCHEMA snd_${__DATABASE__} CASCADE;
+
+
+query
+SELECT count(*) AS database_rows FROM snd_${__DATABASE__}.t;
+----
+database_rows
+2
+
+
+statement ok
+DROP DATABASE snd_${__DATABASE__};

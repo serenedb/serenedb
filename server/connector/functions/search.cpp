@@ -36,6 +36,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -50,6 +51,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/tokenizer.h"
+#include "connector/explain_output.h"
 #include "connector/functions/minhash.h"
 #include "connector/functions/tokenizer_functions.h"
 #include "connector/functions/ts_common.hpp"
@@ -171,6 +173,14 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
     }
     loader.RegisterFunction(std::move(set));
   }
+  duckdb::ScalarFunctionSet explain{duckdb::Identifier{kExplain}};
+  explain.AddFunction(
+    duckdb::ScalarFunction({LT::BIGINT}, LT::VARIANT(), ScorerStubFn));
+  loader.RegisterFunction(std::move(explain));
+  duckdb::ScalarFunctionSet explain_json{duckdb::Identifier{kExplainJson}};
+  explain_json.AddFunction(
+    duckdb::ScalarFunction({LT::VARIANT()}, LT::JSON(), ExplainJsonFunction));
+  loader.RegisterFunction(std::move(explain_json));
 }
 
 // ts_offsets(col [, limit]) -> INTEGER[] of interleaved start/end pairs.
@@ -316,8 +326,11 @@ duckdb::optional_ptr<catalog::TokenizerCatalogEntry> FindTokenizer(
     retriever.ReplaceSearchPath(*search_path);
   }
   auto dict = retriever.GetEntry(
-    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                            duckdb::QualifiedName::Parse(name)},
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TOKENIZER_ENTRY,
+      duckdb::QualifiedName::Parse(
+        name,
+        duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context))},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return nullptr;
@@ -339,8 +352,11 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
 
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
   duckdb::BindScalarFunctionInput& input, std::string_view name) {
-  const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::TOKENIZER_ENTRY,
-                                       duckdb::QualifiedName::Parse(name)};
+  const duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::TOKENIZER_ENTRY,
+    duckdb::QualifiedName::Parse(
+      name, duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(
+              input.GetClientContext()))};
   auto entry =
     input.HasBinder()
       ? input.GetBinder().EntryRetriever().GetEntry(

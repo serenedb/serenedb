@@ -45,6 +45,9 @@ class RawDL final : public irs::ScorerBase<RawDL, void> {
   }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
 };
 
 }  // namespace irs

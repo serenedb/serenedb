@@ -164,3 +164,28 @@ SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMP
 ----
 n
 40000
+
+
+statement ok
+COPY (SELECT 1 AS a) TO '${__TEST_DIR__}/psp_ties_1.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT a FROM (VALUES (1), (3)) v(a)) TO '${__TEST_DIR__}/psp_ties_2.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT 2 AS a) TO '${__TEST_DIR__}/psp_ties_3.parquet' (FORMAT parquet);
+
+
+query
+SELECT a FROM read_parquet([
+  '${__TEST_DIR__}/psp_ties_1.parquet',
+  '${__TEST_DIR__}/psp_ties_2.parquet',
+  '${__TEST_DIR__}/psp_ties_3.parquet'
+]) ORDER BY a LIMIT 3;
+----
+a
+1
+1
+2

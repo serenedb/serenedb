@@ -21,8 +21,6 @@
 #include "catalog/boot.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <duckdb/common/error_data.hpp>
@@ -38,6 +36,8 @@
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/storage.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
@@ -114,7 +114,9 @@ std::vector<StoreListing> ListStores(std::vector<std::string> directories) {
 
 bool RemoveOrphans(std::span<const StoreListing> listings,
                    std::span<const LiveStorage> live) {
-  absl::flat_hash_map<std::string_view, absl::flat_hash_set<std::string>> owned;
+  irs::containers::FlatHashMap<std::string_view,
+                               irs::containers::FlatHashSet<std::string>>
+    owned;
   for (const auto& one : live) {
     one.storage->CollectFiles(owned[one.storage->Path()]);
   }
@@ -148,7 +150,7 @@ void OpenStorages(SereneDBCatalog& catalog, std::vector<LiveStorage>& live) {
 }
 
 void RequirePresent(std::span<const LiveStorage> live) {
-  absl::flat_hash_set<std::string_view> seen;
+  irs::containers::FlatHashSet<std::string_view> seen;
   std::vector<const LiveStorage*> first;
   for (const auto& one : live) {
     if (seen.insert(one.storage->Path()).second) {

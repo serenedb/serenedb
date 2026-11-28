@@ -353,6 +353,14 @@ SELECT id FROM docs_idx WHERE body @@ to_tsquery('+fox -red') ORDER BY id;
 id
 1
 
+# DOCS_TEST: to_tsquery_fuzzy_prefix
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ to_tsquery('trutl*~1') ORDER BY id;
+----
+id
+3
+
 # DOCS_TEST: plainto_tsquery
 # DOCS_TEST_BODY
 query
@@ -475,6 +483,47 @@ id	score
 2	0.38499752
 1	0.2449984
 3	0.2449984
+
+# DOCS_TEST: ts_explain
+# DOCS_TEST_BODY
+query
+SELECT id,
+       BM25(scored_idx.tableoid) AS score,
+       ts_explain(scored_idx.tableoid) AS why
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id
+LIMIT 1;
+----
+id	score	why
+2	0.38217354	{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":5},"df":{"value":3}},"value":0.5389965},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":29},"N":{"value":5}},"value":5.8},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":3},"k1":{"value":1.2}},"value":0.7090465}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.38217354}
+
+# DOCS_TEST: ts_explain_json
+# DOCS_TEST_BODY
+query
+SELECT id, ts_explain_json(ts_explain(scored_idx.tableoid)) AS why
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(scored_idx.tableoid) DESC, id
+LIMIT 1;
+----
+id	why
+2	{"value":0.38217354,"description":"weight(body:fox) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.5389965,"description":"idf, computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":5,"description":"N, number of rows with the column","details":[]},{"value":3,"description":"df, number of rows containing the term","details":[]}]},{"value":0.7090465,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":6,"description":"dl, length of the column in the row","details":[]},{"value":3,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]}]}]}
+
+# DOCS_TEST: ts_explain_paths
+# DOCS_TEST_BODY
+query
+SELECT id,
+       ts_explain(scored_idx.tableoid).inputs.idf.value::FLOAT AS idf,
+       ts_explain(scored_idx.tableoid).inputs.tf.inputs.freq.value::INTEGER AS freq
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(scored_idx.tableoid) DESC, id;
+----
+id	idf	freq
+2	0.5389965	3
+1	0.5389965	1
+3	0.5389965	1
 
 # DOCS_TEST: tfidf
 # DOCS_TEST_BODY
@@ -1083,12 +1132,23 @@ id
 query
 SELECT id
 FROM docs_idx
-WHERE body @@ ts_levenshtein('X', 1, true, 'quic')
+WHERE body @@ ts_levenshtein('X', 1, prefix := 'quic')
 ORDER BY id;
 ----
 id
 1
 2
+
+# DOCS_TEST: ts_levenshtein_starts_with
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_levenshtein('trutl', 1, starts_with := true)
+ORDER BY id;
+----
+id
+3
 
 # DOCS_TEST: ts_between_unbounded
 # DOCS_TEST_BODY

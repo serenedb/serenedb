@@ -78,8 +78,6 @@ class ShapeContainer final {
 
   bool equals(const ShapeContainer& other) const;
 
-  double distanceFromCentroid(const S2Point& other) const noexcept;
-
   S2Region* region() noexcept { return _data.get(); }
   const S2Region* region() const noexcept { return _data.get(); }
   Type type() const noexcept { return _type; }

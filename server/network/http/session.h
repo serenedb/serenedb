@@ -81,6 +81,7 @@ struct HttpServerContext {
   const CredentialProvider* credentials = nullptr;
   const http::ApiKeyValidator* api_keys = nullptr;
   const http::BearerValidator* bearer = nullptr;
+  bool login = true;
   // Shared live-connection counter + the cap this listener enforces (0 =
   // unlimited). Over-cap connections get a 503 then close.
   std::atomic<uint32_t>* active = nullptr;
@@ -125,6 +126,7 @@ class HttpSession final
       _deadline{exec.Context()},
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer},
+      _login{ctx.login},
       _active{ctx.active},
       _cancel{ctx.cancel},
       _sessions{ctx.sessions},
@@ -142,6 +144,7 @@ class HttpSession final
       _deadline{exec.Context()},
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer},
+      _login{ctx.login},
       _active{ctx.active},
       _cancel{ctx.cancel},
       _sessions{ctx.sessions},
@@ -163,7 +166,11 @@ class HttpSession final
     _sessions->Consume<false>(Run().ToFuture());
   }
 
-  void OnStop() {}
+  void OnStop() {
+    if (_cancel_token) {
+      _cancel_token->Cancel();
+    }
+  }
 
   // --- http::ResponseSink (handler-side backpressure) ----------------------
   yaclib::Task<> Drain() final { return AwaitSendBelowHighWater(); }
@@ -172,6 +179,11 @@ class HttpSession final
   // --- RequestContext -------------------------------------------------------
   duckdb::Connection& Connection() final {
     if (!_conn) {
+      if (!_login) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+          ERR_MSG("a request to an endpoint without logins runs no SQL"));
+      }
       const std::string_view dbname =
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
       const std::string_view user =
@@ -189,6 +201,7 @@ class HttpSession final
                         .role = role,
                         .database = dbname,
                         .database_id = database_id,
+                        .send_gate = &this->_send_gate,
                         .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
                         .cancel_registry = _cancel,
                         .client_backend = true});
@@ -243,6 +256,16 @@ class HttpSession final
       co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunStatement(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement) final {
+    try {
+      auto& conn = Connection();
+      co_return co_await Drive(
+        conn.Submit(std::move(statement), MaterializedQuery()));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
+    }
+  }
   PreparedCache& PreparedSlot(PreparedSlotId slot) final {
     const auto index = static_cast<size_t>(slot);
     SDB_ASSERT(index < _prepared.size());
@@ -268,6 +291,7 @@ class HttpSession final
     try {
       if (!pending->HasError()) {
         for (;;) {
+          this->ReleaseWriters();
           const auto status =
             pending->ExecuteTask([this] { _task->RequestRun(); });
           if (duckdb::IsObservable(status)) {
@@ -346,6 +370,13 @@ class HttpSession final
     _conn.reset();
   }
 
+  void BindUser(std::string user, SessionScope scope) {
+    if (_conn && (scope == SessionScope::Request || _conn_user != user)) {
+      ReleaseConnection();
+    }
+    _user = std::move(user);
+  }
+
   // Incremental llhttp feed over the recv channel. Returns the head event or
   // nullopt when the connection died mid-parse.
   yaclib::Task<std::optional<H1Event>> ReadHead();
@@ -363,6 +394,7 @@ class HttpSession final
   asio_ns::steady_timer _deadline;
   HttpRouter& _router;
   http::HttpAuthenticator _auth;
+  bool _login = true;
   std::atomic<uint32_t>* _active = nullptr;
   CancelRegistry* _cancel = nullptr;
   std::shared_ptr<CancelToken> _cancel_token;
@@ -382,8 +414,7 @@ class HttpSession final
   std::chrono::steady_clock::time_point _last_read;
   std::chrono::steady_clock::time_point _busy_at;
   size_t _written_seen = 0;
-  bool _peer_is_loopback = false;
-  pg::hba::ClientInfo _hba_client;
+  pg::LoginPeer _peer;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -445,9 +476,7 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    const auto client = this->ClientAddress();
-    _peer_is_loopback = client && client->is_loopback();
-    _hba_client = this->HbaClient();
+    _peer = this->Peer();
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
@@ -726,12 +755,10 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        auto client = _hba_client;
-        client.database =
-          _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-        auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), _peer_is_loopback, client);
-        _user = std::move(auth.context.user);
+        auto auth =
+          _login ? _auth.Authenticate(request.Header(HttpHeader::Authorization),
+                                      _peer, _database)
+                 : http::AuthResult{};
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,
                        R"({"error":"unauthorized"})",
@@ -739,12 +766,10 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         } else if (const auto decoding = DecodeRequestBody(request);
                    decoding.status != http::HttpStatus::None) {
           writer.Error(decoding.status, decoding.error);
-        } else if (HttpHandler* handler = _router.Match(request)) {
-          if (_conn && _user != _conn_user) {
-            ReleaseConnection();
-          }
+        } else if (const auto route = _router.Match(request); route.handler) {
+          BindUser(std::move(auth.context.user), route.session);
           try {
-            co_await handler->Handle(*this, request, writer);
+            co_await route.handler->Handle(*this, request, writer);
           } catch (const std::exception& e) {
             SDB_ERROR(HTTP, "request handler failed: ",
                       duckdb::ErrorData{e}.RawMessage());
@@ -768,6 +793,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
           if (!writer.HeadWritten()) {
             writer.Error(http::HttpStatus::InternalError, "internal");
+          }
+          if (_connection_ctx && route.session == SessionScope::Request) {
+            ReleaseConnection();
           }
         } else {
           writer.Error(http::HttpStatus::NotFound, "not_found");

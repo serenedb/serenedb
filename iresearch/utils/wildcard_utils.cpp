@@ -24,11 +24,12 @@
 
 #include <utility>
 
+#include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 
-WildcardType ComputeWildcardType(bytes_view pattern) noexcept {
+WildcardType ComputeWildcardType(bytes_view pattern, bool bytes) noexcept {
   if (pattern.empty()) {
     return WildcardType::Term;
   }
@@ -40,7 +41,7 @@ WildcardType ComputeWildcardType(bytes_view pattern) noexcept {
 
   const auto* it = pattern.data();
   const auto* end = it + pattern.size();
-  for (; it != end; it = utf8_utils::Next(it, end)) {
+  for (; it != end; it = bytes ? it + 1 : utf8_utils::Next(it, end)) {
     auto prev_any_str = std::exchange(curr_any_str, 0);
     if (escaped) {
       escaped = false;
@@ -87,7 +88,6 @@ bytes_view ExtractWildcardPrefix(bytes_view pattern) noexcept {
 }
 
 std::string LikeRegexp(std::string_view pattern, bool ignore_case) {
-  static constexpr std::string_view kMeta = "\\[](){}.*+?|^$";
   std::string regex;
   regex.reserve(pattern.size() * 2 + 9);
   regex += ignore_case ? "(?si)\\A" : "(?s)\\A";
@@ -105,7 +105,7 @@ std::string LikeRegexp(std::string_view pattern, bool ignore_case) {
       regex += '.';
       continue;
     }
-    if (kMeta.find(c) != std::string_view::npos) {
+    if (IsRegexpMeta(c)) {
       regex += '\\';
     }
     regex += c;

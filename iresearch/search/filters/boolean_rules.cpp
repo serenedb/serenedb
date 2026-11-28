@@ -182,18 +182,6 @@ void MoveClauses(BooleanFilter& to, Occur occur, Clauses& from) {
   from.filters.clear();
 }
 
-size_t EraseFilters(std::vector<Filter::ptr>& filters, auto predicate) {
-  const auto before = filters.size();
-  std::erase_if(filters,
-                [&](const Filter::ptr& child) { return predicate(*child); });
-  return before - filters.size();
-}
-
-bool AnyFilter(std::span<const Filter::ptr> filters, auto predicate) {
-  return absl::c_any_of(
-    filters, [&](const Filter::ptr& child) { return predicate(*child); });
-}
-
 bool Overlaps(const Clauses& lhs, const Clauses& rhs) {
   constexpr TermPostingLess kLess{};
   auto left = lhs.terms.begin();
@@ -831,7 +819,7 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
   if (type == Type<ByWildcard>::id()) {
     const auto& options = irs::utils::downCast<ByWildcard>(child).options();
     return ExecuteWildcard(
-      buf, options.term, part(Kind::Term), part(Kind::Prefix),
+      buf, options.term, options.bytes, part(Kind::Term), part(Kind::Prefix),
       part(options.bytes ? Kind::WildcardBytes : Kind::Wildcard));
   }
   if (type == Type<AutomatonFilter>::id()) {
@@ -1013,7 +1001,8 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
     const auto& filter =
       irs::utils::downCast<LevenshteinAutomatonFilter>(child);
     const auto& options = filter.options();
-    if (!options.parametric) {
+    SDB_ASSERT(options.parametric);
+    if (options.starts_with) {
       return std::nullopt;
     }
     auto pattern = options.target;

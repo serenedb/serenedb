@@ -64,6 +64,7 @@ const SystemTable* FindSystemTable(duckdb::idx_t oid);
 std::span<SystemTable* const> SystemTableFunctions();
 const StaticView* GetSystemView(std::string_view schema, std::string_view name);
 const StaticView* FindSystemView(duckdb::idx_t oid);
+duckdb::idx_t SystemRuleRelation(duckdb::idx_t rule);
 duckdb::idx_t SystemRelationOid(std::string_view schema, std::string_view name);
 const duckdb::CreateMacroInfo* GetSystemFunction(std::string_view schema,
                                                  std::string_view name,

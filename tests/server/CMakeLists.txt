@@ -15,6 +15,7 @@ add_executable(
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
     duckdb_wal_block_reuse_test.cpp
+    frame_stream_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
     lifecycle_test.cpp
@@ -38,6 +39,7 @@ add_executable(
     network_pg_implicit_txn_test.cpp
     network_pg_protocol_state_test.cpp
     network_pg_scram_test.cpp
+    network_pg_simple_query_test.cpp
     network_pg_startup_test.cpp
     network_proxy_protocol_test.cpp
     network_router_test.cpp
@@ -48,6 +50,7 @@ add_executable(
     runtime_test.cpp
     scorer_bounds_test.cpp
     search_engine_test.cpp
+    search_log_entry_test.cpp
     search_table_changes_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
@@ -74,6 +77,7 @@ add_executable(
     connector/search_filter_printer_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
+    connector/vector_explain_test.cpp
 )
 
 target_link_libraries(
@@ -91,5 +95,5 @@ sdb_link_duckdb_extensions(serenedb-tests)
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(serenedb-tests PRIVATE serene_docs_index)
     add_dependencies(serenedb-tests serenedb)
-    sdb_embed_docs_index(serenedb-tests)
+    sdb_embed_docs_index(serenedb-tests serenedb)
 endif()

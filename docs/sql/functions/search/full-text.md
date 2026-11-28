@@ -57,7 +57,7 @@ Each returns a [`TSQUERY`](../../data_types/tsquery.md). A bare string literal i
 | [`ts_like(pattern)`](#ts_like) | Match tokens against a SQL `LIKE` pattern. |
 | [`ts_starts_with(prefix)`](#ts_starts_with) | Match tokens beginning with `prefix`. |
 | [`ts_regexp(pattern[, syntax])`](#ts_regexp) | Match tokens against a regular expression. |
-| [`ts_levenshtein(text[, distance[, transpositions[, prefix]]])`](#ts_levenshtein) | Match tokens within an edit distance of `text`. |
+| [`ts_levenshtein(text[, distance[, transpositions[, prefix]]][, starts_with := false])`](#ts_levenshtein) | Match tokens within an edit distance of `text`, or tokens that start within it. |
 | [`ts_ngram(text[, threshold])`](#ts_ngram) | Match by n-gram similarity. |
 | [`ts_between(min, max, min_incl, max_incl)`](#ts_between) | Range match between two bounds. |
 | [`ts_lt(value)`](#ts_lt) | Match values less than `value`. |
@@ -102,7 +102,7 @@ When a `gap` is declared, the budget counts deviation from *that* gap rather tha
 
 `(...)::slop(N)` applies the same budget, with the same `0` to `65535` range, as a modifier to an already-built phrase, including one from [`phraseto_tsquery`](#phraseto_tsquery). Lucene's `"..."~N` reaches it through [`to_tsquery`](#to_tsquery). The forms are mutually exclusive: specifying slop twice on one phrase is an error, and `::slop` on a non-phrase query (or on a `##` part) is rejected.
 
-See [Phrase and Proximity Search](../../../cookbook/search/phrase-and-proximity-search.md#proximity-search-with-slop) for worked examples.
+See [Phrase and Proximity Search](../../../cookbook/search/phrase-and-proximity-search.md#proximity-search-with-slop) for worked examples, and [Phrases with gaps, intervals and slop](https://serenedb.com/blog/phrases-gaps-intervals-slop) for how the positional index answers gaps, intervals and slop and what each costs.
 
 #### `ts_tokenize(text[, dictionary])` {#ts_tokenize}
 
@@ -135,7 +135,7 @@ Match indexed tokens against a SQL `LIKE` pattern.
 | :--- | :--- | :--- | :--- |
 | `pattern` | `VARCHAR`/`BLOB` | — | A `LIKE` pattern. `%` matches any run of characters (including none), `_` matches exactly one character, and `\` makes the next character literal (`\%`, `\_`, `\\`). A pattern that ends in an unpaired `\` is an error. The pattern is matched against terms as they are stored in the index. |
 
-**How it works.** `ts_like` is applied to the *indexed* term form, not the raw text, so it is not tokenized further — match it against a column whose dictionary stores whole values (such as a `keyword`-style category column). It is the inverted-index analogue of SQL `LIKE`: a row matches when any of its indexed tokens satisfies the pattern. On a `BYTEA` column it compares bytes, as `LIKE` does there: `_` matches exactly one byte and `%` any run of bytes.
+**How it works.** `ts_like` is applied to the *indexed* term form, not the raw text, so it is not tokenized further — match it against a column whose dictionary stores whole values (such as a `keyword`-style category column). It is the inverted-index analogue of SQL `LIKE`: a row matches when any of its indexed tokens satisfies the pattern. On a `BYTEA` column, or when `pattern` is `BYTEA`, it compares bytes, as `LIKE` does on `BYTEA`: `_` matches exactly one byte and `%` any run of bytes.
 
 On a `VARCHAR` column indexed with `keyword()` or with [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md) over `keyword()`, the SQL forms need no `@@`: `LIKE`, `ILIKE` and their `NOT` forms, with or without `ESCAPE`, `~`, `~*`, `!~*`, `SIMILAR TO`, `regexp_matches` and `regexp_full_match` (unless their options include `'l'` or `'s'`), `starts_with`, `prefix`, `ends_with`, `suffix` and `contains` are answered from the index and return the same rows as on the table, except that `ILIKE` through the index ignores case the way `~*` does: there `'İstanbul' ILIKE 'istanbul%'` is false, and `σ` also matches `ς`.
 
@@ -175,7 +175,7 @@ Match indexed tokens against a regular expression.
 | `pattern` | `VARCHAR`/`BLOB` | — | The regular expression. It must match a whole indexed term (anchored implicitly, not a substring search). |
 | `syntax` | `VARCHAR` | `'perl'` | Dialect: `'perl'` (RE2 / Perl-compatible) or `'posix'` (POSIX ERE). Case-insensitive. |
 
-**How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`. On a `BYTEA` column the pattern is matched byte by byte: `.` and a character class match exactly one byte, and a pattern character that takes two bytes in UTF-8 stands for those two bytes.
+**How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`. On a `BYTEA` column, or when `pattern` is `BYTEA`, the pattern is matched byte by byte: `.` and a character class match exactly one byte, and a pattern character that takes two bytes in UTF-8 stands for those two bytes.
 
 A pattern that is not valid in its dialect, such as `ts_regexp('(abc')` or `ts_regexp('\d+', 'posix')`, fails the query with `invalid regular expression: …`, and so does one too large to compile. On a [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md#searching) column, an invalid pattern matches no row instead, and one too large fails with `pattern cannot be verified: …`.
 
@@ -202,7 +202,7 @@ In a [`##`](../../indexes/inverted/full-text-search.md#phrase-parts) phrase, `ts
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_regexp_phrase" />
 
-#### `ts_levenshtein(text[, distance[, transpositions[, prefix]]])` {#ts_levenshtein}
+#### `ts_levenshtein(text[, distance[, transpositions[, prefix]]][, starts_with := false])` {#ts_levenshtein}
 
 Fuzzy match: find tokens within a bounded edit distance of `text` — the standard tolerance for typos.
 
@@ -210,29 +210,37 @@ Fuzzy match: find tokens within a bounded edit distance of `text` — the standa
 | :--- | :--- | :--- | :--- |
 | `text` | `VARCHAR`/`BLOB` | — | The term to match approximately. When `prefix` is given, this is only the *suffix* that is fuzzy-matched (see below). |
 | `distance` | `INTEGER` | auto by length: `0` for ≤ 2 chars, `1` for 3–5, `2` for ≥ 6 | Maximum edit distance (insertions, deletions, substitutions). Allowed range `0`–`4` (capped at `3` when `transpositions` is `true`). |
-| `transpositions` | `BOOLEAN` | `true` | When `true`, swapping two adjacent characters counts as **one** edit (Damerau–Levenshtein); when `false`, it counts as two. |
-| `prefix` | `VARCHAR` | `''` (empty) | A literal leading substring that must match **exactly**. The term actually matched is `prefix \|\| text`; only the `text` portion spends the edit budget. |
+| `transpositions` | `BOOLEAN` | `true` | When `true`, swapping two adjacent characters counts as **one** edit (Damerau–Levenshtein); when `false`, it counts as two. Also by name: `transpositions := false`. |
+| `prefix` | `VARCHAR` | `''` (empty) | A literal leading substring that must match **exactly**. The term actually matched is `prefix \|\| text`; only the `text` portion spends the edit budget. Also by name, which leaves `transpositions` at its default: `prefix := 'quic'`. |
+| `starts_with` | `BOOLEAN` | `false` | Named argument. When `true`, a term matches when it *starts* within `distance` edits of the query, whatever follows. |
 
 **How it works.** A term matches when its edit distance from the query is at most `distance`. The knobs around that rule:
 
 - **Auto distance.** The one-argument form picks the distance from the query length: `0` for two characters or fewer, `1` for three to five, `2` from six up. Short queries tolerate fewer edits, which keeps them from drifting into unrelated tokens.
 - **Transpositions.** On by default, so a single adjacent-character swap costs one edit instead of two: `quikc` reaches `quick` at distance 1, where strict Levenshtein needs distance 2.
-- **Prefix.** Anchors an exact leading substring and fuzzy-matches only the rest, which both narrows the candidate set and speeds the scan. `ts_levenshtein('X', 1, true, 'quic')` requires the literal `quic`, then allows one edit on `X`, reaching `quick`.
+- **Prefix.** Anchors an exact leading substring and fuzzy-matches only the rest, which both narrows the candidate set and speeds the scan. `ts_levenshtein('X', 1, prefix := 'quic')` requires the literal `quic`, then allows one edit on `X`, reaching `quick`.
+- **Starts with.** `starts_with := true` compares the query with the beginning of each term instead of the whole term, which is what completing a word the user is still typing needs. `ts_levenshtein('trutl', 1, starts_with := true)` reaches `turtle`, because its first five letters `turtl` are one transposition from `trutl`, where the whole word is two edits away. The similarity that [`ts_dict_score`](./term-dictionary.md) reports is that of the closest beginning. Distance `0` matches every term [`ts_starts_with`](#ts_starts_with) matches, but [scores](./scoring.md#patterns) them as a fuzzy match rather than with its constant. A `text` no longer than `distance` matches every term, because the empty beginning is already within the distance; the automatic distance never picks one that long. It combines with `transpositions` and `prefix`, and the expansion cap below applies to it.
 - **Expansion cap.** [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (default `50`) bounds how many dictionary terms the predicate expands to. The terms closest to the query survive; the rest neither match nor score. Set it to `0` to match every term within the edit distance, or narrow the candidate set with `prefix`. The cap applies per index segment, so a wide predicate can match more terms while they sit in separate segments than after a merge.
 - **Term enumeration.** A predicate on the column that a [`ts_dict_*`](./term-dictionary.md) query enumerates is exempt from the cap, because there the terms are the result rather than a means to one. Other predicates in the same query keep it, and since enumeration only sees matching documents, capping one of those narrows the returned terms too.
+- **Bytes.** On a `BYTEA` column, or when `text` or `prefix` is `BYTEA`, every byte is a character: `é` is two edits from `e`, the automatic distance counts bytes, and a value that is not valid UTF-8 matches itself.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `body @@ ts_levenshtein('quikc', 2)` | `1`, `2` | `quikc` → `quick` is within 2 edits. |
 | `body @@ ts_levenshtein('quikc', 1, true)` | `1`, `2` | The `kc`↔`ck` transposition is a single edit. |
 | `body @@ ts_levenshtein('quikc', 1, false)` | *(none)* | Without transpositions, `quikc` → `quick` is 2 edits. |
-| `body @@ ts_levenshtein('X', 1, true, 'quic')` | `1`, `2` | Exact prefix `quic` plus one edit (`X` → `k`) reaches `quick`. |
+| `body @@ ts_levenshtein('X', 1, prefix := 'quic')` | `1`, `2` | Exact prefix `quic` plus one edit (`X` → `k`) reaches `quick`. |
+| `body @@ ts_levenshtein('trutl', 1, starts_with := true)` | `3` | `turtle` starts with `turtl`, one transposition from `trutl`. |
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_levenshtein" />
 
 Combine a fixed `prefix` with a small fuzzy suffix to keep typo-tolerance fast and focused — only terms beginning with `quic` are considered:
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_levenshtein_prefix" />
+
+Set `starts_with` to match what the user has typed so far, typos included:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_levenshtein_starts_with" />
 
 #### `ts_ngram(text[, threshold])` {#ts_ngram}
 
@@ -366,7 +374,7 @@ OR over a list of sub-queries, with an optional "match at least N" threshold.
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
-| `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The alternatives. Each element is a `TSQUERY`; a plain string is tokenized by the column dictionary. |
+| `list` | `LIST(TSQUERY)` (bare strings and `BYTEA` values allowed) | — | The alternatives. Each element is a `TSQUERY`; a plain string or a `BYTEA` value is tokenized by the column dictionary. |
 | `min_match` | `INTEGER` | `1` | How many alternatives a row must satisfy. Must be between `1` and the list length. `1` is a plain `OR`; raising it demands more of the alternatives. |
 
 **How it works.** `ts_any` is a disjunction with a tunable floor. At `min_match = 1` it is a straight `OR` — match any alternative. Raising `min_match` turns it into an "N of M" query: with three alternatives and `min_match = 2`, a row must contain at least two of them. This is the equivalent of Elasticsearch's `minimum_should_match` (integer form) and the `terms_set` query. SereneDB takes an integer count only — it does not accept percentage or negative `minimum_should_match` formats, nor a per-document min-match field. Over [`ts_tokenize`](#ts_tokenize) a position counts once: the synonyms of one word are one alternative, so `min_match` counts words, not synonyms. For "N of M" over predicates on different columns, use [`::min_match(K)`](#min-match) on an `OR`.
@@ -389,7 +397,7 @@ AND over a list of sub-queries — every element must match.
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
-| `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The conjuncts. A row matches only when it satisfies *all* of them. |
+| `list` | `LIST(TSQUERY)` (bare strings and `BYTEA` values allowed) | — | The conjuncts. A row matches only when it satisfies *all* of them. |
 
 **How it works.** `ts_all` is the conjunction (`AND`) of every element — equivalent to chaining the elements with [`&&`](#a--b-and), or to `ts_any(list, len(list))`. Use it to require that several tokens or sub-queries all appear in the same row. Over [`ts_tokenize`](#ts_tokenize) the synonyms of one word are alternatives: any one of them satisfies that word.
 
@@ -636,6 +644,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `a*` | Prefix (wildcard) match. |
 | `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
+| `a*~N` | Fuzzy prefix: tokens that start within edit distance `N` of `a`, as [`ts_levenshtein`](#ts_levenshtein) with `starts_with := true`. A bare `~` allows two edits. Also a phrase part, `"a b*~N"`; write `"a b\*\~N"` to search those characters instead, as the column's dictionary analyzes them. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |
 | `(a b)` | Grouping. |
@@ -662,6 +671,7 @@ A prefix on a group applies to every term inside it, so `title:(fox OR dog)` sea
 | `body @@ to_tsquery('+fox -red')` | `1` | Has `fox`, excludes `red`. |
 | `body @@ to_tsquery('qui*')` | `1`, `2` | Prefix `qui` matches `quick`. |
 | `body @@ to_tsquery('quikc~2')` | `1`, `2` | Fuzzy match within 2 edits of `quick`. |
+| `body @@ to_tsquery('trutl*~1')` | `3` | `turtle` starts with `turtl`, one transposition from `trutl`. |
 | `body @@ to_tsquery('"quick brown"~3')` | `1` | `quick` and `brown` within three positions. |
 | `body @@ to_tsquery('xyzzy')` | *(none)* | Term not present. |
 
@@ -670,6 +680,10 @@ A prefix on a group applies to every term inside it, so `title:(fox OR dog)` sea
 The `+` (required) and `-` (excluded) operators, grouping and the others combine freely — for example, match rows containing `fox` but not `red`:
 
 <SqlLogicTest id="sql/functions/full_text_search/to_tsquery_lucene" />
+
+A fuzzy prefix tolerates a typo in what has been typed so far:
+
+<SqlLogicTest id="sql/functions/full_text_search/to_tsquery_fuzzy_prefix" />
 
 Wildcard, fuzzy and proximity operators compose too — a prefix on one term plus a fuzzy match on another:
 
@@ -756,7 +770,7 @@ Sugar that rewrites to `@@` at bind time. Each takes the indexed column as its f
 | :--- | :--- |
 | [`phrase_matches(column, text[, text, ...])`](#phrase_matches) | Equivalent to `column @@ ts_phrase(...)`. |
 | [`ngram_matches(column, text[, threshold])`](#ngram_matches) | Equivalent to `column @@ ts_ngram(...)`. |
-| [`levenshtein_matches(column, text, distance[, transpositions[, prefix]])`](#levenshtein_matches) | Equivalent to `column @@ ts_levenshtein(...)`. |
+| [`levenshtein_matches(column, text, distance[, transpositions[, prefix]][, starts_with := false])`](#levenshtein_matches) | Equivalent to `column @@ ts_levenshtein(...)`. |
 | [`has_all_tokens(column, list)`](#has_all_tokens) | Equivalent to `column @@ ts_all(list)`. |
 | [`has_any_tokens(column, list[, min_match])`](#has_any_tokens) | Equivalent to `column @@ ts_any(list[, min_match])`. |
 
@@ -768,7 +782,7 @@ Phrase-match sugar for `column @@ ts_phrase(text, ...)`.
 | :--- | :--- | :--- | :--- |
 | `column` | any indexed column | — | The inverted-indexed column to match. |
 | `text` | `VARCHAR`/`BLOB` | — | A phrase segment, as in [`ts_phrase`](#ts_phrase). |
-| `text, ...` | `INTEGER`/`INTEGER[]` + `VARCHAR` | — | Optional `gap, text` pairs, identical to `ts_phrase`'s gap grammar. |
+| `text, ...` | `INTEGER`/`INTEGER[]` + `VARCHAR`/`BLOB` | — | Optional `gap, text` pairs, identical to `ts_phrase`'s gap grammar. |
 
 **How it works.** `phrase_matches(column, ...)` rewrites at bind time to `column @@ ts_phrase(...)`, inheriting the full gap grammar. It reads as a predicate, which is convenient when the `@@` form feels verbose.
 
@@ -799,7 +813,7 @@ N-gram-match sugar for `column @@ ts_ngram(text[, threshold])`.
 
 <SqlLogicTest id="sql/functions/full_text_search/ngram_matches" />
 
-#### `levenshtein_matches(column, text, distance[, transpositions[, prefix]])` {#levenshtein_matches}
+#### `levenshtein_matches(column, text, distance[, transpositions[, prefix]][, starts_with := false])` {#levenshtein_matches}
 
 Fuzzy-match sugar for `column @@ ts_levenshtein(...)`.
 
@@ -808,10 +822,11 @@ Fuzzy-match sugar for `column @@ ts_levenshtein(...)`.
 | `column` | any indexed column | — | The column to match. |
 | `text` | `VARCHAR`/`BLOB` | — | Term to match approximately. |
 | `distance` | `INTEGER` | — *(required here)* | Maximum edit distance. Unlike [`ts_levenshtein`](#ts_levenshtein), the predicate has no auto-distance form, so `distance` is required. |
-| `transpositions` | `BOOLEAN` | `true` | Whether an adjacent-character swap counts as one edit. |
-| `prefix` | `VARCHAR` | `''` | Exact leading substring; only the suffix spends the edit budget. |
+| `transpositions` | `BOOLEAN` | `true` | Whether an adjacent-character swap counts as one edit. Also by name. |
+| `prefix` | `VARCHAR` | `''` | Exact leading substring; only the suffix spends the edit budget. Also by name. |
+| `starts_with` | `BOOLEAN` | `false` | Named argument: match the terms that start within `distance` edits of `text`. |
 
-**How it works.** Rewrites to `column @@ ts_levenshtein(text, distance[, transpositions[, prefix]])`. See [`ts_levenshtein`](#ts_levenshtein) for the edit-distance and prefix semantics.
+**How it works.** Rewrites to `column @@ ts_levenshtein(text, distance, ...)` with the same positional and named arguments. See [`ts_levenshtein`](#ts_levenshtein) for the edit-distance, prefix and starts-with semantics.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -827,7 +842,7 @@ True when every token in `list` is present.
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `column` | any indexed column | — | The column to match. |
-| `list` | `LIST(VARCHAR)` | — | Tokens that must *all* appear. Each element is tokenized by the column dictionary. |
+| `list` | `LIST(VARCHAR)`/`LIST(BLOB)` | — | Tokens that must *all* appear. Each element is tokenized by the column dictionary. |
 
 **How it works.** Tokenizes each element and requires all of them — sugar for `column @@ ts_all(ts_tokenize(list))`. Use it for "contains every one of these words" filters.
 
@@ -846,7 +861,7 @@ True when at least `min_match` tokens in `list` are present.
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `column` | any indexed column | — | The column to match. |
-| `list` | `LIST(VARCHAR)` (or a single `VARCHAR`) | — | Candidate tokens. |
+| `list` | `LIST(VARCHAR)`/`LIST(BLOB)` (or a single `VARCHAR`/`BLOB`) | — | Candidate tokens. |
 | `min_match` | `INTEGER` | `1` | Minimum number of tokens that must appear. `1` is a plain `OR`. |
 
 **How it works.** Tokenizes the candidates and requires at least `min_match` of them — sugar for `column @@ ts_any(ts_tokenize(list)[, min_match])`. Raise `min_match` for an "N of M" filter, exactly as in [`ts_any`](#ts_any).
@@ -892,9 +907,9 @@ Return the tokens a dictionary produces for `text` — the tool for inspecting a
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `dictionary` | `VARCHAR` | — | Name of an existing [text-search dictionary](../../statements/create_text_search_dictionary/index.md). It must exist in the catalog (`'keyword'` is not a real dictionary here). |
-| `text` | `VARCHAR` or `LIST(VARCHAR)` | — | The text to analyze. A list analyzes each element and concatenates the results; an element the dictionary rejects is dropped like a `NULL` element. |
+| `text` | `VARCHAR`, `BLOB`, `LIST(VARCHAR)` or `LIST(BLOB)` | — | The text to analyze. A list analyzes each element and concatenates the results; an element the dictionary rejects is dropped like a `NULL` element. |
 
-**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`. A dictionary has no call form of its own, so `ts_lexize` is how a query runs one; it takes the name as a value, which is what a query that picks a dictionary per row needs. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare. As in PostgreSQL, the result tells a rejected value from an empty one: a value the dictionary rejects — such as a `NULL` result of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, or input a geo dictionary cannot parse — returns `NULL`, while a value it accepts without producing tokens, such as a stop word, returns an empty list.
+**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`, or a `LIST(BLOB)` for `BLOB` input. A dictionary has no call form of its own, so `ts_lexize` is how a query runs one; it takes the name as a value, which is what a query that picks a dictionary per row needs. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare. As in PostgreSQL, the result tells a rejected value from an empty one: a value the dictionary rejects — such as a `NULL` result of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, or input a geo dictionary cannot parse — returns `NULL`, while a value it accepts without producing tokens, such as a stop word, returns an empty list.
 
 | Input | Tokens | Why |
 | :--- | :--- | :--- |

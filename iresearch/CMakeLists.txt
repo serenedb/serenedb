@@ -37,7 +37,9 @@ target_include_directories(
 target_include_directories(
     iresearch
     SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
         ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
@@ -78,6 +80,7 @@ target_link_libraries(
         zstd::zstd
         boost_boost
         simdjson
+        simdutf
         sse2neon
         pcg
         re2
@@ -87,7 +90,9 @@ target_link_libraries(
         absl::failure_signal_handler
         absl::stacktrace
         absl::symbolize
-        simdutf
+        duckdb_fsst
+        lz4_static
+        zxc::zxc_lib
 )
 
 if(IRESEARCH_BENCH)
@@ -107,5 +112,5 @@ target_include_directories(
 target_link_libraries(
     iresearch
     PUBLIC OpenSSL::Crypto OpenSSL::SSL fasttext-static faiss s2
-    PRIVATE lz4_static stemmer-static
+    PRIVATE stemmer-static
 )

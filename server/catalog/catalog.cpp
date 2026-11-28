@@ -79,6 +79,7 @@
 #include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
 #include "connector/inverted_index_bind.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/view_index_bind.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/oids.h"
@@ -285,31 +286,32 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::PlacementTablespace(
   if (!tablespace) {
     return nullptr;
   }
-  if (tablespace->oid == pg::kPgGlobalTablespace) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("only shared relations can be placed in pg_global tablespace"));
-  }
   std::string_view refusal;
   if (indexed && indexed->type == duckdb::CatalogType::TABLE_ENTRY) {
     refusal =
       "an index on a table is stored with the table and cannot be placed in a "
       "tablespace";
   }
-  duckdb::idx_t own = pg::kPgDefaultTablespace;
   if (InMemory()) {
     refusal = "temporary objects cannot be placed in a tablespace";
-  } else if (const auto database = cluster.LookupOid(at, GetAttached().oid)) {
-    own = database->Cast<DatabaseCatalogEntry>().Tablespace();
-  }
-  if (tablespace->oid == own) {
-    return nullptr;
   }
   if (!refusal.empty()) {
     if (!named) {
       return nullptr;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
+  }
+  if (tablespace->oid == pg::kPgGlobalTablespace) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("only shared relations can be placed in pg_global tablespace"));
+  }
+  duckdb::idx_t own = pg::kPgDefaultTablespace;
+  if (const auto database = cluster.LookupOid(at, GetAttached().oid)) {
+    own = database->Cast<DatabaseCatalogEntry>().Tablespace();
+  }
+  if (tablespace->oid == own) {
+    return nullptr;
   }
   return tablespace;
 }
@@ -786,6 +788,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
       table, std::move(op.bound_constraints), op.types,
       op.estimated_cardinality, op.return_chunk);
     insert.children.emplace_back(*plan);
+    connector::ShareScanPayloads(*plan);
     return insert;
   }
   std::vector<connector::ColumnId> target;
@@ -855,6 +858,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     std::move(op.info), op.estimated_cardinality);
   insert.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return insert;
 }
 
@@ -867,6 +871,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     op.return_chunk, op.capture_old_rows, std::move(op.old_row_columns),
     op.row_id_handling, !op.update_is_del_and_insert, op.update_column_count);
   update.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return update;
 }
 
@@ -1017,6 +1022,18 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
     }
   }
   return {};
+}
+
+bool SereneDBCatalog::VerifyColumnCompression(
+  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::StorageManager>,
+  const duckdb::CreateTableInfo&, const duckdb::ColumnDefinition& column,
+  const duckdb::LogicalType& type) const {
+  const auto compression = column.CompressionType();
+  CheckColumnCodec(column.Name().GetIdentifierName(),
+                   irs::codecs::FindCodec(compression),
+                   duckdb::CompressionTypeToString(compression),
+                   column.CompressionLevel(), type);
+  return true;
 }
 
 std::shared_ptr<const CatalogSnapshot> CatalogSnapshots::Get(

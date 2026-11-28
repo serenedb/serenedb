@@ -491,6 +491,31 @@ def test_custom_parameter_and_object_sqlstates():
         c.close()
 
 
+def test_role_settings_apply_at_login():
+    login = f"drv_role_settings_{os.getpid()}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {login} LOGIN")
+        admin.execute(f"ALTER ROLE {login} SET search_path = 'pg_catalog'")
+        admin.execute(f"ALTER ROLE {login} SET statement_timeout = '123s'")
+        query = ("SELECT current_setting('search_path'), "
+                 "current_setting('statement_timeout')")
+        with psycopg.connect(**{**conn_kwargs(), "user": login},
+                             autocommit=True) as c:
+            assert c.execute(query).fetchone() == ("pg_catalog", "123s")
+            c.execute("SET statement_timeout = '1s'")
+            c.execute("RESET statement_timeout")
+            assert c.execute(query).fetchone() == ("pg_catalog", "123s")
+        with psycopg.connect(**{**conn_kwargs(), "user": login}, autocommit=True,
+                             options="-c statement_timeout=5s") as c:
+            assert c.execute(query).fetchone() == ("pg_catalog", "5s")
+        with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+            assert c.execute(query).fetchone()[1] == "0"
+    finally:
+        admin.execute(f"DROP ROLE IF EXISTS {login}")
+        admin.close()
+
+
 def test_binder_error_sqlstates():
     """BINDER errors get distinct SQLSTATEs, not a blanket undefined_column:
     ambiguous column -> 42702, grouping -> 42803, genuinely-missing -> 42703.

@@ -98,7 +98,11 @@ inline duckdb::optional_ptr<duckdb::CatalogEntry> FindMember(
 duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   const Session& session, uint64_t oid);
 std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid);
+duckdb::optional_ptr<duckdb::CatalogEntry> ArrayElementEntry(
+  const Session& session, uint64_t oid);
 uint64_t ArrayElementOid(const Session& session, uint64_t oid);
+uint64_t RowTypeOid(const duckdb::CatalogEntry& relation);
+uint64_t RuleRelation(const Session& session, uint64_t rule);
 
 struct ReplicationOrigin {
   duckdb::idx_t id;

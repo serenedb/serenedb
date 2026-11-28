@@ -351,8 +351,14 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
 
   std::optional<int64_t> arg_slop;
   for (const auto& child : func.GetChildren()) {
-    if (!(child->GetAlias() == "slop")) {
+    if (child->GetAlias().empty()) {
       continue;
+    }
+    if (!(child->GetAlias() == "slop")) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_phrase has no argument named ",
+                              child->GetAlias().GetIdentifierName()),
+                      ERR_HINT(kSyntaxHint));
     }
     int64_t slop_raw = 0;
     GetIntArg(*child, slop_raw, {"ts_phrase slop", kSyntaxHint});
@@ -677,15 +683,24 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                                "ts_phrase(...)::slop(N) for a sloppy "
                                "phrase."));
     }
+    if (duckdb::BoundCastExpression::IsCast(part_expr_ref) &&
+        (TryGetBoostModifier(part_expr_ref.GetReturnType()) ||
+         !TryGetTokenizerModifier(part_expr_ref.GetReturnType()).empty())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("## part must not carry boost or tokenize modifiers"),
+        ERR_HINT(kSyntaxHint));
+    }
     const PhraseGap gap = i > 0 ? seq.gaps[i - 1] : PhraseGap{};
 
-    TSQueryOp leaf_op;
+    TSQueryOp leaf_op = TSQueryOp::Term;
     const duckdb::BoundFunctionExpression* f = nullptr;
     std::string bare_text;
-    if (part_expr_ref.GetExpressionClass() ==
-        duckdb::ExpressionClass::BOUND_CONSTANT) {
+    duckdb::unique_ptr<duckdb::Expression> structured;
+    const duckdb::Expression* part = &part_expr_ref;
+    if (part->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
       const auto& val =
-        part_expr_ref.Cast<duckdb::BoundConstantExpression>().GetValue();
+        part->Cast<duckdb::BoundConstantExpression>().GetValue();
       if (auto parts = TryGetTSQueryParts(val)) {
         if (parts->boost != irs::kNoBoost || !parts->tokenizer.empty()) {
           THROW_SQL_ERROR(
@@ -693,7 +708,14 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
             ERR_MSG("## part must not carry boost or tokenize modifiers"),
             ERR_HINT(kSyntaxHint));
         }
-        bare_text = std::move(parts->text);
+        structured =
+          TryParseStructuredTSQueryText(parts->text, ctx.client_context);
+        if (structured && UnwrapTSQueryCast(*structured).GetExpressionClass() ==
+                            duckdb::ExpressionClass::BOUND_FUNCTION) {
+          part = &UnwrapTSQueryCast(*structured);
+        } else {
+          bare_text = std::move(parts->text);
+        }
       } else if (!val.IsNull() &&
                  (val.type().id() == duckdb::LogicalTypeId::VARCHAR ||
                   val.type().id() == duckdb::LogicalTypeId::BLOB)) {
@@ -703,18 +725,17 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                         ERR_MSG("## part must be a VARCHAR constant"),
                         ERR_HINT(kSyntaxHint));
       }
-      leaf_op = TSQueryOp::Term;
-    } else if (part_expr_ref.GetExpressionClass() ==
-               duckdb::ExpressionClass::BOUND_FUNCTION) {
-      f = &part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
+    }
+    if (part->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+      f = &part->Cast<duckdb::BoundFunctionExpression>();
       leaf_op =
         ClassifyTSQueryFunction(f->Function().GetName().GetIdentifierName());
-    } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("## part expression class: ",
-                static_cast<int>(part_expr_ref.GetExpressionClass())),
-        ERR_HINT(kSyntaxHint));
+    } else if (part->GetExpressionClass() !=
+               duckdb::ExpressionClass::BOUND_CONSTANT) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("## part expression class: ",
+                              static_cast<int>(part->GetExpressionClass())),
+                      ERR_HINT(kSyntaxHint));
     }
 
     auto get_text_arg = [&] {
@@ -751,17 +772,18 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         CheckLikePattern(text);
         options.push_back<irs::ByWildcardOptions>(gap.min, gap.max) =
           irs::ByWildcardOptions{
-            irs::ViewCast<irs::byte_type>(std::string_view{text})};
+            irs::ViewCast<irs::byte_type>(std::string_view{text}),
+            ComparesBytes(column_info, *f)};
       } break;
       case TSQueryOp::Regexp: {
         auto args = ParseRegexpArgs(*f);
         options.push_back<irs::ByRegexpOptions>(gap.min, gap.max) =
           irs::ByRegexpOptions{
             irs::ViewCast<irs::byte_type>(std::string_view{args.pattern}),
-            args.syntax};
+            args.syntax, ComparesBytes(column_info, *f)};
       } break;
       case TSQueryOp::Fuzzy: {
-        auto args = ParseLevenshteinArgs(*f);
+        auto args = ParseLevenshteinArgs(*f, column_info);
         FillByEditDistanceOptions(
           args, options.push_back<irs::ByEditDistanceOptions>(gap.min, gap.max),
           column_info.levenshtein_max_terms.value_or(

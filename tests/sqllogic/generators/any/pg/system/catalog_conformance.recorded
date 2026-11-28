@@ -2382,7 +2382,7 @@ c9c1c6615aa376ef
 af92e7f1664353e4
 	nsp	rel	col
 	pg_catalog	pg_subscription	subconninfo
-3e48d2449eaf9302
+77d080627c6aa1a6
 	oid	spcname	spcowner	spcacl	spcoptions
 	1663	pg_default	postgres	NULL	NULL
 	1664	pg_global	postgres	NULL	NULL

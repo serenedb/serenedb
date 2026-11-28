@@ -29,9 +29,10 @@ def _run_docs_index(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=120)
 
 
-def _assert_no_data_directory_left(tmp_path: Path) -> None:
+def _assert_nothing_else_written(tmp_path: Path, *kept: Path) -> None:
     assert not any((tmp_path / "scratch").iterdir())
-    assert not (tmp_path / "serenedb-data").exists()
+    assert sorted(p for p in tmp_path.iterdir() if p.name != "scratch") == \
+        sorted(kept)
 
 
 def _write_select_corpus(tmp_path: Path) -> Path:
@@ -100,45 +101,62 @@ def _read_elf(path: Path) -> tuple[dict[str, tuple[int, int, int]],
     return sections, loads, data
 
 
+def _parse_image(image: bytes) -> dict[str, list[tuple[str, bytes]]]:
+    offset = 0
+    indexes: dict[str, list[tuple[str, bytes]]] = {}
+    for index in ("docs", "objects") if image else ():
+        (count,) = struct.unpack_from("<I", image, offset)
+        offset += 4
+        files = []
+        for _ in range(count):
+            (name_size,) = struct.unpack_from("<I", image, offset)
+            offset += 4
+            name = image[offset:offset + name_size].decode()
+            offset += name_size
+            (file_size,) = struct.unpack_from("<Q", image, offset)
+            offset += 8 + -(offset + 8) % 64
+            files.append((name, image[offset:offset + file_size]))
+            offset += file_size
+        indexes[index] = files
+    assert offset == len(image)
+    return indexes
+
+
 def _read_region(path: Path) -> tuple[int, dict[str, list[tuple[str, bytes]]]]:
     data = path.read_bytes()
     at = data.index(REGION_TAG)
     _, size = struct.unpack_from("<QQ", data, at + len(REGION_TAG))
-    payload = data[at + 64:at + 64 + size]
-    offset = 0
-    indexes: dict[str, list[tuple[str, bytes]]] = {}
-    for index in ("docs", "objects") if size else ():
-        (count,) = struct.unpack_from("<I", payload, offset)
-        offset += 4
-        files = []
-        for _ in range(count):
-            (name_size,) = struct.unpack_from("<I", payload, offset)
-            offset += 4
-            name = payload[offset:offset + name_size].decode()
-            offset += name_size
-            (file_size,) = struct.unpack_from("<Q", payload, offset)
-            offset += 8 + -(offset + 8) % 64
-            files.append((name, payload[offset:offset + file_size]))
-            offset += file_size
-        indexes[index] = files
-    return size, indexes
+    return size, _parse_image(data[at + 64:at + 64 + size])
 
 
-def _write_index(index: Path, sizes: dict[str, int]) -> None:
-    for name, size in sizes.items():
-        (index / name).parent.mkdir(parents=True, exist_ok=True)
-        (index / name).write_bytes(name.encode()[:1] * size)
+def _write_image(path: Path, sizes: dict[str, int]) -> None:
+    image = bytearray()
+    for index in ("docs", "objects"):
+        files = sorted((name.split("/", 1)[1], size)
+                       for name, size in sizes.items()
+                       if name.startswith(f"{index}/"))
+        image += struct.pack("<I", len(files))
+        for name, size in files:
+            image += struct.pack("<I", len(name)) + name.encode()
+            image += struct.pack("<Q", size)
+            image += bytes(-len(image) % 64)
+            image += index.encode()[:1] * size
+    path.write_bytes(image)
+
+
+def _embed(binary: Path, *source: str) -> subprocess.CompletedProcess:
+    return _run(str(SCRIPTS / "embed_docs_index.py"), str(binary), *source)
 
 
 def test_index_embedding_grows_the_elf_section_to_fit(tmp_path: Path) -> None:
-    index = tmp_path / "index"
+    image = tmp_path / "image"
     sizes = {"docs/small": 10, "docs/large": 3 * 1024 * 1024 // 2,
              "objects/medium": 2048}
-    _write_index(index, sizes)
+    _write_image(image, sizes)
     binary = tmp_path / "serened"
     _write_elf(binary)
     before = binary.stat().st_size
-    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    r = _embed(binary, "--image", str(image))
     assert r.returncode == 0, r.stderr
     lines = r.stdout.splitlines()
     assert lines[0] == (f"embedded docs index: 3 files, 1.5 MiB "
@@ -164,12 +182,12 @@ def test_index_embedding_grows_the_elf_section_to_fit(tmp_path: Path) -> None:
 
 
 def test_index_embedding_needs_the_elf_section_last(tmp_path: Path) -> None:
-    index = tmp_path / "index"
-    _write_index(index, {"docs/segments_1": 1, "objects/segments_1": 1})
+    image = tmp_path / "image"
+    _write_image(image, {"docs/segments_1": 1, "objects/segments_1": 1})
     binary = tmp_path / "serened"
     _write_elf(binary, last=False)
     before = binary.read_bytes()
-    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    r = _embed(binary, "--image", str(image))
     assert r.returncode == 1
     assert ".sdb_docs must be alone in the last loadable segment" in r.stderr
     assert binary.read_bytes() == before
@@ -177,12 +195,12 @@ def test_index_embedding_needs_the_elf_section_last(tmp_path: Path) -> None:
 
 def test_index_embedding_fills_the_macos_region_in_place(
         tmp_path: Path) -> None:
-    index = tmp_path / "index"
-    _write_index(index, {"docs/segments_1": 100, "objects/segments_1": 1})
+    image = tmp_path / "image"
+    _write_image(image, {"docs/segments_1": 100, "objects/segments_1": 1})
     binary = tmp_path / "serened"
     _write_macho(binary, 4096)
     before = binary.stat().st_size
-    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    r = _embed(binary, "--image", str(image))
     assert r.returncode == 0, r.stderr
     _, indexes = _read_region(binary)
     assert indexes == {"docs": [("segments_1", b"d" * 100)],
@@ -192,22 +210,35 @@ def test_index_embedding_fills_the_macos_region_in_place(
 
 
 def test_index_embedding_needs_both_indexes(tmp_path: Path) -> None:
-    index = tmp_path / "index"
-    _write_index(index, {"docs/segments_1": 1})
+    image = tmp_path / "image"
+    _write_image(image, {"docs/segments_1": 1})
     binary = tmp_path / "serened"
     _write_elf(binary)
-    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    before = binary.read_bytes()
+    r = _embed(binary, "--image", str(image))
     assert r.returncode == 1
-    assert "no index files under" in r.stderr and "objects" in r.stderr
+    assert "the image holds no objects index files" in r.stderr
+    assert binary.read_bytes() == before
+
+
+def test_index_embedding_refuses_a_truncated_image(tmp_path: Path) -> None:
+    image = tmp_path / "image"
+    _write_image(image, {"docs/segments_1": 100, "objects/segments_1": 1})
+    image.write_bytes(image.read_bytes()[:-1])
+    binary = tmp_path / "serened"
+    _write_elf(binary)
+    r = _embed(binary, "--image", str(image))
+    assert r.returncode == 1
+    assert "its files end at" in r.stderr
 
 
 def test_index_embedding_fails_when_the_index_outgrows_the_macos_region(
         tmp_path: Path) -> None:
-    index = tmp_path / "index"
-    _write_index(index, {"docs/segments_1": 2048, "objects/segments_1": 1})
+    image = tmp_path / "image"
+    _write_image(image, {"docs/segments_1": 2048, "objects/segments_1": 1})
     binary = tmp_path / "serened"
     _write_macho(binary, 1024)
-    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    r = _embed(binary, "--image", str(image))
     assert r.returncode == 1
     assert "1024-byte region; raise kCapacity" in r.stderr
     assert _read_region(binary) == (0, {})
@@ -215,97 +246,116 @@ def test_index_embedding_fails_when_the_index_outgrows_the_macos_region(
 
 def test_index_embedding_needs_exactly_one_macos_region(
         tmp_path: Path) -> None:
-    index = tmp_path / "index"
-    _write_index(index, {"docs/segments_1": 1, "objects/segments_1": 1})
+    image = tmp_path / "image"
+    _write_image(image, {"docs/segments_1": 1, "objects/segments_1": 1})
     for regions in (0, 2):
         binary = tmp_path / f"serened_{regions}"
         _write_macho(binary, 1024, regions)
-        r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+        r = _embed(binary, "--image", str(image))
         assert r.returncode == 1
         assert "expected exactly one docs index region" in r.stderr
 
 
-@pytest.mark.skipif(
+needs_serenedb = pytest.mark.skipif(
     not (Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)),
     reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}")
+
+
+def _assert_built_indexes(indexes: dict[str, list[tuple[str, bytes]]]) -> None:
+    assert sorted(indexes) == ["docs", "objects"]
+    for files in indexes.values():
+        names = [name for name, _ in files]
+        assert "sdb_docs.layout" in names, names
+        assert "sdb_docs.segments" in names, names
+        assert [name for name in names
+                if name not in ("sdb_docs.layout", "sdb_docs.segments")], names
+    layout = dict(indexes["docs"])["sdb_docs.layout"].decode()
+    assert [line.split()[0] for line in layout.splitlines()] == [
+        "path", "title", "breadcrumb", "content", "content_text"]
+
+
+@needs_serenedb
 def test_index_build_writes_the_docs_and_objects_indexes(
         tmp_path: Path) -> None:
     corpus = _write_select_corpus(tmp_path)
-    index = tmp_path / "index"
-    r = _run_docs_index(tmp_path, str(corpus), str(index))
+    image = tmp_path / "image"
+    r = _run_docs_index(tmp_path, str(corpus), str(image))
     assert r.returncode == 0, r.stdout + r.stderr
-    assert sorted(p.name for p in index.iterdir()) == ["docs", "objects"]
-    for name in ("docs", "objects"):
-        files = [p.name for p in (index / name).iterdir()]
-        assert "sdb_docs.layout" in files, files
-        assert "sdb_docs.segments" in files, files
-        assert [f for f in files
-                if f not in ("sdb_docs.layout", "sdb_docs.segments")], files
-    layout = (index / "docs" / "sdb_docs.layout").read_text()
-    assert [line.split()[0] for line in layout.splitlines()] == [
-        "path", "title", "breadcrumb", "content", "content_text"]
-    _assert_no_data_directory_left(tmp_path)
+    _assert_built_indexes(_parse_image(image.read_bytes()))
+    _assert_nothing_else_written(tmp_path, corpus, image)
 
 
-@pytest.mark.skipif(
-    not (Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)),
-    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}")
+@needs_serenedb
+def test_index_build_needs_no_temporary_directory(tmp_path: Path) -> None:
+    corpus = _write_select_corpus(tmp_path)
+    image = tmp_path / "image"
+    r = subprocess.run([SERENEDB_BIN, "docs-index", str(corpus), str(image)],
+                       cwd=tmp_path,
+                       env={**os.environ, "TMPDIR": str(tmp_path / "missing")},
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    _assert_built_indexes(_parse_image(image.read_bytes()))
+
+
+@needs_serenedb
+def test_index_embedding_builds_the_index_with_the_binary(
+        tmp_path: Path) -> None:
+    binary = tmp_path / "serened"
+    _write_elf(binary)
+    r = _embed(binary, "--corpus", str(_write_select_corpus(tmp_path)),
+               "--builder", SERENEDB_BIN)
+    assert r.returncode == 0, r.stdout + r.stderr
+    _, indexes = _read_region(binary)
+    _assert_built_indexes(indexes)
+
+
+@needs_serenedb
+def test_index_embedding_reports_a_failed_build(tmp_path: Path) -> None:
+    binary = tmp_path / "serened"
+    _write_elf(binary)
+    before = binary.read_bytes()
+    r = _embed(binary, "--corpus", str(tmp_path / "missing.bin"),
+               "--builder", SERENEDB_BIN)
+    assert r.returncode == 1
+    assert "docs-index failed with exit code 1" in r.stderr
+    assert binary.read_bytes() == before
+
+
+@needs_serenedb
 def test_index_build_reports_an_unreadable_corpus(tmp_path: Path) -> None:
-    r = _run_docs_index(tmp_path, str(tmp_path / "missing.bin"),
-                        str(tmp_path / "index"))
+    image = tmp_path / "image"
+    r = _run_docs_index(tmp_path, str(tmp_path / "missing.bin"), str(image))
     assert r.returncode == 1, r.stdout + r.stderr
     assert "cannot read the docs corpus" in r.stdout + r.stderr
-    _assert_no_data_directory_left(tmp_path)
+    assert not image.exists()
 
 
-@pytest.mark.skipif(
-    not (Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)),
-    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}")
+@needs_serenedb
 def test_index_build_reports_a_truncated_corpus(tmp_path: Path) -> None:
     corpus = tmp_path / "docs_corpus.bin"
     corpus.write_bytes(struct.pack("<I", 100) + b"SELECT")
-    r = _run_docs_index(tmp_path, str(corpus), str(tmp_path / "index"))
+    image = tmp_path / "image"
+    r = _run_docs_index(tmp_path, str(corpus), str(image))
     assert r.returncode == 1, r.stdout + r.stderr
     assert "is truncated" in r.stdout + r.stderr
-    _assert_no_data_directory_left(tmp_path)
+    assert not image.exists()
 
 
-@pytest.mark.skipif(
-    not (Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)),
-    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}")
-def test_index_build_keeps_a_directory_that_is_not_empty(
-        tmp_path: Path) -> None:
-    index = tmp_path / "index"
-    index.mkdir()
-    (index / "keep").write_text("kept")
+@needs_serenedb
+def test_index_build_reports_an_image_it_cannot_write(tmp_path: Path) -> None:
+    image = tmp_path / "missing" / "image"
     r = _run_docs_index(tmp_path, str(_write_select_corpus(tmp_path)),
-                        str(index))
+                        str(image))
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "give docs-index a new or empty directory" in r.stdout + r.stderr
-    assert [p.name for p in index.iterdir()] == ["keep"]
-    _assert_no_data_directory_left(tmp_path)
+    assert "cannot build the docs index: writing" in r.stdout + r.stderr
+    assert not image.parent.exists()
 
 
-@pytest.mark.skipif(
-    not (Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)),
-    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}")
-def test_index_build_takes_a_corpus_and_a_directory(tmp_path: Path) -> None:
+@needs_serenedb
+def test_index_build_takes_a_corpus_and_an_image(tmp_path: Path) -> None:
     r = _run_docs_index(tmp_path, str(tmp_path / "corpus.bin"))
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "usage: serenedb docs-index <corpus> <index-dir>" in r.stderr
-
-
-@pytest.mark.skipif(
-    not (Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)),
-    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}")
-def test_index_build_needs_a_temporary_directory(tmp_path: Path) -> None:
-    r = subprocess.run([SERENEDB_BIN, "docs-index", str(tmp_path / "corpus.bin"),
-                        str(tmp_path / "index")], cwd=tmp_path,
-                       env={**os.environ, "TMPDIR": str(tmp_path / "missing")},
-                       capture_output=True, text=True, timeout=60)
-    assert r.returncode == 1, r.stdout + r.stderr
-    assert "cannot create a data directory in" in r.stderr
-    assert not (tmp_path / "serenedb-data").exists()
+    assert "usage: serenedb docs-index <corpus> <image>" in r.stderr
 
 
 def test_docs_generation_writes_the_corpus(tmp_path: Path) -> None:

@@ -37,41 +37,4 @@ struct Iterator : Base {
   virtual bool next() = 0;
 };
 
-template<typename Key, typename Value, typename Iterator, typename Base,
-         typename Less = std::less<Key>>
-class IteratorAdaptor : public Base {
- public:
-  typedef Iterator iterator_type;
-  typedef Key key_type;
-  typedef Value value_type;
-  typedef const value_type& const_reference;
-
-  IteratorAdaptor(iterator_type begin, iterator_type end,
-                  const Less& less = Less())
-    : _begin{begin}, _cur{begin}, _end{end}, _less{less} {}
-
-  const_reference value() const noexcept final { return *_cur; }
-
-  bool seek(key_type key) noexcept final {
-    _begin = std::lower_bound(_cur, _end, key, _less);
-    return next();
-  }
-
-  bool next() noexcept final {
-    if (_begin == _end) {
-      _cur = _begin;  // seal iterator
-      return false;
-    }
-
-    _cur = _begin++;
-    return true;
-  }
-
- private:
-  iterator_type _begin;
-  iterator_type _cur;
-  iterator_type _end;
-  [[no_unique_address]] Less _less;
-};
-
 }  // namespace irs

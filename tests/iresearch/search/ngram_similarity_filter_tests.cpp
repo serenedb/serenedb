@@ -33,11 +33,11 @@
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/utils/ngram_match_utils.hpp>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "tests_shared.hpp"
+#include "utils/ngram_match_utils.hpp"
 
 namespace tests {
 namespace {

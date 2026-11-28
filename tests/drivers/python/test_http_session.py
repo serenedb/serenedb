@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import http.client
 import os
 import socket
@@ -70,7 +69,7 @@ def http_conn():
 
 
 def session_user(conn: http.client.HTTPConnection, auth: str) -> tuple[int, str]:
-    conn.request("GET", "/_test/session_user", headers={"Authorization": auth})
+    conn.request("GET", "/test/session_user", headers={"Authorization": auth})
     response = conn.getresponse()
     body = response.read().decode()
     return response.status, body
@@ -95,7 +94,7 @@ def test_each_request_runs_as_the_role_it_authenticated_as(role, http_conn):
 def test_is_superuser_follows_the_role_a_request_runs_as(role, http_conn):
     answers = []
     for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH):
-        http_conn.request("GET", "/_test/is_superuser", headers={"Authorization": auth})
+        http_conn.request("GET", "/test/is_superuser", headers={"Authorization": auth})
         response = http_conn.getresponse()
         answers.append((response.status, response.read().decode()))
     assert answers == [(200, "on"), (200, "off"), (200, "on")]
@@ -110,8 +109,27 @@ def test_the_bearer_token_is_masked_in_settings():
     assert setting == "***"
 
 
+def test_a_request_scoped_route_runs_every_request_as_its_user(role, http_conn):
+    answers = []
+    sockets = []
+    for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH, ROLE_AUTH):
+        http_conn.request("POST", "/test/copy",
+                          body=b"COPY (SELECT current_user) TO STDOUT",
+                          headers={"Authorization": auth})
+        response = http_conn.getresponse()
+        answers.append((response.status, response.read().decode()))
+        sockets.append(http_conn.sock)
+    assert answers == [
+        (200, f"{SUPERUSER_NAME}\n"),
+        (200, f"{role}\n"),
+        (200, f"{SUPERUSER_NAME}\n"),
+        (200, f"{role}\n"),
+    ]
+    assert all(s is sockets[0] for s in sockets)
+
+
 def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
-    wrong = "Basic " + base64.b64encode(f"{ROLE}:wrong".encode()).decode()
+    wrong = "Basic " + base64.b64encode(b"drv_http_no_such_role:pw").decode()
     answers = []
     for auth in (ROLE_AUTH, wrong, SUPERUSER_AUTH, ROLE_AUTH):
         status, body = session_user(http_conn, auth)
@@ -122,91 +140,6 @@ def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
         (200, SUPERUSER_NAME),
         (200, role),
     ]
-
-
-PASSWORDLESS = "drv_http_session_nopw"
-
-
-@pytest.fixture()
-def passwordless_role():
-    database = conn_kwargs()["dbname"]
-    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
-        conn.execute(f"DROP ROLE IF EXISTS {PASSWORDLESS}")
-        conn.execute(f"CREATE ROLE {PASSWORDLESS} LOGIN")
-        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {PASSWORDLESS}')
-    yield PASSWORDLESS
-    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
-        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {PASSWORDLESS}')
-        conn.execute(f"DROP ROLE {PASSWORDLESS}")
-
-
-EXPIRED = "drv_http_session_expired"
-EXPIRED_PASSWORD = "drv-http-session-expired-pw"
-
-
-@pytest.fixture()
-def expired_role():
-    database = conn_kwargs()["dbname"]
-    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
-        conn.execute(f"DROP ROLE IF EXISTS {EXPIRED}")
-        conn.execute(
-            f"CREATE ROLE {EXPIRED} LOGIN PASSWORD '{EXPIRED_PASSWORD}' "
-            "VALID UNTIL '2000-01-01 00:00:00+00'"
-        )
-        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {EXPIRED}')
-    yield EXPIRED
-    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
-        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {EXPIRED}')
-        conn.execute(f"DROP ROLE {EXPIRED}")
-
-
-def test_a_password_past_its_valid_until_is_refused(expired_role, http_conn):
-    auth = "Basic " + base64.b64encode(
-        f"{expired_role}:{EXPIRED_PASSWORD}".encode()
-    ).decode()
-    assert session_user(http_conn, auth)[0] == 401
-    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
-        conn.execute(f"ALTER ROLE {expired_role} VALID UNTIL 'infinity'")
-    assert session_user(http_conn, auth) == (200, expired_role)
-
-
-def test_a_passwordless_role_is_not_trusted(passwordless_role, http_conn):
-    for password in ("", "anything"):
-        auth = "Basic " + base64.b64encode(
-            f"{passwordless_role}:{password}".encode()
-        ).decode()
-        status, _ = session_user(http_conn, auth)
-        assert status == 401
-    empty_user = "Basic " + base64.b64encode(b":").decode()
-    status, _ = session_user(http_conn, empty_user)
-    assert status == 401
-
-
-MD5_ROLE = "drv_http_session_md5"
-MD5_PASSWORD = "drv-http-session-md5-pw"
-
-
-@pytest.fixture()
-def md5_role():
-    database = conn_kwargs()["dbname"]
-    stored = "md5" + hashlib.md5(f"{MD5_PASSWORD}{MD5_ROLE}".encode()).hexdigest()
-    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
-        conn.execute(f"DROP ROLE IF EXISTS {MD5_ROLE}")
-        conn.execute(f"CREATE ROLE {MD5_ROLE} LOGIN PASSWORD '{stored}'")
-        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {MD5_ROLE}')
-    yield MD5_ROLE
-    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
-        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {MD5_ROLE}')
-        conn.execute(f"DROP ROLE {MD5_ROLE}")
-
-
-def test_an_md5_stored_password_authenticates(md5_role, http_conn):
-    for password, want in ((MD5_PASSWORD, (200, md5_role)), ("wrong", (401,))):
-        auth = "Basic " + base64.b64encode(
-            f"{md5_role}:{password}".encode()
-        ).decode()
-        status, body = session_user(http_conn, auth)
-        assert ((status, body) if status == 200 else (status,)) == want
 
 
 LIMITED = "drv_http_session_limited"

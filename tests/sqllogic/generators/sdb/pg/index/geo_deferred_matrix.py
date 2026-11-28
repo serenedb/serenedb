@@ -1,4 +1,5 @@
 import json
+import math
 
 from sqllogic_gen import Test, lit
 
@@ -204,6 +205,65 @@ for extra in CONTEXTS[:2]:
     t.section("encode_geopoint over latitude and longitude fields.")
     for pred in geo_predicates("geo"):
         check("gdm_p_idx", pred, extra)
+
+def first_point(shape):
+    c = shape["coordinates"]
+    while isinstance(c[0], list):
+        c = c[0]
+    return c
+
+
+def metres(a, b):
+    dx = (a[0] - b[0]) * 111320 * math.cos(math.radians((a[1] + b[1]) / 2))
+    return math.hypot(dx, (a[1] - b[1]) * 110540)
+
+
+def probed_ids(rows):
+    ring = QUERIES[0]["coordinates"][0]
+    lo, hi = ring[0], ring[2]
+    inside = [i for i, s in enumerate(rows)
+              if lo[0] <= first_point(s)[0] <= hi[0] and lo[1] <= first_point(s)[1] <= hi[1]]
+    by_distance = sorted(range(len(rows)),
+                         key=lambda i: metres(first_point(rows[i]), CENTROIDS[0]))
+    beyond = [i for i in by_distance if 850 < metres(first_point(rows[i]), CENTROIDS[0])]
+    far = [i for i, s in enumerate(rows) if first_point(s)[0] < 30]
+    ids = sorted(set(inside[:2] + by_distance[:3] + beyond[:1] + far[:1]))
+    return f" AND id IN ({', '.join(map(str, ids))})"
+
+
+def probed(preds):
+    return [preds[i] for i in (0, 2, 3, 70, 71, 76, 77, 78, 79)]
+
+
+PROBED = probed_ids(shapes)
+
+for name in JSON_INDEXES:
+    t.part()
+    json_table()
+    t.index(f"{name}_idx", "gdm", f"id, geo {name}")
+    t.section(f"JSON column, {DICTS[name]}, the geo predicate probed for a few ids.")
+    for pred in probed(geo_predicates("geo")):
+        check(f"{name}_idx", pred, PROBED)
+
+for idx, dictionary in (("gdm_g_source_idx", "gdm_shape"), ("gdm_g_s2point_idx", "gdm_s2point")):
+    for as_geometry in (False, True):
+        t.part()
+        t.table("gdm_g", "id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84')")
+        t.insert("gdm_g", (f"({i}, '{wkt(shapes[i])}'::GEOMETRY('OGC:CRS84'))"
+                           for i in range(ROWS)))
+        t.index(idx, "gdm_g", f"id, geo {dictionary}")
+        t.section(f"GEOMETRY column ({idx}), the geo predicate probed for a few ids.")
+        for pred in probed(geo_predicates("geo", as_geometry)):
+            check(idx, pred, PROBED)
+
+t.part()
+t.table("gdm_p", "id INTEGER PRIMARY KEY, geo JSON")
+t.insert("gdm_p", (f"({i}, '{{\"lat\":{s['coordinates'][1]},\"lng\":{s['coordinates'][0]}}}')"
+                   for i, s in enumerate(points)), chunk=None)
+t.index("gdm_p_idx", "gdm_p", "id, geo gdm_geopoint")
+t.section("encode_geopoint over latitude and longitude fields, the geo predicate probed for a few ids.")
+for pred in probed(geo_predicates("geo")):
+    check("gdm_p_idx", pred, probed_ids(points))
 
 t.part()
 json_table()

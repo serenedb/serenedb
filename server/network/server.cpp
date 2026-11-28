@@ -50,7 +50,8 @@
 ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
   "Listener URL(s), comma-separated or repeated (last-wins). Each is one "
-  "listener: postgres://host:port[?sslmode=...], http(s)://host:port?api=es, "
+  "listener: postgres://host:port[?sslmode=...], "
+  "http(s)://host:port?api=mcp&api=otel (es needs a listener of its own), "
   "postgres:///path/to.sock (unix). A postgres listener needs an explicit "
   "port, http(s) defaults to 80/443; a path after the port is ignored.");
 
@@ -92,10 +93,8 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
     std::string stored;
     network::Credential credential;
     catalog::ReadEntry<catalog::RoleCatalogEntry>(
-      username, [&](const catalog::RoleCatalogEntry& role) {
-        stored = role.Password();
-        credential.valid_until = role.ValidUntil();
-      });
+      username,
+      [&](const catalog::RoleCatalogEntry& role) { stored = role.Password(); });
     if (stored.empty()) {
       return std::nullopt;
     }

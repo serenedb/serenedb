@@ -134,3 +134,49 @@ SELECT count(*) FROM tags_n_idx;
 ----
 count
 4
+
+query
+SELECT pk FROM tags_t WHERE tags = ['beta', 'gamma'] ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM tags_t_idx WHERE tags = ['beta', 'gamma'] ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM tags_t_idx WHERE tags <> ['delta'] ORDER BY pk;
+----
+pk
+1
+2
+4
+
+query
+SELECT pk FROM tags_t_idx WHERE tags > ['beta'] ORDER BY pk;
+----
+pk
+2
+3
+4
+
+query
+SELECT pk FROM nums_t WHERE nums = [20, 40, 60] ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM nums_t_idx WHERE nums IN ([10, 20, 30], [10, 50, 71]) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM tags_n_idx WHERE tags = [] ORDER BY pk;
+----
+pk
+4

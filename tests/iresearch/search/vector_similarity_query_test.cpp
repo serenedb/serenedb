@@ -24,6 +24,8 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/composite_reader.hpp>
@@ -33,6 +35,7 @@
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/vector_filter_util.hpp>
+#include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
@@ -42,6 +45,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -69,8 +73,7 @@ inline constexpr uint32_t kDim = 4;
 // both execution paths expose distances to the vector scorer.
 
 irs::IndexWriterOptions MakeWriterOptions(
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO,
+  irs::codecs::CodecType compression = irs::codecs::CodecType::Auto,
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE) {
   auto opts = irs::tests::DefaultWriterOptions();
   opts.row_group_size = row_group_size;
@@ -465,7 +468,7 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
 }
 
 class RerankExactDistancesTest
-  : public ::testing::TestWithParam<duckdb::CompressionType> {
+  : public ::testing::TestWithParam<irs::codecs::CodecType> {
  protected:
   static constexpr uint32_t kRowGroup = 64;
 
@@ -478,7 +481,8 @@ class RerankExactDistancesTest
     ASSERT_NE(nullptr, child);
     ASSERT_LT(1U, child->DataBlocks().size());
     for (const auto& block : child->DataBlocks()) {
-      ASSERT_EQ(GetParam(), block.codec->type);
+      ASSERT_EQ(magic_enum::enum_name(GetParam()),
+                magic_enum::enum_name(block.codec->type));
     }
   }
 
@@ -504,9 +508,79 @@ TEST_P(RerankExactDistancesTest, Rerank) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  Codec, RerankExactDistancesTest,
-  ::testing::Values(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-                    duckdb::CompressionType::COMPRESSION_ALP));
+INSTANTIATE_TEST_SUITE_P(Codec, RerankExactDistancesTest,
+                         ::testing::Values(irs::codecs::CodecType::Uncompressed,
+                                           irs::codecs::CodecType::Alp));
+
+TEST(RawVectorReaderTest, RowsAcrossBlocksThatDoNotContinueTheirBytesScore) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint32_t kDims = 3;
+  constexpr uint32_t kRowGroup = 1001;
+  constexpr uint64_t kRows = 3 * kRowGroup;
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDims);
+  const auto coord = [](uint64_t row, uint32_t i) {
+    return row >= 2 * kRowGroup
+             ? 1.f
+             : static_cast<float>((row * 7919 + i * 104729) % 1000) / 8;
+  };
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  ::tests::IndexDir dir{db, TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{db, dir.Tracker("seg")};
+    auto& cw =
+      w.OpenColumn(kId, vtype,
+                   {.row_group_size = kRowGroup,
+                    .compression = irs::codecs::CodecType::Uncompressed});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{vtype, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<float>(
+        duckdb::ArrayVector::GetChildMutable(v));
+      for (uint64_t k = 0; k < take; ++k) {
+        for (uint32_t i = 0; i < kDims; ++i) {
+          data[k * kDims + i] = coord(pos + k, i);
+        }
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(nullptr, col);
+  ASSERT_NE(nullptr, col->Child());
+  const auto blocks = col->Child()->DataBlocks();
+  ASSERT_EQ(3U, blocks.size());
+  ASSERT_EQ(irs::codecs::CodecType::Uncompressed, blocks[0].codec->type);
+  ASSERT_EQ(irs::codecs::CodecType::Uncompressed, blocks[1].codec->type);
+  ASSERT_NE(blocks[0].file_offset + blocks[0].byte_size, blocks[1].file_offset);
+  ASSERT_EQ(irs::codecs::CodecType::Constant, blocks[2].codec->type);
+  const std::vector<float> query{1.f, 2.f, 3.f};
+  irs::detail::RawVectorReader reader{*col, r, kDims};
+  reader.SetQuery(query, irs::VectorMetric::L2Sqr);
+  const auto distance = irs::ResolveScoringDistance(irs::VectorMetric::L2Sqr);
+  for (const uint64_t first : {kRowGroup - 11, 2 * kRowGroup - 11}) {
+    SCOPED_TRACE(first);
+    std::vector<irs::doc_id_t> docs;
+    for (uint64_t row = first; row < first + 21; ++row) {
+      docs.push_back(static_cast<irs::doc_id_t>(row + irs::doc_limits::min()));
+    }
+    std::vector<irs::score_t> scores(docs.size());
+    reader.ComputeDistances(docs, scores);
+    for (size_t k = 0; k < docs.size(); ++k) {
+      std::array<float, kDims> row;
+      for (uint32_t i = 0; i < kDims; ++i) {
+        row[i] = coord(first + k, i);
+      }
+      EXPECT_EQ(
+        distance(reinterpret_cast<const irs::byte_type*>(query.data()),
+                 reinterpret_cast<const irs::byte_type*>(row.data()), kDims),
+        scores[k])
+        << "row " << first + k;
+    }
+  }
+}
 
 }  // namespace

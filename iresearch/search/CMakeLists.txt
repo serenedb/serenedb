@@ -5,6 +5,7 @@ target_sources(
         count/make_boolean.cpp
         count/make_boolean_negation.cpp
         count/make_constant.cpp
+        count/make_disjoint.cpp
         count/make_subtract_conjunction.cpp
         count/make_subtract_disjunction.cpp
         count/make_term_counts.cpp
@@ -18,6 +19,9 @@ target_sources(
         docs/make.cpp
         docs/make_all.cpp
         docs/make_posting.cpp
+        explain/describe.cpp
+        explain/factors.cpp
+        explain/names.cpp
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
         fill/make_posting.cpp
@@ -376,6 +380,7 @@ target_sources(
         count/make_hnsw.cpp
         docs/make_exact.cpp
         docs/make_hnsw.cpp
+        explain/plan.cpp
         filters/geo_filter.cpp
         filters/nested_filter.cpp
         filters/shingle_phrase.cpp
@@ -397,6 +402,7 @@ target_sources(
         scorers/indri_dirichlet.cpp
         scorers/lm_dirichlet.cpp
         scorers/lm_jelinek_mercer.cpp
+        scorers/lm_similarity.cpp
         scorers/raw_boost.cpp
         scorers/raw_dl.cpp
         scorers/raw_tf.cpp

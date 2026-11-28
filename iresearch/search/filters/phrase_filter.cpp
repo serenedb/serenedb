@@ -23,7 +23,6 @@
 #include "phrase_filter.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_format.h>
 
 #include <algorithm>
@@ -53,6 +52,7 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
@@ -403,7 +403,7 @@ void ApplyTermGroups(const ByPhraseOptions& options,
       [&](uint32_t i) -> uint32_t& { return positions[i].term_group; }, x);
   };
 
-  absl::flat_hash_map<bytes_view, uint32_t> first_owner;
+  containers::FlatHashMap<bytes_view, uint32_t> first_owner;
   const auto add_term = [&](bytes_view term, uint32_t slot) {
     const auto [it, inserted] = first_owner.emplace(term, slot);
     if (!inserted) {
@@ -703,6 +703,37 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
     scorer, counts.terms, counts.expanded, stats, threads);
 }
 
+void ByPhrase::ExplainStats(const PrepareCollector* collector,
+                            explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  std::vector<bytes_view> terms;
+  for (const auto& word : options()) {
+    switch (ByPhraseOptions::KindOf(word.part)) {
+      case SlotKind::Term:
+        terms.push_back(ByPhraseOptions::TermOf(word.part));
+        break;
+      case SlotKind::Set:
+        for (const auto& term : std::get<TermSetOptions>(word.part).terms) {
+          terms.push_back(term);
+        }
+        break;
+      case SlotKind::Expansion:
+        break;
+    }
+  }
+  collector->Describe(field_id(), [&](size_t i) { return terms[i]; }, out);
+}
+
+void ByPhrase::ExplainTerms(const SubReader& segment,
+                            explain::TermNames& out) const {
+  for (const auto& word : options()) {
+    PartFilter(field_id(), dict(), word.part, false)
+      ->ExplainTerms(segment, out);
+  }
+}
+
 Filter::ptr PartFilter(field_id field, DictRef dict,
                        ByPhraseOptions::PhrasePart part, bool max_synonyms) {
   return std::visit(
@@ -748,20 +779,20 @@ bool ByPhraseOptions::LowerParts() {
     } else if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
       bstring buf;
       info.part = ExecuteWildcard(
-        buf, bytes_view{w->term},
+        buf, bytes_view{w->term}, w->bytes,
         [](bytes_view term) -> PhrasePart {
           return ByTermOptions{bstring{term}};
         },
         [](bytes_view prefix) -> PhrasePart {
           return ByPrefixOptions{{bstring{prefix}}};
         },
-        [](bytes_view term) -> PhrasePart {
-          return AutomatonOptions{term, PatternKind::Wildcard};
+        [kind = WildcardPattern(w->bytes)](bytes_view term) -> PhrasePart {
+          return AutomatonOptions{term, kind};
         });
       changed = true;
     } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
       bstring buf;
-      const auto kind = RegexpPattern(r->syntax);
+      const auto kind = RegexpPattern(r->syntax, r->bytes);
       info.part = ExecuteRegexp(
         buf, bytes_view{r->pattern}, r->syntax,
         [](bytes_view term) -> PhrasePart {
@@ -781,16 +812,25 @@ bool ByPhraseOptions::LowerParts() {
         e->max_distance, e->provider, e->with_transpositions, e->prefix,
         e->term, [] -> PhrasePart { return TermSetOptions{}; },
         [&] -> PhrasePart {
-          ByTermOptions opts;
-          opts.term.reserve(e->prefix.size() + e->term.size());
-          opts.term += e->prefix;
-          opts.term += e->term;
-          return opts;
+          bstring whole;
+          whole.reserve(e->prefix.size() + e->term.size());
+          whole += e->prefix;
+          whole += e->term;
+          if (e->starts_with) {
+            return ByPrefixOptions{{std::move(whole)}};
+          }
+          return ByTermOptions{std::move(whole)};
         },
         [e, max_terms](const ParametricDescription& d, bytes_view prefix,
                        bytes_view term) -> PhrasePart {
-          return LevenshteinAutomatonOptions{
-            d, e->provider, e->with_transpositions, prefix, term, max_terms};
+          return LevenshteinAutomatonOptions{d,
+                                             e->provider,
+                                             e->with_transpositions,
+                                             e->starts_with,
+                                             e->bytes,
+                                             prefix,
+                                             term,
+                                             max_terms};
         });
       changed = true;
     }

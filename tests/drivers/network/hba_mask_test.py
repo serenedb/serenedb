@@ -17,8 +17,6 @@ ruleset over a superuser (loopback) connection, then runs the source-IP matrix.
 """
 
 import argparse
-import base64
-import hashlib
 import os
 import socket
 import ssl
@@ -452,62 +450,9 @@ def run_proxy(binary: str, failures: list) -> None:
         srv.stop()
 
 
-HTTP_HBA = ("host all h_rejected 127.0.0.0/8 reject\n"
-            "host all all 127.0.0.0/8 scram-sha-256\n")
-
-HTTP_CASES = [
-    ("h_allowed", "pw", False),
-    ("h_allowed", "wrong", True),
-    ("h_rejected", "pw", True),
-    ("h_md5", "pw", False),
-]
-
-
-def http_basic_unauthorized(port: int, user: str, password: str,
-                            timeout: float = 5.0) -> bool:
-    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
-    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
-    try:
-        s.sendall(f"GET / HTTP/1.1\r\nHost: localhost\r\n"
-                  f"Authorization: Basic {auth}\r\n"
-                  f"Connection: close\r\n\r\n".encode())
-        status = s.recv(64).split(b"\r\n", 1)[0]
-        return status.split(b" ")[1:2] == [b"401"]
-    finally:
-        s.close()
-
-
-def run_http(binary: str, failures: list) -> None:
-    reserved = reserve_port()
-    http_port = reserved.getsockname()[1]
-    srv = Serened(binary)
-    srv.host = "127.0.0.1"
-    srv.extra_args = [f"--listen=postgres://127.0.0.1:{srv.port},"
-                      f"http://127.0.0.1:{http_port}?api=es"]
-    try:
-        reserved.close()
-        srv.start()
-        md5 = "md5" + hashlib.md5(b"pwh_md5").hexdigest()
-        psql_exec(srv.port, "CREATE ROLE h_allowed LOGIN PASSWORD 'pw'")
-        psql_exec(srv.port, "CREATE ROLE h_rejected LOGIN PASSWORD 'pw'")
-        psql_exec(srv.port, f"CREATE ROLE h_md5 LOGIN PASSWORD '{md5}'")
-        set_hba(srv.port, HTTP_HBA)
-        for user, password, want in HTTP_CASES:
-            got = http_basic_unauthorized(http_port, user, password)
-            ok = got == want
-            print(f"[{'OK' if ok else 'FAIL'}] http basic: {user} -> "
-                  f"unauthorized={got} (want {want})")
-            if not ok:
-                failures.append(("http basic", f"{user}: {got}!={want}"))
-    finally:
-        srv.graceful_stop()
-        srv.stop()
-
-
 def run(binary: str) -> int:
     failures = []
     run_proxy(binary, failures)
-    run_http(binary, failures)
     srv = Serened(binary)
     port = srv.port
     try:

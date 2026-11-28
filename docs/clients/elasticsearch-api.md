@@ -22,9 +22,17 @@ serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:9200?api=es'
 
 Indices live in the listener's database, which is `postgres` unless `db=` names another one, as in `?api=es&db=shop`. That database must exist, or the server does not start and logs `database 'shop' does not exist`.
 
-To serve another HTTP API on the same port, repeat the `api` key: `?api=es&api=mcp` also serves the [MCP endpoint](../sql/functions/docs.md#documentation-for-ai-agents-over-mcp). Do not join the values with a comma. The comma separates endpoints in `--listen`, so `?api=es,mcp` stops the server at startup with `invalid network endpoint 'mcp'`.
+The Elasticsearch API needs a listener of its own: its index routes (`PUT /<index>`, `GET /<index>` and the rest) take every path at the root, so another API on the same port would hide some index names. A listener that names `es` with another API stops the server at startup with `needs a listener of its own`. Serve the other HTTP APIs on another endpoint, for example the [MCP endpoint](../sql/functions/docs.md#documentation-for-ai-agents-over-mcp):
+
+```bash
+serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:9200?api=es,http://127.0.0.1:8080?api=mcp&api=otel'
+```
+
+A listener serves several APIs when the `api` key repeats, as in `?api=mcp&api=otel`. Do not join the values with a comma. The comma separates endpoints in `--listen`, so `?api=mcp,otel` stops the server at startup with `invalid network endpoint 'otel'`.
 
 Browser-based tools need CORS. `--http_cors_origins` takes a comma-separated list of allowed origins or `*`. The server echoes an allowed `Origin` and answers preflight `OPTIONS` requests.
+
+A client that closes its connection before the answer arrives cancels the statement its request runs.
 
 Check that the listener answers:
 
@@ -48,7 +56,7 @@ Every request needs an `Authorization` header, from the local machine too. A req
 | `Bearer` | a static token | `--auth_bearer_token=<token>` |
 | `ApiKey` | base64 of a static `<id>:<key>` pair | `--auth_api_key=<id>:<key>` |
 
-A role without a password, such as `postgres` on a fresh server, is accepted only from a loopback address. That is why the examples on this page use `-u postgres:`. From any other address such a role gets `401`.
+A Basic login follows the server's [client authentication rules](../security/client_authentication.md), as a `psql` login does: with the default rules `postgres` is trusted from a loopback address, which is why the examples on this page use `-u postgres:`, and every other role needs its password. A role that does not exist or has no `LOGIN`, a role whose `VALID UNTIL` has passed, a wrong password and a login a rule rejects get `401`.
 
 Bearer and ApiKey answer `401` until their flag is set. They have no role of their own: requests that use them act as the `postgres` superuser.
 
@@ -195,7 +203,7 @@ EOF
 ### Refresh and request bodies
 
 - `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write, `POST /<index>/_refresh` and `POST /_refresh` are accepted and change nothing: a document is searchable as soon as its write returns. See [Visibility](#visibility).
-- A request body is at most 100 MiB, Elasticsearch's default `http.max_content_length`. A larger one gets `413`. A listener that also serves other APIs (`?api=es&api=otel`) applies the largest of their limits to every request.
+- A request body is at most 100 MiB, Elasticsearch's default `http.max_content_length`. A larger one gets `413`.
 - A request body can be compressed. A body sent with `Content-Encoding` is decompressed before the request reaches the API; see [HTTP Compression](../configuration/http_compression.md#compressed-request-bodies) for the codings and limits.
 
 ## Reading documents
@@ -264,11 +272,11 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_search \
   ...
   "hits": {
     "total": {"value": 2, "relation": "eq"},
-    "max_score": 0.22689829766750336,
+    "max_score": 0.2268983,
     "hits": [
-      {"_index": "articles", "_id": "2", "_score": 0.22689829766750336,
+      {"_index": "articles", "_id": "2", "_score": 0.2268983,
        "_source": {"title": "Search with BM25 ranking", "tag": "search", "views": 300, "posted": "2026-09-02T11:00:00Z"}},
-      {"_index": "articles", "_id": "3", "_score": 0.1912805140018463,
+      {"_index": "articles", "_id": "3", "_score": 0.19128051,
        "_source": {"title": "Hybrid search in one SQL query", "tag": "search", "views": 80, "posted": "2026-09-10T09:30:00Z", "draft": true}}
     ]
   }
@@ -285,10 +293,11 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_search \
 | `_source` | `true` or `false` |
 | `aggs`, `aggregations` | see [Aggregations](#aggregations) |
 | `track_total_hits` | accepted and ignored, since totals are always exact |
+| `explain` | `true` or `false`; see [Explaining scores](#explaining-scores) |
 
 Any other key fails with `400 illegal_argument_exception`, for example `highlight`, `search_after`, `fields` or `collapse`.
 
-In the URL, `size` and `from` apply unless the body sets them, and `rest_total_hits_as_int=true` reports `hits.total` as a plain number. Every other URL parameter is ignored, `q` and `sort` included: `/articles/_search?q=title:wire` returns every document.
+In the URL, `size` and `from` apply unless the body sets them, `explain=true` explains each hit unless the body sets `explain`, and `rest_total_hits_as_int=true` reports `hits.total` as a plain number. Every other URL parameter is ignored, `q` and `sort` included: `/articles/_search?q=title:wire` returns every document.
 
 `_count` accepts only `query` in its body.
 
@@ -344,6 +353,19 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_search \
 - A query with a full-text clause and no `sort` is ranked by [BM25](../sql/indexes/inverted/ranking.md): hits come in score order, `_score` is the BM25 score and `max_score` the highest one.
 - Without a full-text clause, every hit scores `1.0`.
 - With a `sort`, `_score` and `max_score` are `null`.
+
+### Explaining scores
+
+With `"explain": true`, each hit carries an `_explanation`: how its BM25 score was computed, clause by clause, in Elasticsearch's layout of `value`, `description` and `details`, as [`ts_explain_json`](../sql/functions/search/scoring.md#ts_explain) returns it. Its `value` equals the hit's `_score`. A query without a full-text clause explains the constant `1.0`, and a query with a `sort` still explains the BM25 score its hits would have. A scroll search cannot have `explain`.
+
+`GET` or `POST` on `/<index>/_explain/<id>` explains one document for the `query` in the body, the only key it accepts:
+
+```bash
+curl -s -u postgres: http://127.0.0.1:9200/articles/_explain/2 \
+  -H 'Content-Type: application/json' -d '{"query": {"match": {"title": "search"}}}'
+```
+
+The answer has `"matched": true` and the `explanation`, or `"matched": false` when the document does not match the query. A missing ID answers `404` with `"matched": false`, and a request without a `query` answers `400`.
 
 ### Sorting and paging
 
@@ -416,7 +438,7 @@ curl -s -u postgres: 'http://127.0.0.1:9200/articles/_search?scroll=1m&size=2' \
 
 The response carries a `_scroll_id`. Post it to `/_search/scroll`, as `{"scroll_id": "..."}` in the body or `?scroll_id=` in the URL, to get the next page, and repeat until a page comes back without hits. `DELETE /_search/scroll` answers success.
 
-- A scroll search cannot have `sort` (other than `_doc`), `aggs` or `from`.
+- A scroll search cannot have `sort` (other than `_doc`), `aggs`, `from` or `explain`.
 - Pages come in `_id` order, with `_score` set to `null`.
 - The scroll ID carries the query and the last `_id` returned, not a snapshot. Documents written during the scroll can appear on later pages, `hits.total` is the count from the first page, the keep-alive is not enforced and an ID can be used again.
 

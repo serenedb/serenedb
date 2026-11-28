@@ -26,6 +26,7 @@
 #include <iterator>
 #include <utility>
 
+#include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/detail/estimate.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -39,8 +40,7 @@ namespace {
 
 bool SamePosting(const PostingMeta& l, const PostingMeta& r) noexcept {
   return l.doc_start == r.doc_start && l.docs_count > 1 && r.docs_count > 1 &&
-         l.pos_start == r.pos_start && l.pos_offset == r.pos_offset &&
-         l.Inline() == r.Inline();
+         l.pos_start == r.pos_start && l.pos_offset == r.pos_offset;
 }
 
 bool SameStats(const detail::StatsRecord& lhs,
@@ -83,12 +83,7 @@ score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
       if (record.stats == nullptr) {
         continue;
       }
-      const auto one = detail::AllDocsScore(segment, detail::ScoreArgs{
-                                                       .scorer = record.scorer,
-                                                       .stats = record.stats,
-                                                       .fetcher = &fetcher,
-                                                       .boost = clause.boost,
-                                                     });
+      const auto one = detail::AllDocsScore(segment, clause, &fetcher);
       if (!any) {
         any = true;
         out = one;
@@ -181,9 +176,10 @@ Expected AnyOf(const BooleanQuery::PreparedBucket& bucket, uint32_t docs) {
 
 void BooleanBuilder::Push(BooleanQuery::PreparedBucket& bucket,
                           const TermReader* reader, const PostingMeta& meta,
-                          score_t boost, detail::StatsRecord stats) {
+                          score_t boost, detail::StatsRecord stats,
+                          uint32_t group) {
   SDB_ASSERT(meta.docs_count != 0);
-  bucket.postings.emplace_back(TermState{reader, meta}, boost, stats);
+  bucket.postings.emplace_back(TermState{reader, meta}, boost, group, stats);
 }
 
 bool BooleanBuilder::Absorb(QueryKind kind, Occur occur) {
@@ -217,7 +213,7 @@ void BooleanBuilder::AddTerm(const TermReader* reader, const PostingMeta& meta,
     }
     return;
   }
-  Push(bucket, reader, meta, boost, stats);
+  Push(bucket, reader, meta, boost, stats, 0);
 }
 
 void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
@@ -235,7 +231,8 @@ void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
   if (kind == QueryKind::Term) {
     const auto& term = irs::utils::downCast<TermQuery>(*query);
     const auto& state = term.State();
-    Push(bucket, state.reader, state.cookie, query->Boost(), term.Stats());
+    Push(bucket, state.reader, state.cookie, query->Boost(), term.Stats(),
+         term.RangePosting() ? ++_groups : 0);
     return;
   }
   if (kind == QueryKind::Terms && SplicesTerms(occur)) {
@@ -246,16 +243,18 @@ void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
     }
     const auto& state = multi.State();
     const auto boost = multi.Boost();
+    const uint32_t group = state.HasRangePostings() ? ++_groups : 0;
     if (occur == Occur::MustNot) {
       for (const auto& entry : state.Terms()) {
-        Push(bucket, state.Reader(), entry.cookie, kNoBoost, {});
+        Push(bucket, state.Reader(), entry.cookie, kNoBoost, {}, group);
       }
       return;
     }
     const auto* const scorer = multi.Stats().scorer;
     for (const auto& entry : state.Terms()) {
       Push(bucket, state.Reader(), entry.cookie, boost * entry.boost,
-           detail::StatsRecord{entry.stats, entry.stats ? scorer : nullptr});
+           detail::StatsRecord{entry.stats, entry.stats ? scorer : nullptr},
+           group);
     }
     return;
   }
@@ -305,23 +304,18 @@ void BooleanBuilder::FlattenAll() {
   }
 }
 
-void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to,
-                                 score_t boost) {
+void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to) {
   auto& bucket = _clauses[OccurIndex(to)];
-  const auto fold = [boost](auto& clauses) {
-    for (auto& clause : clauses) {
-      clause.boost *= boost;
+  const uint32_t base = _groups;
+  for (auto& clause : from.postings) {
+    if (clause.group != 0) {
+      clause.group += base;
+      _groups = std::max(_groups, clause.group);
     }
-  };
-  fold(from.postings);
-  fold(from.all_docs);
+  }
   Append(bucket.postings, from.postings);
   Append(bucket.all_docs, from.all_docs);
   for (auto& clause : from.filters) {
-    if (clause && boost != kNoBoost && !QueryBuilder::IsEmpty(*clause)) {
-      auto& child = const_cast<QueryBuilder&>(*clause);
-      child.SetBoost(child.Boost() * boost);
-    }
     Add(std::move(clause), to);
   }
   from.filters.clear();
@@ -329,23 +323,19 @@ void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to,
 
 void BooleanBuilder::Inherit(const BooleanQuery& nested) {
   for (const auto occur : kAllOccur) {
-    MergeBucket(BooleanQuery::Steal(nested, occur), occur, kNoBoost);
+    MergeBucket(BooleanQuery::Steal(nested, occur), occur);
   }
 }
 
 void BooleanBuilder::Merge(const BooleanQuery& nested, Occur to) {
-  const auto boost = nested.Boost();
   switch (to) {
     case Occur::Must:
-      MergeBucket(BooleanQuery::Steal(nested, Occur::Must), Occur::Must, boost);
-      MergeBucket(BooleanQuery::Steal(nested, Occur::MustNot), Occur::MustNot,
-                  kNoBoost);
+      MergeBucket(BooleanQuery::Steal(nested, Occur::Must), Occur::Must);
+      MergeBucket(BooleanQuery::Steal(nested, Occur::MustNot), Occur::MustNot);
       return;
     case Occur::Should:
-      MergeBucket(BooleanQuery::Steal(nested, Occur::Should), to, boost);
-      return;
     case Occur::MustNot:
-      MergeBucket(BooleanQuery::Steal(nested, Occur::Should), to, kNoBoost);
+      MergeBucket(BooleanQuery::Steal(nested, Occur::Should), to);
       return;
   }
   SDB_UNREACHABLE();
@@ -453,6 +443,12 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
   if (Dedup(msm) && _empty) {
     return QueryBuilder::Empty();
   }
+  for (auto& bucket : _clauses) {
+    bucket.disjoint = count::Disjoint(bucket.postings);
+  }
+  if (must.postings.size() >= 2 && must.disjoint) {
+    return QueryBuilder::Empty();
+  }
 
   if (must_not.empty() && must.all_docs.empty() && should.all_docs.empty()) {
     const auto lone =
@@ -463,7 +459,8 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
       if (bucket.filters.empty() && bucket.postings.size() == 1) {
         const auto& clause = bucket.postings.front();
         return MakeTermQuery(_memory, _segment, clause.state.reader,
-                             clause.state.cookie, clause.boost, clause.stats);
+                             clause.state.cookie, clause.boost, clause.stats,
+                             clause.group != 0);
       }
       return nullptr;
     };
@@ -527,7 +524,10 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     if (must.all_docs.empty() && should.all_docs.empty()) {
       return QueryBuilder::Empty();
     }
-    estimate = docs - std::min(docs, MaxEstimate(must_not));
+    const uint64_t excluded = must_not.filters.empty() && must_not.disjoint
+                                ? SumEstimate(must_not)
+                                : MaxEstimate(must_not);
+    estimate = docs - static_cast<uint32_t>(std::min<uint64_t>(docs, excluded));
   }
   if (!must_not.empty()) {
     const auto excluded = SumEstimate(must_not);

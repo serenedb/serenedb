@@ -26,6 +26,7 @@
 #include <optional>
 
 #include "tests_shared.hpp"
+#include "utils/edit_distance.hpp"
 
 using namespace std::literals;
 
@@ -36,7 +37,8 @@ void AssertDescription(
   const irs::bytes_view& term,
   const std::vector<std::tuple<irs::bytes_view, size_t, size_t, size_t>>&
     candidates) {
-  const irs::LevenshteinAcceptor acceptor{description, prefix, term};
+  const irs::BasicLevenshteinAcceptor<false> acceptor{description, prefix,
+                                                      term};
 
   irs::bstring target(prefix.data(), prefix.size());
   target += term;
@@ -45,7 +47,7 @@ void AssertDescription(
     auto state = acceptor.Start();
     for (const auto label : candidate) {
       state = acceptor.Step(state, label);
-      if (!irs::LevenshteinAcceptor::Alive(state)) {
+      if (!irs::BasicLevenshteinAcceptor<false>::Alive(state)) {
         return std::optional<size_t>{};
       }
     }

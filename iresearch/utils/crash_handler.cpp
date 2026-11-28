@@ -24,6 +24,7 @@
 #include <absl/debugging/failure_signal_handler.h>
 
 #include <atomic>
+#include <charconv>
 #include <cstdlib>
 #include <cstring>
 #include <string_view>
@@ -44,7 +45,7 @@ std::atomic<const char*> gStateString{nullptr};
 // stream as our other crash records, prefixed with the server-state tag.
 [[maybe_unused]] void CrashWriter(const char* data) noexcept {
   // absl uses a nullptr argument as a "flush" hint; nothing to flush here.
-  if (data == nullptr) {
+  if (!data) {
     return;
   }
   // Strip the trailing newline absl adds -- LogCrash re-appends one to match
@@ -54,7 +55,7 @@ std::atomic<const char*> gStateString{nullptr};
     sv.remove_suffix(1);
   }
   if (const char* state = gStateString.load(std::memory_order_relaxed);
-      state != nullptr && state[0] != '\0') {
+      state && state[0] != '\0') {
     // Two-shot write: "[state=<tag>] " then the abseil line. LogCrash is
     // signal-safe (write(2) to stderr, fixed-size stack buffer).
     char prefix[64];
@@ -107,23 +108,19 @@ void CrashHandler::SetState(std::string_view state) {
   };
   auto append_int = [&](long v) noexcept {
     char tmp[24];
-    int n = std::snprintf(tmp, sizeof(tmp), "%ld", v);
-    if (n > 0) {
-      append(std::string_view{tmp, static_cast<size_t>(n)});
-    }
+    append({tmp, std::to_chars(tmp, tmp + sizeof(tmp), v).ptr});
   };
   append("assertion failed in ");
-  append(file != nullptr ? std::string_view{file}
-                         : std::string_view{"unknown"});
+  append(file ? std::string_view{file} : std::string_view{"unknown"});
   append(":");
   append_int(line);
-  if (func != nullptr) {
+  if (func) {
     append(" [");
     append(func);
     append("]");
   }
   append(": ");
-  if (context != nullptr) {
+  if (context) {
     append(context);
   }
   if (!message.empty()) {

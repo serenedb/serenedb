@@ -119,3 +119,49 @@ DROP TABLE set_config_zero;
 
 statement ok
 RESET application_name;
+
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+
+query
+SELECT set_config('TimeZone', NULL, false) IS NULL AS is_null;
+----
+is_null
+f
+
+
+query
+SELECT current_setting('TimeZone') AS tz;
+----
+tz
+Etc/UTC
+
+
+statement ok
+RESET TimeZone;
+
+
+query
+SELECT set_config('application_name', 'null_local', NULL) AS v;
+----
+v
+null_local
+
+
+query
+SHOW application_name;
+----
+application_name
+null_local
+
+
+statement error
+SELECT set_config(NULL, 'x', false);
+----
+db error: ERROR: SET requires parameter name
+
+
+statement ok
+RESET application_name;

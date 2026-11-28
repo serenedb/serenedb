@@ -173,18 +173,19 @@ BackendStatus BackendStatusEntry::Read() const noexcept {
   }
 }
 
-void ProgressSource::BeginQuery(std::string query_text) {
+void ProgressSource::BeginQuery(std::string_view query_text, int64_t start_us,
+                                bool continues) {
   metrics.Reset();
-  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   const auto previous = status.Read();
   absl::MutexLock lock{&mu};
-  query = std::move(query_text);
+  query = query_text;
   status.Write({
     .state = BackendState::Active,
-    .xact_start_us =
-      previous.state == BackendState::Idle ? now : previous.xact_start_us,
-    .query_start_us = now,
-    .state_change_us = now,
+    .xact_start_us = continues && previous.xact_start_us != 0
+                       ? previous.xact_start_us
+                       : start_us,
+    .query_start_us = start_us,
+    .state_change_us = start_us,
   });
 }
 

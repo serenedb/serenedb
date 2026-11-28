@@ -60,6 +60,31 @@ a
 3
 5
 
+# The same by name.
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 1, transpositions := false) ORDER BY a;
+----
+a
+1
+2
+3
+5
+
+# Without a distance, the one picked from the length applies: 1 for 'cast',
+# which reaches 'cats' only when the swap is one edit.
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cast', transpositions := false) ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cast', transpositions := true) ORDER BY a;
+----
+a
+1
+5
+
 # Distance 2 matches more
 query
 SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 2) ORDER BY a;
@@ -89,6 +114,32 @@ SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 5);
 # Distance too high for transpositions (> 3)
 statement error
 SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 4, true);
+
+# Turning transpositions off by name allows distance 4.
+query
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 4, transpositions := false) ORDER BY a;
+----
+a
+1
+2
+3
+4
+5
+6
+
+statement error
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 1, false, transpositions := false);
+----
+db error: ERROR: ts_levenshtein transpositions is given both by position and by name
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
+statement error
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 1, transpositions := 'maybe');
+----
+db error: ERROR: ts_levenshtein transpositions must be a BOOLEAN constant
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
 
 # Combined with AND on a non-FTS predicate.
 query
@@ -150,6 +201,46 @@ a
 
 statement ok
 DROP TABLE test_levenshtein;
+
+# Auto distance counts characters, not bytes: `日本` is two characters in six
+# bytes, so it gets no edits.
+statement ok
+CREATE TABLE test_levenshtein_auto (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_levenshtein_auto_idx ON test_levenshtein_auto USING inverted(a, b);
+
+statement ok
+INSERT INTO test_levenshtein_auto VALUES (1, '日本'), (2, '日本語'), (3, '東京'), (4, 'banana'), (5, 'ab'), (6, 'xy'), (7, 'éa'), (8, 'éb'), (9, 'a');
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('日本') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('日本', starts_with := true) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('日', starts_with := true) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('éa') ORDER BY a;
+----
+a
+7
+
+statement ok
+DROP TABLE test_levenshtein_auto;
 
 
 # Optional `prefix` 4th argument: a literal leading substring that must
@@ -222,5 +313,197 @@ statement error
 SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 4, true, 'app');
 
 
+# The prefix by name, without spelling out transpositions.
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 1, prefix := 'app') ORDER BY a;
+----
+a
+1
+2
+
+# Named arguments after the distance picked from the length: 0 for 'le'.
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', prefix := 'app', transpositions := false) ORDER BY a;
+----
+a
+1
+
+statement error
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 1, true, 'app', prefix := 'app');
+----
+db error: ERROR: ts_levenshtein prefix is given both by position and by name
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
+# levenshtein_matches takes the same names.
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE levenshtein_matches(b, 'le', 1, prefix := 'app') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE levenshtein_matches(b, 'aple', 1, starts_with := true) ORDER BY a;
+----
+a
+1
+
+statement error
+SELECT a FROM test_levenshtein_prefix_idx WHERE levenshtein_matches(b, 'le', 1, perfix := 'app');
+----
+db error: ERROR: ts_levenshtein has no argument named perfix
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
+# Named arguments survive TSQUERY text: as a parameter and when rendered.
+statement ok
+PREPARE lev_match AS SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ $1 ORDER BY a
+
+query
+EXECUTE lev_match('ts_levenshtein(''le'', 1, prefix := ''app'')')
+----
+a
+1
+2
+
+query
+EXECUTE lev_match('ts_levenshtein(''apple'', 4, transpositions := false)')
+----
+a
+1
+2
+
+# A misspelled name there is an error, rather than the text searched as words.
+query error
+EXECUTE lev_match('ts_levenshtein(''le'', 1, perfix := ''app'')')
+----
+db error: ERROR: ts_levenshtein has no argument named perfix
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
+statement ok
+DEALLOCATE lev_match
+
+query
+SELECT ts_levenshtein('le', 1, transpositions := false, prefix := 'app', starts_with := true)::VARCHAR AS q
+----
+q
+ts_levenshtein('le', 1, transpositions := false, prefix := 'app', starts_with := true)
+
 statement ok
 DROP TABLE test_levenshtein_prefix;
+
+# Two fuzzy matches that differ only in their literal prefix are different
+# predicates: OR keeps both.
+statement ok
+CREATE TABLE test_levenshtein_prefix_or (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_levenshtein_prefix_or_idx ON test_levenshtein_prefix_or USING inverted(a, b test_english);
+
+statement ok
+INSERT INTO test_levenshtein_prefix_or VALUES (1, 'abx'), (2, 'cdx');
+
+query
+SELECT a
+FROM test_levenshtein_prefix_or_idx
+WHERE b @@ (ts_levenshtein('x', 1, true, 'ab') || ts_levenshtein('x', 1, true, 'cd'))
+ORDER BY a;
+----
+a
+1
+2
+
+statement ok
+DROP TABLE test_levenshtein_prefix_or;
+
+# An empty string, stored or searched for, scores like a one-character term.
+statement ok
+CREATE TABLE test_levenshtein_empty (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_levenshtein_empty_idx ON test_levenshtein_empty USING inverted(a, b);
+
+statement ok
+INSERT INTO test_levenshtein_empty VALUES (1, ''), (2, 'r'), (3, 'run'), (4, 'apple');
+
+query
+SELECT a FROM test_levenshtein_empty_idx WHERE b @@ ts_levenshtein('r', 1) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('r', 1)
+ORDER BY t
+----
+t	s
+(empty)	0
+r	1
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1)
+ORDER BY t
+----
+t	s
+(empty)	1
+r	0
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1, starts_with := true)
+ORDER BY t
+----
+t	s
+(empty)	1
+apple	1
+r	1
+run	1
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1)
+ORDER BY s DESC, t
+LIMIT 1
+----
+t	s
+(empty)	1
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1, starts_with := true)
+ORDER BY s DESC, t
+LIMIT 2
+----
+t	s
+(empty)	1
+apple	1
+
+statement ok
+SET sdb_levenshtein_max_terms = 1
+
+query
+SELECT a FROM test_levenshtein_empty_idx WHERE b @@ ts_levenshtein('r', 1) ORDER BY a;
+----
+a
+2
+
+statement ok
+RESET sdb_levenshtein_max_terms
+
+statement ok
+DROP TABLE test_levenshtein_empty;

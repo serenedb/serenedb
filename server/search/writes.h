@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
@@ -136,7 +135,7 @@ struct StoreWrites {
   std::optional<duckdb::idx_t> writer;
   // The committed rows of a referenced or referencing table the first check
   // against it saw, by store.
-  absl::flat_hash_map<duckdb::idx_t, std::shared_ptr<const TableState>>
+  irs::containers::FlatHashMap<duckdb::idx_t, std::shared_ptr<const TableState>>
     related_checked;
 };
 

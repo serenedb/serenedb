@@ -64,7 +64,8 @@ FIXTURES = (
 
 
 class _Server:
-    def __init__(self, tmp_path: Path, params: str | None = None):
+    def __init__(self, tmp_path: Path,
+                 params: str | tuple[str, ...] | None = None):
         self.serened = Serened(SERENED_BIN, datadir=str(tmp_path / "data"),
                                log_path=str(tmp_path / "serened.log"),
                                http=params)
@@ -72,8 +73,9 @@ class _Server:
         self.http_port = self.serened.http_port
         self.pg = psycopg.connect(self.serened.dsn(), autocommit=True)
 
-    def post(self, path: str, body: bytes, content_type: str) -> int:
-        conn = http.client.HTTPConnection("127.0.0.1", self.http_port,
+    def post(self, path: str, body: bytes, content_type: str,
+             port: int | None = None) -> int:
+        conn = http.client.HTTPConnection("127.0.0.1", port or self.http_port,
                                           timeout=60)
         try:
             conn.request("POST", path, body=body, headers={
@@ -158,6 +160,17 @@ def test_without_create_schema_mistyped_column_answers_503(
         body = (FIXTURES / "logs/basic.json").read_bytes()
         assert server.post("/v1/logs", body, "application/json") == 503
         assert _otel_objects(server, "pg_tables") == 1
+    finally:
+        server.close()
+
+
+def test_db_param_creates_the_database(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel&db=telemetry")
+    try:
+        body = (FIXTURES / "logs/basic.json").read_bytes()
+        assert server.post("/v1/logs", body, "application/json") == 200
+        assert server.count("telemetry.public.otel_logs") > 0
+        assert server.count("telemetry.public.otel_traces") == 0
     finally:
         server.close()
 
@@ -358,7 +371,8 @@ def test_own_schema_with_its_own_tokenizer_and_expression_index(
 
 
 def test_single_worker_thread_does_not_deadlock(tmp_path: Path) -> None:
-    server = _Server(tmp_path, "api=otel&api=es")
+    server = _Server(tmp_path, ("api=otel", "api=es"))
+    es_port = server.serened.http_ports[1]
     try:
         server.pg.execute("SET GLOBAL threads = 1")
         assert str(server.pg.execute(
@@ -372,8 +386,7 @@ def test_single_worker_thread_does_not_deadlock(tmp_path: Path) -> None:
 
         mapping = json.dumps({"mappings": {"properties": {
             "n": {"type": "integer"}}}}).encode()
-        conn = http.client.HTTPConnection("127.0.0.1", server.http_port,
-                                          timeout=60)
+        conn = http.client.HTTPConnection("127.0.0.1", es_port, timeout=60)
         conn.request("PUT", "/single", body=mapping, headers={
             "Content-Type": "application/json",
             "Authorization": "Basic cG9zdGdyZXM6"})
@@ -381,7 +394,7 @@ def test_single_worker_thread_does_not_deadlock(tmp_path: Path) -> None:
         conn.close()
         bulk = "".join('{"index":{}}\n{"n":%d}\n' % i for i in range(1000))
         assert server.post("/single/_bulk", bulk.encode(),
-                           "application/x-ndjson") == 200
+                           "application/x-ndjson", es_port) == 200
         assert server.count("es.single") == 1000
     finally:
         server.close()

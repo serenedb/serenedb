@@ -213,6 +213,8 @@ A statement that sets or resets several options fails as a whole when one of the
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_031" />
 
+`SET TABLESPACE`, on a table or an index, is not supported and fails with `SET TABLESPACE is not supported`.
+
 ## `DROP CONSTRAINT`
 
 The `DROP CONSTRAINT` clause removes a named constraint from a table, a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint alike:
@@ -228,6 +230,14 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN 
 <SqlLogicTest id="sql/statements/alter_table/index/example_035" />
 
 The rows already in the table are checked against the new constraint: a duplicate key fails the statement with `could not create unique index "⟨name⟩"`, and a foreign key value missing from the referenced table with the error an `INSERT` of that row would raise.
+
+## `ALTER COLUMN ... SET COMPRESSION`
+
+`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation (see [Columnstore Storage & Compression](../../indexes/inverted/columnstore.md#choosing-a-codec)): the codec has to store the column's type, and only a codec that has levels takes one. A generated column takes a codec only when it is `STORED`.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_039" />
+
+The change applies to the segments written after it and is undone if its transaction rolls back; an older segment keeps its codec until a compaction includes it, which rewrites the column with the named codec and level. A codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. In a database file with a DuckDB storage version it fails at commit, since such a file holds only what DuckDB reads (see [DuckDB files](../attach/duckdb.md)).
 
 ## `ENABLE` / `DISABLE TRIGGER`
 

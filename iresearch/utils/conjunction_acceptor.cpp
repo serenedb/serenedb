@@ -22,14 +22,30 @@
 
 #include <algorithm>
 #include <new>
+#include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs {
 namespace {
 
 constexpr uint32_t kLabels = RegexpAcceptor::kMaxLabel + 1;
+
+template<bool kPrefix, bool kBytes>
+using FuzzyConjunctionFor = FuzzyConjunctionOf<
+  std::conditional_t<kPrefix, BasicLevenshteinPrefixAcceptor<kBytes>,
+                     BasicLevenshteinAcceptor<kBytes>>>;
+
+template<typename F>
+IRS_FORCE_INLINE decltype(auto) Typed(const FuzzyConjunction& dfa,
+                                      bool starts_with, bool byte_mode, F&& f) {
+  return Resolve(starts_with, [&]<bool kPrefix> IRS_FORCE_INLINE {
+    return Resolve(byte_mode, [&]<bool kBytes> IRS_FORCE_INLINE {
+      return f(static_cast<const FuzzyConjunctionFor<kPrefix, kBytes>&>(dfa));
+    });
+  });
+}
 
 template<typename Row>
 size_t RowBytes(uint32_t classes) noexcept {
@@ -58,7 +74,7 @@ void Loop(Row* row, uint32_t classes) noexcept {
 template<typename KeyOf>
 uint32_t Refine(KeyOf&& key_of, std::array<uint8_t, kLabels>& bytemap,
                 std::array<uint8_t, kLabels>& representative) {
-  absl::flat_hash_map<uint64_t, uint8_t> ids;
+  containers::FlatHashMap<uint64_t, uint8_t> ids;
   uint32_t classes = 0;
   for (uint32_t label = 0; label != kLabels; ++label) {
     const auto [it, inserted] =
@@ -81,10 +97,31 @@ uint64_t PatternsKey(
   return key;
 }
 
+const LevenshteinAcceptor::State& AutomatonState(
+  const LevenshteinAcceptor::State& state) noexcept {
+  return state;
+}
+
+const LevenshteinAcceptor::State& AutomatonState(
+  const LevenshteinPrefixAcceptor::State& state) noexcept {
+  return state.inner;
+}
+
+const LevenshteinAcceptor::State& StateOf(
+  const LevenshteinAcceptor&, const FuzzyConjunction::Row& row) noexcept {
+  return row.fuzzy;
+}
+
+LevenshteinPrefixAcceptor::State StateOf(
+  const LevenshteinPrefixAcceptor&, const FuzzyConjunction::Row& row) noexcept {
+  return {row.fuzzy, row.distance};
+}
+
 void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
              std::span<std::shared_ptr<const RegexpAcceptor>> owned,
              RegexpConjunction::Parts& start, bytes_view& lower,
-             std::span<const bstring>& suffixes, bytes_view& infix) {
+             std::span<const bstring>& suffixes, bytes_view& infix,
+             KeyBytes& bytes) {
   SDB_ASSERT(patterns.size() <= owned.size());
   const auto shortest = [](std::span<const bstring> set) {
     size_t size = set.empty() ? 0 : std::numeric_limits<size_t>::max();
@@ -106,6 +143,7 @@ void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     if (pattern.RequiredInfix().size() > infix.size()) {
       infix = pattern.RequiredInfix();
     }
+    Join(bytes, pattern.Bytes());
   }
 }
 
@@ -129,14 +167,14 @@ std::byte* RowArena::Allocate(size_t bytes) {
 RegexpConjunction::RegexpConjunction(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
   size_t max_mem)
-  : _size{patterns.size()}, _max_mem{max_mem} {
+  : _size{patterns.size()}, _bytes{.dead = {}}, _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _bytes);
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
 
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _dead = NewRow<Row>(_arena, _classes);
   _dead->dead = true;
   Loop(_dead, _classes);
@@ -145,7 +183,7 @@ RegexpConjunction::RegexpConjunction(
   _unknown->unknown = true;
   _unknown->lo = 0;
   _unknown->hi = RegexpAcceptor::kMaxLabel;
-  _unknown->loop.fill(~bitset::word_t{0});
+  _unknown->loop.words.fill(~uint64_t{0});
   Loop(_unknown, _classes);
   _unknown->built.store(true, std::memory_order_relaxed);
   _start = InternLocked(start);
@@ -167,7 +205,7 @@ RegexpConjunction::State RegexpConjunction::StepSlow(State from,
 }
 
 void RegexpConjunction::Build(Row* row) const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   BuildLocked(row);
 }
 
@@ -201,7 +239,7 @@ void RegexpConjunction::BuildLocked(Row* row) const {
     }
     hi = static_cast<uint8_t>(label);
     if (target == row) {
-      row->loop[bitset::word(label)] |= bitset::word_t{1} << bitset::bit(label);
+      row->loop.Add(static_cast<byte_type>(label));
     }
   }
   row->lo = lo;
@@ -236,13 +274,17 @@ RegexpConjunction::State RegexpConjunction::InternLocked(
 
 FuzzyConjunction::FuzzyConjunction(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
-  std::shared_ptr<const LevenshteinAcceptor> fuzzy, size_t max_mem)
-  : _size{patterns.size()}, _fuzzy{std::move(fuzzy)}, _max_mem{max_mem} {
-  SDB_ASSERT(_fuzzy);
+  bytes_view lower, const KeyBytes& bytes,
+  const std::array<uint8_t, 256>& fuzzy_bytemap, size_t max_mem,
+  bool starts_with, bool byte_mode)
+  : _size{patterns.size()},
+    _starts_with{starts_with},
+    _byte_mode{byte_mode},
+    _lower{lower},
+    _bytes{bytes},
+    _max_mem{max_mem} {
   Parts start{};
-  _lower = _fuzzy->LowerBound();
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
-  const auto fuzzy_bytemap = _fuzzy->Bytemap();
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _bytes);
   if (patterns.empty()) {
     _bytemap = fuzzy_bytemap;
     for (uint32_t label = 0; label != kLabels; ++label) {
@@ -258,7 +300,7 @@ FuzzyConjunction::FuzzyConjunction(
       _bytemap, _representative);
   }
 
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _dead = NewRow<Row>(_arena, _classes);
   _dead->dead = true;
   Loop(_dead, _classes);
@@ -268,63 +310,67 @@ FuzzyConjunction::FuzzyConjunction(
   Loop(_unknown, _classes);
   _unknown->range.store(PackRange(0, RegexpAcceptor::kMaxLabel),
                         std::memory_order_relaxed);
-  _start = InternLocked(start, _fuzzy->Start());
 }
 
-std::shared_ptr<const FuzzyConjunction> FuzzyConjunction::Make(
-  std::shared_ptr<const LevenshteinAcceptor> fuzzy, size_t max_mem) {
-  auto dfa = std::make_shared<const FuzzyConjunction>(
-    std::span<const std::shared_ptr<const RegexpAcceptor>>{}, std::move(fuzzy),
-    max_mem);
-  if ((dfa->_fuzzy->MaxStates() + 2) * RowBytes<Row>(dfa->_classes) > max_mem) {
+FuzzyConjunction::Parts FuzzyConjunction::StartParts() const noexcept {
+  Parts start{};
+  for (size_t i = 0; i != _size; ++i) {
+    start[i] = _patterns[i]->Start();
+  }
+  return start;
+}
+
+size_t FuzzyConjunction::RowSize() const noexcept {
+  return RowBytes<Row>(_classes);
+}
+
+FuzzyConjunction::Row* FuzzyConjunction::NewRowLocked() const {
+  if (_arena.Size() + RowBytes<Row>(_classes) > _max_mem) {
     return nullptr;
   }
-  return dfa;
+  return NewRow<Row>(_arena, _classes);
 }
 
-bool FuzzyConjunction::Matches(bytes_view term) const {
-  PayloadType payload{};
-  return Matches(term, payload);
-}
-
-bool FuzzyConjunction::Matches(bytes_view term, PayloadType& payload) const {
-  for (size_t i = 0; i != _size; ++i) {
-    if (!_patterns[i]->Matches(term)) {
-      return false;
-    }
-  }
-  return _fuzzy->Matches(term, payload);
-}
-
-FuzzyConjunction::State FuzzyConjunction::StepSlow(State from,
-                                                   uint8_t c) const {
+IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::Link(
+  State from, uint8_t c, bool alive, auto&& intern) const {
   auto& slot = const_cast<Row*>(from)->Next()[c];
+  if (!alive) {
+    slot.store(_dead, std::memory_order_release);
+    return _dead;
+  }
+  absl::MutexLock lock{&_mutex};
+  if (const auto* next = slot.load(std::memory_order_relaxed)) {
+    return next;
+  }
+  const State next = intern();
+  slot.store(next, std::memory_order_release);
+  return next;
+}
+
+template<typename A>
+FuzzyConjunction::State FuzzyConjunctionOf<A>::StartLocked() const {
+  return InternLocked(StartParts(), _fuzzy->Start());
+}
+
+template<typename A>
+IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunctionOf<A>::StepMissed(
+  State from, uint8_t c) const {
   const auto label = _representative[c];
-  const auto fuzzy = _fuzzy->Step(from->fuzzy, label);
-  bool alive = LevenshteinAcceptor::Alive(fuzzy);
+  const auto state = _fuzzy->Step(StateOf(*_fuzzy, *from), label);
+  bool alive = _fuzzy->Alive(state);
   Parts parts{};
   for (size_t i = 0; alive && i != _size; ++i) {
     parts[i] = _patterns[i]->Step(from->parts[i], label);
     alive = !parts[i]->dead;
   }
-  if (!alive) {
-    slot.store(_dead, std::memory_order_release);
-    return _dead;
-  }
-  std::lock_guard lock{_mutex};
-  if (const auto* next = slot.load(std::memory_order_relaxed);
-      next != nullptr) {
-    return next;
-  }
-  const auto* next = InternLocked(parts, fuzzy);
-  slot.store(next, std::memory_order_release);
-  return next;
+  return Link(from, c, alive, [&] { return InternLocked(parts, state); });
 }
 
-uint32_t FuzzyConjunction::Range(Row& row) const {
+template<typename A>
+IRS_FORCE_INLINE uint32_t FuzzyConjunctionOf<A>::RangeOf(Row& row) const {
   uint32_t lo = 1;
   uint32_t hi = 0;
-  _fuzzy->LiveRange(row.fuzzy, lo, hi);
+  _fuzzy->LiveRange(StateOf(*_fuzzy, row), lo, hi);
   for (size_t i = 0; i != _size && lo <= hi; ++i) {
     uint32_t part_lo = 1;
     uint32_t part_hi = 0;
@@ -341,35 +387,74 @@ uint32_t FuzzyConjunction::Range(Row& row) const {
   return range;
 }
 
-FuzzyConjunction::State FuzzyConjunction::InternLocked(
-  const Parts& parts, const LevenshteinAcceptor::State& fuzzy) const {
-  if (!LevenshteinAcceptor::Alive(fuzzy)) {
-    return _dead;
+template<typename A>
+IRS_FORCE_INLINE bool FuzzyConjunctionOf<A>::MatchesOf(
+  bytes_view term, PayloadType& payload) const {
+  for (size_t i = 0; i != _size; ++i) {
+    if (!_patterns[i]->Matches(term)) {
+      return false;
+    }
   }
+  return _fuzzy->Matches(term, payload);
+}
+
+template<typename A>
+FuzzyConjunction::State FuzzyConjunctionOf<A>::InternLocked(
+  const Parts& parts, const AcceptorState& state) const {
+  SDB_ASSERT(_fuzzy->Alive(state));
   for (size_t i = 0; i != _size; ++i) {
     if (parts[i]->dead) {
       return _dead;
     }
   }
-  const auto [it, inserted] = _rows.try_emplace(
-    Key{parts, {fuzzy.pstate, fuzzy.offset, fuzzy.acc, fuzzy.phase}}, nullptr);
+  const auto [it, inserted] = _rows.try_emplace(Key{parts, state}, nullptr);
   if (!inserted) {
     return it->second;
   }
-  if (_arena.Size() + RowBytes<Row>(_classes) > _max_mem) {
+  Row* row = NewRowLocked();
+  if (!row) {
     _rows.erase(it);
     return _unknown;
   }
-  Row* row = NewRow<Row>(_arena, _classes);
   row->parts = parts;
-  row->fuzzy = fuzzy;
-  row->accept = _fuzzy->Accept(fuzzy, row->distance);
+  row->fuzzy = AutomatonState(state);
+  row->accept = _fuzzy->Accept(state, row->distance);
   for (size_t i = 0; i != _size; ++i) {
     row->accept = row->accept && parts[i]->accept;
     row->unknown = row->unknown || parts[i]->unknown;
   }
   it->second = row;
   return row;
+}
+
+void FuzzyConjunction::InternStart() {
+  absl::MutexLock lock{&_mutex};
+  _start = Typed(*this, _starts_with, _byte_mode,
+                 [](const auto& typed) { return typed.StartLocked(); });
+}
+
+bool FuzzyConjunction::Matches(bytes_view term) const {
+  PayloadType payload{};
+  return Matches(term, payload);
+}
+
+bool FuzzyConjunction::Matches(bytes_view term, PayloadType& payload) const {
+  return Typed(*this, _starts_with, _byte_mode,
+               [&](const auto& typed)
+                 IRS_FORCE_INLINE { return typed.MatchesOf(term, payload); });
+}
+
+FuzzyConjunction::State FuzzyConjunction::StepSlow(State from,
+                                                   uint8_t c) const {
+  return Typed(*this, _starts_with, _byte_mode,
+               [&](const auto& typed)
+                 IRS_FORCE_INLINE { return typed.StepMissed(from, c); });
+}
+
+uint32_t FuzzyConjunction::Range(Row& row) const {
+  return Typed(*this, _starts_with, _byte_mode,
+               [&](const auto& typed)
+                 IRS_FORCE_INLINE { return typed.RangeOf(row); });
 }
 
 }  // namespace irs

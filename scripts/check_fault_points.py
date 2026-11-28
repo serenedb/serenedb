@@ -34,6 +34,7 @@ DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
 DUCKDB_FAULTS = frozenset(
     {
         "grant_first_grantor_with_an_option",
+        "recursive_cte_task_lost",
         "remote_write_cache_block",
         "scheduler_enqueue_finds_no_free_slot",
         "slow_expression_bind",
@@ -50,6 +51,7 @@ DUCKDB_PARK_FAULTS = frozenset(
         "catalog_all_schemas_listed",
         "duckdb_databases_listed",
         "read_duckdb_reader_attached",
+        "recursive_cte_wait",
         "scheduler_woken_worker_pauses",
     }
 )
@@ -59,6 +61,8 @@ DUCKDB_TESTED_FAULTS = frozenset(
         "async_write_failure_completed",
         "block_load_before_loaded",
         "block_unload_before_temporary_write",
+        "recursive_cte_task_lost",
+        "recursive_cte_wait",
         "remote_write_cache_block",
     }
 )

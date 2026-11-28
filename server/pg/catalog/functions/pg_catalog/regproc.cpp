@@ -893,7 +893,7 @@ uint64_t FindTypeIn(const Session& session, std::string_view schema,
   }
   if (auto entry =
         FindInSchema(session, schema, duckdb::CatalogType::TABLE_ENTRY, name)) {
-    return RowTypeOid(entry->oid);
+    return RowTypeOid(*entry);
   }
   for (size_t strip = 1; strip < name.size() && name[strip - 1] == '_';
        ++strip) {
@@ -903,7 +903,7 @@ uint64_t FindTypeIn(const Session& session, std::string_view schema,
           entry && ArrayTypeName(*session.transaction, *entry) == name) {
         return TypeArrayOid(type == duckdb::CatalogType::TYPE_ENTRY
                               ? entry->oid
-                              : RowTypeOid(entry->oid));
+                              : RowTypeOid(*entry));
       }
     }
   }
@@ -1917,23 +1917,6 @@ std::optional<bool> RelationIsVisible(const Session& session, uint64_t oid) {
   const auto object = NameOf(*session.transaction, *relation);
   return RelationVisible(session, object.schema, object.name);
 }
-
-namespace {
-
-duckdb::optional_ptr<duckdb::CatalogEntry> ArrayElementEntry(
-  const Session& session, uint64_t oid) {
-  if (oid & kRowTypeOidBit) {
-    const auto relation = RowTypeOwner(session, oid);
-    return relation ? relation->entry : nullptr;
-  }
-  const auto element = EntryByOid(session, TypeElementOid(oid));
-  if (!element || element->type != duckdb::CatalogType::TYPE_ENTRY) {
-    return nullptr;
-  }
-  return element;
-}
-
-}  // namespace
 
 bool TypeExists(const Session& session, uint64_t oid) {
   return TypeObject(session, oid) || ArrayElementEntry(session, oid);

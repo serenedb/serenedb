@@ -548,12 +548,7 @@ std::optional<ObjectTarget> TypeTarget(
     return ObjectTarget{.entry = entry.get(),
                         .permissions = &duckdb::PermissionsOf(*entry)};
   }
-  if (oid & kRowTypeOidBit) {
-    const auto relation = EntryByOid(session, RowTypeRelation(oid));
-    if (!relation ||
-        duckdb::ObjectKindOf(relation->type).pg_class != kPgClassTable) {
-      return std::nullopt;
-    }
+  if (RowTypeOwner(session, oid)) {
     return ObjectTarget{.permissions = &kBuiltinPermissions};
   }
   if (oid >= kMaxSystem) {

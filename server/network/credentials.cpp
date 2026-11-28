@@ -24,8 +24,6 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
-#include <absl/time/clock.h>
-#include <absl/time/time.h>
 #include <fast_float/fast_float.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -61,11 +59,6 @@ std::string SaslPrep(std::string_view password) {
 }
 
 }  // namespace
-
-bool PasswordExpired(const Credential& credential) {
-  return credential.valid_until != 0 &&
-         absl::ToUnixMicros(absl::Now()) >= credential.valid_until;
-}
 
 std::optional<std::string> Base64Decode(std::string_view in) {
   std::string out;

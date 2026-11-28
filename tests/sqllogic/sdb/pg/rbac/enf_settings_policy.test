@@ -45,6 +45,15 @@ DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SELECT set_config('max_memory', NULL, false);
+----
+db error: ERROR: permission denied to set parameter "max_memory"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 CALL enable_profiling(format := 'json', save_location := '${__TEST_DIR__}/esp_profile.json');
 ----

@@ -1,6 +1,6 @@
 """MCP (Model Context Protocol) endpoint tests.
 
-Exercises the stateless Streamable HTTP transport at /_mcp: JSON-RPC
+Exercises the stateless Streamable HTTP transport at /mcp: JSON-RPC
 initialize, tools/list and the documentation tools over the embedded docs.
 Skipped wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
 """
@@ -51,7 +51,7 @@ def post(conn, payload, raw: str | None = None):
     body = raw if raw is not None else json.dumps(payload)
     conn.request(
         "POST",
-        "/_mcp",
+        "/mcp",
         body=body,
         headers={
             "Content-Type": "application/json",
@@ -82,7 +82,7 @@ def call_tool(conn, name, arguments):
 
 
 def test_get_is_method_not_allowed(conn):
-    conn.request("GET", "/_mcp", headers={"Authorization": AUTH})
+    conn.request("GET", "/mcp", headers={"Authorization": AUTH})
     response = conn.getresponse()
     body = json.loads(response.read())
     assert response.status == 405

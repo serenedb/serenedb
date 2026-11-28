@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -99,17 +100,50 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
   return entry->Cast<duckdb::SchemaCatalogEntry>();
 }
 
-duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
-  const Session& session, uint64_t oid) {
+namespace {
+
+duckdb::optional_ptr<duckdb::CatalogEntry> OwnerByOid(const Session& session,
+                                                      uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
   auto owner = session.database->LookupOwner(*session.transaction, oid);
+  return owner && !owner->internal ? owner : nullptr;
+}
+
+}  // namespace
+
+duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
+  const Session& session, uint64_t oid) {
+  auto owner = OwnerByOid(session, oid);
   if (!owner || owner->type != duckdb::CatalogType::TABLE_ENTRY ||
       !Shown(session, *owner)) {
     return nullptr;
   }
   return owner->Cast<duckdb::TableCatalogEntry>();
+}
+
+uint64_t RowTypeOid(const duckdb::CatalogEntry& relation) {
+  switch (relation.type) {
+    case duckdb::CatalogType::TABLE_ENTRY:
+      return relation.Cast<duckdb::TableCatalogEntry>().row_type_oid;
+    case duckdb::CatalogType::VIEW_ENTRY:
+      return relation.Cast<duckdb::ViewCatalogEntry>().row_type_oid;
+    default:
+      return kInvalidOid;
+  }
+}
+
+uint64_t RuleRelation(const Session& session, uint64_t rule) {
+  if (const auto relation = SystemRuleRelation(rule)) {
+    return relation;
+  }
+  auto owner = OwnerByOid(session, rule);
+  return owner && owner->type == duckdb::CatalogType::VIEW_ENTRY &&
+             owner->Cast<duckdb::ViewCatalogEntry>().rule_oid == rule &&
+             Shown(session, *owner)
+           ? owner->oid
+           : kInvalidOid;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
@@ -173,14 +207,11 @@ std::optional<Relation> FindRelation(
 }
 
 std::optional<Relation> RowTypeOwner(const Session& session, uint64_t oid) {
-  auto relation = FindRelation(session, RowTypeRelation(oid));
-  if (!relation || !relation->entry || relation->key ||
-      relation->entry->internal ||
-      (relation->entry->type != duckdb::CatalogType::TABLE_ENTRY &&
-       relation->entry->type != duckdb::CatalogType::VIEW_ENTRY)) {
+  auto owner = OwnerByOid(session, oid);
+  if (!owner || RowTypeOid(*owner) != oid || !Shown(session, *owner)) {
     return std::nullopt;
   }
-  return relation;
+  return Relation{owner, nullptr, nullptr, nullptr};
 }
 
 ObjectName NameOf(duckdb::CatalogTransaction transaction,
@@ -323,16 +354,6 @@ SystemText ArrayTypeNames::Of(const duckdb::CatalogEntry& element) {
 }
 
 std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
-  if (oid & kRowTypeOidBit) {
-    if (oid & kRowArrayTypeOidBit) {
-      return std::nullopt;
-    }
-    const auto relation = RowTypeOwner(session, oid);
-    if (!relation) {
-      return std::nullopt;
-    }
-    return NameOf(*session.transaction, *relation);
-  }
   if (oid < kMaxSystem) {
     if (const auto* builtin = FindBuiltinType(oid)) {
       return ObjectName{FindSystemObject(kSystemNamespaces, builtin->nsp)->name,
@@ -343,17 +364,31 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
       entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
     return NameOf(*session.transaction, *entry);
   }
+  if (const auto relation = RowTypeOwner(session, oid)) {
+    return NameOf(*session.transaction, *relation);
+  }
   return std::nullopt;
 }
 
-uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
-  if (oid & kRowTypeOidBit) {
-    return oid & kRowArrayTypeOidBit ? TypeElementOid(oid) : kInvalidOid;
-  }
+duckdb::optional_ptr<duckdb::CatalogEntry> ArrayElementEntry(
+  const Session& session, uint64_t oid) {
   const auto element = TypeElementOid(oid);
-  const auto entry = InternalEntryByOid(session, element);
-  return entry && entry->type == duckdb::CatalogType::TYPE_ENTRY ? element
-                                                                 : kInvalidOid;
+  if (const auto entry = EntryByOid(session, element);
+      entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
+    return entry;
+  }
+  const auto relation = RowTypeOwner(session, element);
+  return relation ? relation->entry : nullptr;
+}
+
+uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
+  const auto element = TypeElementOid(oid);
+  if (const auto entry = InternalEntryByOid(session, element);
+      entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
+    return element;
+  }
+  const auto owner = OwnerByOid(session, element);
+  return owner && RowTypeOid(*owner) == element ? element : kInvalidOid;
 }
 
 std::vector<ReplicationOrigin> ReplicationOrigins(

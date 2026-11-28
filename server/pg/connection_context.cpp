@@ -61,8 +61,10 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/iresearch_replacement_scan.h"
+#include "network/send_gate.h"
 #include "pg/catalog/oids.h"
 #include "pg/progress_registry.h"
 
@@ -207,7 +209,9 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _backend_pid{identity.backend_pid},
     _cancel_registry{identity.cancel_registry},
     _send_buffer{identity.send_buffer},
+    _send_gate{identity.send_gate},
     _login_role_id{identity.role},
+    _owns_temporary_objects{!identity.temporary},
     _progress{std::make_shared<pg::ProgressSource>()},
     _slot{catalog::Transactions::Get().Join()} {
   session_user = _user;
@@ -251,7 +255,7 @@ ConnectionContext::~ConnectionContext() {
       Destroy();
     } catch (...) {
     }
-    if (_progress->client_backend) {
+    if (_owns_temporary_objects) {
       client_data->temporary_objects->OnDetach(*this);
     }
   }
@@ -290,11 +294,15 @@ void ConnectionContext::ApplyRoleSettings() {
   for (const auto* config :
        {&database_config, &role_config, &database_role_config}) {
     for (const std::string_view entry : *config) {
+      const auto key = duckdb::Settings::ConfigKey(entry);
       try {
-        SetSettingChecked(duckdb::Settings::ConfigKey(entry),
+        SetSettingChecked(key,
                           std::string{duckdb::Settings::ConfigValue(entry)});
+        KeepSettingAsDefault(key);
       } catch (const std::exception& exception) {
-        AddNotice(irs::pg::ToSqlError(exception));
+        auto notice = irs::pg::ToSqlError(exception);
+        notice.errcode = ERRCODE_WARNING;
+        AddNotice(std::move(notice));
       }
     }
   }
@@ -360,6 +368,15 @@ void ConnectionContext::SetSettingChecked(std::string_view key,
   duckdb::PhysicalSet::SetVariable(*this, duckdb::Identifier{key},
                                    duckdb::SetScope::SESSION,
                                    duckdb::Value{std::move(value)});
+}
+
+void ConnectionContext::KeepSettingAsDefault(std::string_view key) {
+  duckdb::Identifier setting{key};
+  duckdb::Value value;
+  if (TryGetCurrentSetting(setting, value)) {
+    duckdb::ClientConfig::GetConfig(*this).session_defaults.insert_or_assign(
+      std::move(setting), std::move(value));
+  }
 }
 
 void ConnectionContext::RefreshCatalogEpoch() noexcept {
@@ -574,8 +591,13 @@ void ConnectionContext::OnQueryBegin() {
   if (_internal_statements != 0) {
     return;
   }
-  _query_in_transaction = true;
-  _progress->BeginQuery(GetCurrentQuery());
+  const bool continues = std::exchange(_query_in_transaction, true);
+  _progress->BeginQuery(
+    GetCurrentQuery(),
+    continues || !transaction.HasActiveTransaction()
+      ? duckdb::Timestamp::GetCurrentTimestamp().value
+      : transaction.ActiveTransaction().start_timestamp.value,
+    continues);
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;
     metrics.SetCommand(pending_copy_command);
@@ -728,6 +750,14 @@ void ConnectionContext::OnBoundPlan(duckdb::Binder& binder,
     default:
       break;
   }
+}
+
+duckdb::optional_ptr<duckdb::CopyOutputGate>
+ConnectionContext::GetCopyOutputGate(const std::string& file_path) {
+  if (file_path != connector::kDevStdout) {
+    return nullptr;
+  }
+  return _send_gate;
 }
 
 duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(

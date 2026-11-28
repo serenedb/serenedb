@@ -19,11 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <cmath>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/lm_dirichlet.hpp>
 #include <iresearch/search/scorers/lm_jelinek_mercer.hpp>
+#include <iresearch/search/scorers/score_inputs.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <limits>
 #include <map>
@@ -40,6 +42,15 @@ using namespace tests;
 // ---------------------------------------------------------------------------
 // LM Jelinek-Mercer factory tests.
 // ---------------------------------------------------------------------------
+
+TEST(lm_test, log_of_product_keeps_its_value_past_the_range_of_double) {
+  const auto log_of = [](double factor) {
+    return irs::LogOfProduct(40, [&](size_t) { return factor; });
+  };
+  EXPECT_NEAR(40 * std::log(1.5), log_of(1.5), 1e-12);
+  EXPECT_NEAR(40 * std::log(1e20), log_of(1e20), 1e-9);
+  EXPECT_NEAR(40 * std::log(1e-20), log_of(1e-20), 1e-9);
+}
 
 TEST(lm_test, jm_consts) {
   static_assert("lm_jm" == irs::Type<irs::LMJelinekMercer>::name());

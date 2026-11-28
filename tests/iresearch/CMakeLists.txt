@@ -81,6 +81,13 @@ add_executable(
     analysis/wordnet_synonyms_tokenizer_tests.cpp
     duckdb/immutable_strings_tests.cpp
     duckdb/validity_mask_tests.cpp
+    formats/ann_build_env_test.cpp
+    formats/column/col_codec_corruption_test.cpp
+    formats/column/col_codec_paths_test.cpp
+    formats/column/col_byte_codecs_test.cpp
+    formats/column/col_codecs_test.cpp
+    formats/column/col_compression_function_test.cpp
+    formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
     formats/columnstore2_test.cpp
     formats/docs_slack_test.cpp
@@ -98,7 +105,6 @@ add_executable(
     formats/sparse_bitmap_test.cpp
     formats/term_dict_test.cpp
     index/assert_format.cpp
-    index/buffered_column_test.cpp
     index/compaction_policy_tests.cpp
     index/doc_generator.cpp
     index/doc_removal_tests.cpp
@@ -112,6 +118,7 @@ add_executable(
     index/inverter_oracle_test.cpp
     index/inverter_tests.cpp
     index/merge_writer_tests.cpp
+    index/norm_column_test.cpp
     index/norm_test.cpp
     index/object_store_index_tests.cpp
     index/piece_tests.cpp
@@ -128,12 +135,15 @@ add_executable(
     search/boost_query_test.cpp
     search/col_filter_leaf_test.cpp
     search/conjunction_leaves_test.cpp
+    search/count_single_valued_test.cpp
     search/count_subtract_test.cpp
     search/dfi_test.cpp
+    search/disjoint_disjunction_test.cpp
     search/doc_collector_test.cpp
     search/docs_mask_plan_test.cpp
     search/document_mask_test.cpp
     search/empty_filter_tests.cpp
+    search/explain_test.cpp
     search/geo_distance_filter_test.cpp
     search/geo_filter_test.cpp
     search/geo_tokenizer_test.cpp
@@ -174,6 +184,7 @@ add_executable(
     search/token_phrase_test.cpp
     search/top_terms_selector_test.cpp
     search/vector_similarity_query_test.cpp
+    search/verified_batch_test.cpp
     search/wildcard_filter_test.cpp
     search/wildcard_ngram_filter_test.cpp
     store/directory_tests.cpp
@@ -182,8 +193,8 @@ add_executable(
     store/store_utils_tests.cpp
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
-    utils/bitvector_tests.cpp
     utils/blocking_once_test.cpp
+    utils/compression_test.cpp
     utils/group_commit_test.cpp
     utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
@@ -191,7 +202,6 @@ add_executable(
     utils/lower_bound_test.cpp
     utils/math_utils_test.cpp
     utils/minhash_utils_test.cpp
-    utils/misc_test.cpp
     utils/ngram_match_utils_tests.cpp
     utils/numeric_utils_test.cpp
     utils/object_pool_tests.cpp
@@ -202,7 +212,7 @@ add_executable(
     utils/re2_segment_plan_test.cpp
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
-    utils/std_test.cpp
+    utils/serializer_tests.cpp
     utils/string_tests.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp
@@ -211,7 +221,18 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support iresearch-test-writer search-benchmark-common
+    PRIVATE
+        iresearch-test-support
+        iresearch-test-writer
+        search-benchmark-common
+        zxc::zxc_lib
+)
+target_include_directories(
+    iresearch-tests
+    SYSTEM
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
 )
 sdb_link_duckdb_extensions(iresearch-tests)
 

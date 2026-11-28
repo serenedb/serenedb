@@ -24,9 +24,11 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
@@ -39,7 +41,7 @@
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
-#include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -52,11 +54,10 @@ namespace irs {
 namespace {
 
 IRS_FORCE_INLINE score_t Similarity(uint32_t distance, uint32_t size) noexcept {
-  SDB_ASSERT(size);
-
   static_assert(sizeof(score_t) == sizeof(uint32_t));
 
-  return 1.f - static_cast<score_t>(distance) / static_cast<score_t>(size);
+  return 1.f - static_cast<score_t>(distance) /
+                 static_cast<score_t>(std::max(size, uint32_t{1}));
 }
 
 struct AggregatedStatsVisitor : util::Noncopyable {
@@ -100,6 +101,7 @@ class LevenshteinIterator : public WrappedTermIterator {
     : WrappedTermIterator{std::move(impl)},
       _payload{irs::get<PayAttr>(*_impl)},
       _no_distance{options.no_distance},
+      _bytes{options.bytes},
       _target_size{options.utf8_target_size} {
     if (_payload && _payload->value.empty()) {
       _payload = nullptr;
@@ -139,6 +141,9 @@ class LevenshteinIterator : public WrappedTermIterator {
   }
 
   uint32_t Utf8SizeUpTo(bytes_view term) const noexcept {
+    if (_bytes) {
+      return static_cast<uint32_t>(std::min<size_t>(term.size(), _target_size));
+    }
     const auto* it = term.data();
     const auto* end = it + term.size();
     uint32_t size = 0;
@@ -150,6 +155,7 @@ class LevenshteinIterator : public WrappedTermIterator {
 
   const PayAttr* _payload;
   byte_type _no_distance;
+  bool _bytes;
   uint32_t _target_size;
   TermBoost _boost;
 };
@@ -178,7 +184,7 @@ void WalkTopTerms(const TermReader& reader,
   on_terms(it->GetImpl());
   const auto prefix = options.parametric->LowerBound();
   const auto term = bytes_view{options.target}.substr(prefix.size());
-  std::unique_ptr<const LevenshteinAcceptor> narrow;
+  std::shared_ptr<const LevenshteinPrefixAcceptor> narrow;
   bstring past;
   auto distance = static_cast<uint8_t>(options.no_distance - 1);
   std::array<size_t, ParametricDescription::kMaxDistance + 1> reached{};
@@ -205,9 +211,11 @@ void WalkTopTerms(const TermReader& reader,
       if (description) {
         distance = narrowed;
         AssignAfterKey(past, it->value());
-        auto acceptor = std::make_unique<const LevenshteinAcceptor>(
-          description, prefix, term);
-        it.emplace(reader.iterator(*acceptor), options);
+        auto acceptor = MakeLevenshteinPrefixAcceptor(
+          MakeLevenshteinAcceptor(description, prefix, term, options.bytes));
+        it.emplace(options.starts_with ? reader.iterator(*acceptor)
+                                       : reader.iterator(*acceptor->Inner()),
+                   options);
         narrow = std::move(acceptor);
         if (!it->SeekGe(past)) {
           return;
@@ -295,9 +303,10 @@ class SelectedTermsIterator : public TermIterator {
   TermBoost _boost;
 };
 
-uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term) {
-  return std::max(1U, static_cast<uint32_t>(utf8_utils::Length(prefix) +
-                                            utf8_utils::Length(term)));
+uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term, bool bytes) {
+  return std::max(
+    1U, static_cast<uint32_t>(LevenshteinAcceptor::Length(prefix, bytes) +
+                              LevenshteinAcceptor::Length(term, bytes)));
 }
 
 QueryBuilder::ptr PrepareLevenshteinSegment(
@@ -336,6 +345,24 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   }
 
   return MultiTermQuery::Finish(std::move(query), ctx);
+}
+
+Filter::ptr MakeLevenshteinFilter(const FieldTarget& target,
+                                  const ByEditDistanceOptions& opts,
+                                  const ParametricDescription& d,
+                                  size_t max_terms) {
+  auto filter = target.Make<LevenshteinAutomatonFilter>();
+  *filter->mutable_options() =
+    LevenshteinAutomatonOptions{d,
+                                opts.provider,
+                                opts.with_transpositions,
+                                opts.starts_with,
+                                opts.bytes,
+                                opts.prefix,
+                                opts.term,
+                                max_terms};
+  filter->mutable_options()->merge = target.merge;
+  return filter;
 }
 
 }  // namespace
@@ -379,14 +406,16 @@ PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
 
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   const ParametricDescription& d, ByEditDistanceAllOptions::pdp_f provider,
-  bool with_transpositions, bytes_view prefix, bytes_view term,
-  size_t max_terms)
-  : parametric{std::make_shared<const LevenshteinAcceptor>(d, prefix, term)},
-    source{MakeFuzzySource(parametric)},
+  bool with_transpositions, bool starts_with, bool bytes, bytes_view prefix,
+  bytes_view term, size_t max_terms)
+  : parametric{MakeLevenshteinAcceptor(d, prefix, term, bytes)},
+    source{MakeFuzzySource(parametric, starts_with)},
     provider{provider ? provider : &DefaultPDP},
-    utf8_target_size{Utf8TargetSize(prefix, term)},
+    utf8_target_size{Utf8TargetSize(prefix, term, bytes)},
     no_distance{static_cast<byte_type>(d.max_distance() + 1)},
     with_transpositions{with_transpositions},
+    starts_with{starts_with},
+    bytes{bytes},
     max_terms{max_terms} {
   target.reserve(prefix.size() + term.size());
   target += prefix;
@@ -400,33 +429,40 @@ Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
     opts.term, [] -> Filter::ptr { return std::make_unique<Empty>(); },
-    [&] -> Filter::ptr {
-      auto filter = target.Make<ByTerm>();
-      auto& term = filter->mutable_options()->term;
-      term.reserve(opts.prefix.size() + opts.term.size());
-      term += opts.prefix;
-      term += opts.term;
-      return filter;
-    },
-    [&](const ParametricDescription& d, const bytes_view prefix,
-        const bytes_view term) -> Filter::ptr {
-      auto filter = target.Make<LevenshteinAutomatonFilter>();
-      *filter->mutable_options() = LevenshteinAutomatonOptions{
-        d,      opts.provider, opts.with_transpositions,
-        prefix, term,          opts.max_terms};
-      filter->mutable_options()->merge = target.merge;
-      return filter;
+    [&] { return LowerExactLevenshtein(target, opts); },
+    [&](const ParametricDescription& d, bytes_view, bytes_view) {
+      return MakeLevenshteinFilter(target, opts, d, opts.max_terms);
     });
 }
 
+Filter::ptr LowerScoredExactLevenshtein(const FieldTarget& target,
+                                        const ByEditDistanceOptions& opts) {
+  SDB_ASSERT(opts.max_distance == 0 && opts.starts_with);
+  return MakeLevenshteinFilter(target, opts,
+                               DefaultPDP(0, opts.with_transpositions), 0);
+}
+
+Filter::ptr LowerExactLevenshtein(const FieldTarget& target,
+                                  const ByEditDistanceOptions& opts) {
+  return Resolve(opts.starts_with, [&]<bool kStartsWith> -> Filter::ptr {
+    auto filter =
+      target.Make<std::conditional_t<kStartsWith, ByPrefix, ByTerm>>();
+    auto& options = *filter->mutable_options();
+    options.term.reserve(opts.prefix.size() + opts.term.size());
+    options.term += opts.prefix;
+    options.term += opts.term;
+    if constexpr (kStartsWith) {
+      options.merge = target.merge;
+    }
+    return filter;
+  });
+}
+
 TermPredicate::ptr LevenshteinAutomatonFilter::CompileTermPredicate() const {
-  if (!options().parametric) {
+  if (!options().source) {
     return nullptr;
   }
-  return MakeTermPredicate(
-    [acceptor = options().parametric](bytes_view term) noexcept {
-      return acceptor->Matches(term);
-    });
+  return options().source->Predicate();
 }
 
 TermPredicate::ptr ByEditDistance::CompileTermPredicate() const {

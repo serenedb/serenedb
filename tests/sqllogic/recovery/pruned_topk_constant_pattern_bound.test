@@ -1,0 +1,58 @@
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ptcpb_en AS split_text()
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ptcpb_plain AS split_text();
+
+
+statement ok
+CREATE TABLE ptcpb (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX ptcpb_idx ON ptcpb
+  USING inverted(id, body ptcpb_en, tag ptcpb_plain);
+
+
+statement ok
+INSERT INTO ptcpb
+SELECT i, CASE WHEN i % 3 <> 0 THEN 'common' ELSE 'rare' END,
+          CASE WHEN i % 101 = 0 THEN 'apricot' ELSE 'apple' END
+FROM generate_series(1, 40000) AS s(i);
+
+
+query
+SELECT count(*) AS apricot_rows FROM ptcpb
+WHERE id % 3 <> 0 AND id % 101 = 0;
+----
+apricot_rows
+264
+
+
+query
+SELECT count(*) FILTER (WHERE score > 1) AS apricot_rows FROM (
+  SELECT BM25(ptcpb_idx.tableoid) AS score FROM ptcpb_idx
+  WHERE body @@ 'common'::tsquery
+    AND tag @@ ts_starts_with('ap')::score('bm25(1.2, 0.75)')
+  ORDER BY BM25(ptcpb_idx.tableoid) DESC LIMIT 300) t;
+----
+apricot_rows
+264
+
+
+query
+SELECT count(*) FILTER (WHERE score > 1) AS apricot_rows FROM (
+  SELECT BM25(ptcpb_idx.tableoid) AS score FROM ptcpb_idx
+  WHERE body @@ 'common'::tsquery
+    AND tag @@ ts_starts_with('ap')::score('bm25(1.2, 0.75)')::merge('sum')
+  ORDER BY BM25(ptcpb_idx.tableoid) DESC LIMIT 300) t;
+----
+apricot_rows
+264

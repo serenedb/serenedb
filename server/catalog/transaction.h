@@ -225,6 +225,7 @@ class Transactions final {
   absl::Status TruncateLog(
     duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT,
     duckdb::ClientContext* context = nullptr);
+  absl::Status TruncateLog(const utils::DrainGate::Closed& checkpoints);
   void SettleLog();
 
   struct FinalCheckpoint {
@@ -293,6 +294,8 @@ class Transactions final {
   static constexpr uint64_t kPublishRing = uint64_t{1} << 16;
 
   Lsn ReservedEnd() const;
+  absl::Status Truncate(duckdb::CheckpointAbort abort,
+                        duckdb::ClientContext* context);
   void Publish(duckdb::transaction_t commit, bool catalog, bool wait);
   void MaintainLog(Lsn end);
   void MaintainInBackground(bool snapshot_due);

@@ -751,6 +751,20 @@ absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort,
     return absl::FailedPreconditionError(
       "cannot checkpoint while a backup is in progress");
   }
+  return Truncate(abort, context);
+}
+
+absl::Status Transactions::TruncateLog(
+  [[maybe_unused]] const utils::DrainGate::Closed& checkpoints) {
+  SDB_ASSERT(checkpoints.get() == &_checkpoints);
+  if (!_log || _replaying) {
+    return absl::OkStatus();
+  }
+  return Truncate(duckdb::CheckpointAbort::NO_ABORT, nullptr);
+}
+
+absl::Status Transactions::Truncate(duckdb::CheckpointAbort abort,
+                                    duckdb::ClientContext* context) {
   absl::MutexLock round{&_truncate_mutex};
   SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint");
   if (abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_HEADER ||

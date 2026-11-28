@@ -47,15 +47,16 @@
 namespace sdb::backup {
 namespace {
 
-Cut RecordCut(duckdb::ClientContext& context, const std::string& pin,
-              std::string name, pg::ProgressMetrics& progress) {
+Cut RecordCut(duckdb::ClientContext& context,
+              const utils::DrainGate::Closed& checkpoints,
+              const std::string& pin, std::string name,
+              pg::ProgressMetrics& progress) {
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
   const auto commits = CommitGate().Close(context);
   auto& transactions = catalog::Transactions::Get();
   auto* log = transactions.GetLog();
   SDB_ENSURE(log, "cannot start a backup of a server without a log");
-  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
-  if (const auto status = transactions.TruncateLog(); !status.ok()) {
+  if (const auto status = transactions.TruncateLog(checkpoints); !status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("cannot start a backup: the checkpoint failed: ",
                             status.message()));
@@ -125,13 +126,14 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
   auto pin = fs.JoinPath(layout.BackupsDir(), name);
   absl::Cleanup remove_pin = [&]() noexcept { fs.TryRemoveFile(pin); };
 
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
+  auto checkpoints = catalog::Transactions::Get().CloseCheckpoints(context);
   catalog::DeferRemovals();
   absl::Cleanup resume_removals = [] { catalog::ResumeRemovals(); };
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
   absl::Cleanup resume_cleanups = [] { search::RequestCleanups(); };
   auto maintenance = search::GetSearchEngine().Maintenance().Close(context);
-  auto cut = RecordCut(context, pin, std::move(name), progress);
-  auto checkpoints = catalog::Transactions::Get().CloseCheckpoints(context);
+  auto cut = RecordCut(context, checkpoints, pin, std::move(name), progress);
   auto label_file = BuildBackupLabel(
     label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
   std::move(resume_cleanups).Cancel();

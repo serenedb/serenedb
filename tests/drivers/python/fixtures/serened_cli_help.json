@@ -2,19 +2,19 @@
   "generatedFrom": "serened --help",
   "title": "serened -- SereneDB pg-wire server",
   "usage": [
-    "serened <data-dir> [--flag=value ...]",
-    "serenedb server <data-dir> [--flag=value ...]",
+    "serened <server-dir> [--flag=value ...]",
+    "serenedb server <server-dir> [--flag=value ...]",
     "serenedb shell [shell args ...]",
     "serenedb psql  [psql args ...]"
   ],
   "commands": [
     {
-      "command": "serened <data-dir> [--flag=value ...]",
-      "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
+      "command": "serened <server-dir> [--flag=value ...]",
+      "description": "Start the SereneDB pg-wire server, using the optional server directory and flags."
     },
     {
-      "command": "serenedb server <data-dir> [--flag=value ...]",
-      "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
+      "command": "serenedb server <server-dir> [--flag=value ...]",
+      "description": "Start the SereneDB pg-wire server, using the optional server directory and flags."
     },
     {
       "command": "serenedb shell [shell args ...]",
@@ -75,6 +75,16 @@
       "label": "Server",
       "flags": [
         {
+          "name": "abandon_wal",
+          "flag": "--abandon_wal",
+          "type": "",
+          "defaultValue": "",
+          "description": "The id of a lost WAL directory that owns a server directory on an object store: the server starts from its last snapshot, and the commits that only that WAL holds are lost.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "auth_api_key",
           "flag": "--auth_api_key",
           "type": "",
@@ -105,6 +115,16 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "checkpoint_at_stop",
+          "flag": "--checkpoint_at_stop",
+          "type": "",
+          "defaultValue": "false",
+          "description": "End every clean stop with a checkpoint and an empty WAL directory, so the server can start anywhere from its server directory alone.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "cpu_threads",
           "flag": "--cpu_threads",
           "type": "",
@@ -119,7 +139,7 @@
           "flag": "--hba_config",
           "type": "",
           "defaultValue": "",
-          "description": "Path to the host-based authentication config file. Empty (the default) uses <datadir>/pg_hba.conf; a relative path is resolved against the data directory.",
+          "description": "Path to the host-based authentication config file. Empty (the default) uses <server directory>/pg_hba.conf; a relative path is resolved against the server directory.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"
@@ -205,11 +225,31 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "require_existing",
+          "flag": "--require_existing",
+          "type": "",
+          "defaultValue": "false",
+          "description": "Refuse to start when the server directory holds no server, instead of creating a new one.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "server_directory",
           "flag": "--server_directory",
           "type": "",
           "defaultValue": "serenedb-data",
-          "description": "Path to the database directory. A positional argument, if given, takes precedence.",
+          "description": "Path to the server directory. A positional argument, if given, takes precedence.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "temp_directory",
+          "flag": "--temp_directory",
+          "type": "",
+          "defaultValue": "",
+          "description": "Local directory for the temporary files of queries that spill to disk. Empty uses <server directory>/temp; a server directory on an object store needs it.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"
@@ -270,6 +310,16 @@
           "type": "",
           "defaultValue": "1.2",
           "description": "Minimum TLS version: 1.2 or 1.3 (legacy TLS is not supported).",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "wal_directory",
+          "flag": "--wal_directory",
+          "type": "",
+          "defaultValue": "",
+          "description": "Local directory for the write-ahead log (WAL) of the commits since the last snapshot. Empty uses <server directory>/wal; a server directory on an object store needs it.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

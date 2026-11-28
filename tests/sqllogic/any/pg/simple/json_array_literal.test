@@ -1,0 +1,41 @@
+query I
+SELECT cardinality('{}'::json[])
+----
+cardinality
+0
+
+
+query I
+SELECT cardinality(' {"[1]", "{\"a\": 2}", NULL} '::json[])
+----
+cardinality
+3
+
+
+query I
+SELECT ('{"[1]","{\"a\": 2}"}'::json[])[2] ->> 'a'
+----
+?column?
+2
+
+
+query I
+SELECT ('{"[1]",NULL}'::json[])[2] IS NULL
+----
+?column?
+t
+
+
+query I
+SELECT json_typeof(('{"[1]",7,"\"s\""}'::json[])[3])
+----
+json_typeof
+string
+
+
+statement error
+SELECT '{"x"}'::json[]
+
+
+statement error
+SELECT '{1,2'::json[]

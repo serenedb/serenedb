@@ -72,7 +72,6 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
     using Owner = SqlTokenizer;
     std::string expression;
     duckdb::LogicalTypeId input = duckdb::LogicalTypeId::INVALID;
-    duckdb::LogicalTypeId output = duckdb::LogicalTypeId::INVALID;
     bool list = false;
     std::string bound;
   };

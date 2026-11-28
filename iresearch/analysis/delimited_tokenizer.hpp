@@ -51,7 +51,7 @@ class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
   static duckdb::LogicalTypeId BindInput(Options& opts,
                                          const duckdb::LogicalType& input,
                                          BindContext& /*ctx*/) {
-    const auto terms = AcceptText(type_name(), input);
+    const auto terms = TextOrBytes(type_name(), input);
     return opts.delimiter.empty() ? duckdb::LogicalTypeId::BLOB : terms;
   }
 

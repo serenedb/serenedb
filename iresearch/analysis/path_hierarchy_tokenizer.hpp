@@ -42,11 +42,6 @@ class PathHierarchyTokenizer {
   }
 
   static Tokenizer::ptr Make(Options opts);
-  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
-                                         const duckdb::LogicalType& input,
-                                         BindContext& /*ctx*/) {
-    return AcceptText(type_name(), input);
-  }
 
  protected:
   explicit PathHierarchyTokenizer(Options&& options) noexcept;

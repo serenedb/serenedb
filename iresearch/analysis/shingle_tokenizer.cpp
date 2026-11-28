@@ -40,7 +40,7 @@ Tokenizer::ptr ShingleTokenizer::Make(Options opts,
 duckdb::LogicalTypeId ShingleTokenizer::BindInput(
   Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
   if (!opts.base_analyzer) {
-    return AcceptText(type_name(), input);
+    return TextOrBytes(type_name(), input);
   }
   BindNode(*opts.base_analyzer, input, ctx);
   return opts.base_analyzer->terms;

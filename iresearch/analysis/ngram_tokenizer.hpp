@@ -76,7 +76,7 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
   static duckdb::LogicalTypeId BindInput(Options& opts,
                                          const duckdb::LogicalType& input,
                                          BindContext& /*ctx*/) {
-    const auto terms = AcceptText(type_name(), input);
+    const auto terms = TextOrBytes(type_name(), input);
     return opts.stream_bytes_type == InputType::Binary
              ? duckdb::LogicalTypeId::BLOB
              : terms;

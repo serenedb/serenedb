@@ -286,7 +286,6 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   const auto& value_type = fn.GetArguments()[0];
   irs::analysis::BindContext bind_ctx{
     .client = context,
-    .cache = db.GetSharedObjectCache(),
     .row_alone = connector::ComputedFromRowAlone,
   };
   auto config = irs::analysis::BindInput(

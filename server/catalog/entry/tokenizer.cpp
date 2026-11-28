@@ -96,7 +96,6 @@ TokenizerBindingRef Tokenizer::Bind(duckdb::ClientContext& context,
   }
   irs::analysis::BindContext ctx{
     .client = context,
-    .cache = irs::DuckDBEngine::Instance().instance().GetSharedObjectCache(),
     .row_alone = connector::ComputedFromRowAlone,
   };
   auto bound = irs::analysis::BindInput(_config, input, ctx);

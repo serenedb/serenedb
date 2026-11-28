@@ -445,13 +445,12 @@ Tokenizer::ptr SqlTokenizer::Make(Options opts,
 duckdb::LogicalTypeId SqlTokenizer::BindInput(Options& opts,
                                               const duckdb::LogicalType& input,
                                               BindContext& ctx) {
-  const duckdb::LogicalType text{AcceptText(type_name(), input)};
+  const duckdb::LogicalType text{TextOrBytes(type_name(), input)};
   auto bound = BindSql(ctx, type_name(), opts.expression, text);
   opts.input = text.id();
-  opts.output = TermType(bound.type);
   opts.list = bound.type.id() == duckdb::LogicalTypeId::LIST;
   opts.bound = std::move(bound.bytes);
-  return opts.output;
+  return TermType(bound.type);
 }
 
 void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {

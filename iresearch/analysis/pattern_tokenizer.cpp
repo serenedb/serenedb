@@ -261,7 +261,7 @@ bool MatchesAnyByte(re2::Regexp& re) {
 
 duckdb::LogicalTypeId PatternTokenizer::BindInput(
   Options& opts, const duckdb::LogicalType& input, BindContext& /*ctx*/) {
-  const auto type = AcceptText(type_name(), input);
+  const auto type = TextOrBytes(type_name(), input);
   const re2::RE2 regex{opts.pattern, RegexOptions(opts.group)};
   return regex.ok() && MatchesAnyByte(*regex.Regexp())
            ? duckdb::LogicalTypeId::BLOB

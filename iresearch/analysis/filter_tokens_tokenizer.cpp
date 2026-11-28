@@ -39,7 +39,7 @@ Tokenizer::ptr FilterTokensTokenizer::Make(Options opts,
 
 duckdb::LogicalTypeId FilterTokensTokenizer::BindInput(
   Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
-  const auto terms = AcceptText(type_name(), input);
+  const auto terms = TextOrBytes(type_name(), input);
   if (!opts.predicate.empty()) {
     auto bound =
       BindSql(ctx, type_name(), opts.predicate, duckdb::LogicalType{terms});

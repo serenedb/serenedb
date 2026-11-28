@@ -47,7 +47,7 @@ Tokenizer::ptr WildcardTokenizer::Make(Options opts,
 
 duckdb::LogicalTypeId WildcardTokenizer::BindInput(
   Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
-  opts.bytes = AcceptText(type_name(), input) == duckdb::LogicalTypeId::BLOB;
+  opts.bytes = TextOrBytes(type_name(), input) == duckdb::LogicalTypeId::BLOB;
   if (opts.base_analyzer) {
     BindNode(*opts.base_analyzer, input, ctx);
   }

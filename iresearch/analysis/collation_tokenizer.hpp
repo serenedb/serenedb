@@ -41,7 +41,7 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
                                          const duckdb::LogicalType& input,
                                          BindContext& /*ctx*/) {
-    AcceptText(type_name(), input);
+    TextOrBytes(type_name(), input);
     return duckdb::LogicalTypeId::BLOB;
   }
 

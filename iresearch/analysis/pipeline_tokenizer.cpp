@@ -471,7 +471,7 @@ Tokenizer::ptr PipelineTokenizer::Make(Options opts,
 duckdb::LogicalTypeId PipelineTokenizer::BindInput(
   Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
   if (opts.children.empty()) {
-    return AcceptText(type_name(), input);
+    return TextOrBytes(type_name(), input);
   }
   duckdb::LogicalType stage_input = input;
   for (auto& child : opts.children) {

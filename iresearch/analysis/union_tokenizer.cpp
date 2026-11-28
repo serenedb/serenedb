@@ -53,7 +53,7 @@ UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
 duckdb::LogicalTypeId UnionTokenizer::BindInput(
   Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
   if (opts.children.empty()) {
-    return AcceptText(type_name(), input);
+    return TextOrBytes(type_name(), input);
   }
   auto terms = duckdb::LogicalTypeId::VARCHAR;
   for (auto& child : opts.children) {

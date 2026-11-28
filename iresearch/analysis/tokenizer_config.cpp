@@ -24,8 +24,8 @@
 
 namespace irs::analysis {
 
-duckdb::LogicalTypeId AcceptText(std::string_view stage,
-                                 const duckdb::LogicalType& input) {
+duckdb::LogicalTypeId TextOrBytes(std::string_view stage,
+                                  const duckdb::LogicalType& input) {
   const auto id = input.id();
   if (id != duckdb::LogicalTypeId::VARCHAR &&
       id != duckdb::LogicalTypeId::BLOB) {
@@ -40,7 +40,11 @@ void BindNode(TokenizerConfig& node, const duckdb::LogicalType& input,
               BindContext& ctx) {
   node.terms = std::visit(
     [&]<typename Options>(Options& opts) {
-      return Options::Owner::BindInput(opts, input, ctx);
+      if constexpr (requires { Options::Owner::BindInput(opts, input, ctx); }) {
+        return Options::Owner::BindInput(opts, input, ctx);
+      } else {
+        return TextOrBytes(Options::Owner::type_name(), input);
+      }
     },
     node.config);
   node.input = input.id();

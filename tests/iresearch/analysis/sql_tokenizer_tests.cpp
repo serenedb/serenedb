@@ -262,7 +262,6 @@ TEST(SqlTokenizerTest, userMacroRejected) {
 
   irs::analysis::BindContext ctx{
     .client = *conn.context,
-    .cache = tests::Cache(),
     .row_alone = tests::AnyExpression,
   };
   ASSERT_THROW(irs::analysis::BindInput(Sql("sql_tok_test_up(input)"),

@@ -34,7 +34,6 @@ inline irs::analysis::TokenizerConfig Bound(
   duckdb::ClientContext& client = EngineContext()) {
   irs::analysis::BindContext ctx{
     .client = client,
-    .cache = Cache(),
     .row_alone = AnyExpression,
   };
   return irs::analysis::BindInput(cfg, input, ctx);

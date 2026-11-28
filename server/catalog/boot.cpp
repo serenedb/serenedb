@@ -139,8 +139,9 @@ void ClaimTemp(LockedOwner& owner, const ServerDirectory& layout,
   const auto self = std::string{server_id.Bytes()};
   const bool own = owner.content == self;
   if (!own && !owner.content.empty()) {
-    SDB_INFO(STARTUP, "removing what another server left in the temporary "
-                      "directory '",
+    SDB_INFO(STARTUP,
+             "removing what another server left in the temporary "
+             "directory '",
              layout.TempDir(), "'");
   }
   duckdb::TemporaryDirectoryHandle::RemoveLeftovers(

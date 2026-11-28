@@ -71,6 +71,9 @@ struct Session {
     reg_out;
   mutable std::deque<std::string> reg_out_texts;
   mutable std::array<RegOutRecent, 64> reg_out_recent;
+  mutable irs::containers::FlatHashMap<
+    std::string, duckdb::optional_ptr<duckdb::SchemaCatalogEntry>>
+    usable_schemas;
 };
 
 Session MakeSession(

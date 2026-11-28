@@ -107,14 +107,24 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> LookupSchema(
   if (path != session.search_path.end() && path->entry) {
     return path->entry;
   }
-  return duckdb::CatalogEntryRetriever{*session.context, session.role}
-    .GetSchema(
-      duckdb::EntryLookupInfo{
-        duckdb::CatalogType::SCHEMA_ENTRY,
-        duckdb::QualifiedName{session.database->GetName(), duckdb::Identifier{},
-                              duckdb::Identifier{name}},
-        use},
-      duckdb::OnEntryNotFound::RETURN_NULL);
+  const auto lookup = [&] {
+    return duckdb::CatalogEntryRetriever{*session.context, session.role}
+      .GetSchema(
+        duckdb::EntryLookupInfo{
+          duckdb::CatalogType::SCHEMA_ENTRY,
+          duckdb::QualifiedName{session.database->GetName(),
+                                duckdb::Identifier{}, duckdb::Identifier{name}},
+          use},
+        duckdb::OnEntryNotFound::RETURN_NULL);
+  };
+  if (use != duckdb::AclMode::Usage) {
+    return lookup();
+  }
+  const auto [known, added] = session.usable_schemas.try_emplace(name);
+  if (added) {
+    known->second = lookup();
+  }
+  return known->second;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(

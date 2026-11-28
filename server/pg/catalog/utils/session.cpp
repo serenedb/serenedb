@@ -49,7 +49,8 @@ Session MakeSession(
     .temporary = std::nullopt,
     .reg_out = {},
     .reg_out_texts = {},
-    .reg_out_recent = {}};
+    .reg_out_recent = {},
+    .usable_schemas = {}};
   if (!context) {
     return session;
   }

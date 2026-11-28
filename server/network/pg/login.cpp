@@ -25,32 +25,14 @@
 
 #include <duckdb/common/types/timestamp.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
+#include "pg/connection_context.h"
 
 namespace sdb::network::pg {
 
 hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
                           std::string_view database) {
-  const hba::MembershipFn is_member = [](std::string_view member,
-                                         std::string_view group) {
-    duckdb::idx_t member_oid = 0;
-    duckdb::idx_t group_oid = 0;
-    if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
-          member,
-          [&](const catalog::RoleCatalogEntry& role) {
-            member_oid = role.oid;
-          }) ||
-        !catalog::ReadEntry<catalog::RoleCatalogEntry>(
-          group, [&](const catalog::RoleCatalogEntry& role) {
-            group_oid = role.oid;
-          })) {
-      return false;
-    }
-    return auth::ClosureFor(nullptr, member_oid)->IsMember(group_oid);
-  };
-
   hba::ClientInfo client;
   client.is_local = peer.is_local;
   client.is_ssl = peer.is_ssl;
@@ -65,7 +47,7 @@ hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
   }
   client.user = user;
   client.database = database;
-  return hba::Decide(*hba::GetHbaRuleset(), client, is_member);
+  return hba::Decide(*hba::GetHbaRuleset(), client, sdb::pg::IsHbaMember);
 }
 
 RoleLogin ReadRoleLogin(std::string_view user) {

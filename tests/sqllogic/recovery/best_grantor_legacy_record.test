@@ -1,0 +1,126 @@
+control substitution on
+
+statement ok
+CREATE ROLE bglr_a;
+
+
+statement ok
+CREATE ROLE bglr_b;
+
+
+statement ok
+CREATE ROLE bglr_c LOGIN PASSWORD 'bglr_pw';
+
+
+statement ok
+CREATE ROLE bglr_d;
+
+
+statement ok
+CREATE ROLE bglr_e;
+
+
+statement ok
+CREATE TABLE bglr_t (a int);
+
+
+statement ok
+GRANT SELECT ON bglr_t TO bglr_a WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT, INSERT ON bglr_t TO bglr_b WITH GRANT OPTION;
+
+
+statement ok
+GRANT bglr_a TO bglr_c;
+
+
+statement ok
+GRANT bglr_b TO bglr_c;
+
+
+statement ok
+SET sdb_faults = 'grant_first_grantor_with_an_option';
+
+
+connection c_bglr user=bglr_c password=bglr_pw
+statement ok
+GRANT SELECT, INSERT ON bglr_t TO bglr_d;
+
+
+statement ok
+SET sdb_faults = '-grant_first_grantor_with_an_option';
+
+
+connection c_bglr user=bglr_c password=bglr_pw
+statement ok
+GRANT SELECT, INSERT ON bglr_t TO bglr_e;
+
+
+query
+SELECT pg_get_userbyid(a.grantee) AS grantee, pg_get_userbyid(a.grantor) AS grantor, a.privilege_type
+FROM pg_class c, aclexplode(c.relacl) a
+WHERE c.relname = 'bglr_t' AND pg_get_userbyid(a.grantee) IN ('bglr_d', 'bglr_e')
+ORDER BY 1, 3;
+----
+grantee	grantor	privilege_type
+bglr_d	bglr_a	SELECT
+bglr_e	bglr_b	INSERT
+bglr_e	bglr_b	SELECT
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT pg_get_userbyid(a.grantee) AS grantee, pg_get_userbyid(a.grantor) AS grantor, a.privilege_type
+FROM pg_class c, aclexplode(c.relacl) a
+WHERE c.relname = 'bglr_t' AND pg_get_userbyid(a.grantee) IN ('bglr_d', 'bglr_e')
+ORDER BY 1, 3;
+----
+grantee	grantor	privilege_type
+bglr_d	bglr_a	SELECT
+bglr_e	bglr_b	INSERT
+bglr_e	bglr_b	SELECT
+
+
+connection after_crash
+statement ok
+DROP TABLE bglr_t;
+
+
+connection after_crash
+statement ok
+DROP ROLE bglr_e;
+
+
+connection after_crash
+statement ok
+DROP ROLE bglr_d;
+
+
+connection after_crash
+statement ok
+DROP ROLE bglr_c;
+
+
+connection after_crash
+statement ok
+DROP ROLE bglr_b;
+
+
+connection after_crash
+statement ok
+DROP ROLE bglr_a;

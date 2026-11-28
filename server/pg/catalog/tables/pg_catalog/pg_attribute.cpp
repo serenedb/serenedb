@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <limits>
@@ -59,6 +60,10 @@ struct Attribute {
 struct TableAttribute : Attribute {
   const duckdb::ColumnDefinition& column;
   const std::vector<bool>& not_null;
+};
+
+struct ViewAttribute : Attribute {
+  std::span<const duckdb::AclItem> acl;
 };
 
 char Generated(const duckdb::ColumnDefinition& column) {
@@ -111,8 +116,11 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       [](const auto& row) { return row.not_null[row.column.Logical().index]; }),
     Col<"atthasdef">([](const auto& row) { return HasAttrdef(row.column); }),
     Col<"attgenerated">([](const auto& row) { return Generated(row.column); }),
-    Col<"attacl">(
-      [](const auto& row) -> const auto& { return row.column.Acl(); }));
+    Col<"attacl">([](const auto& row) { return AclOf(row.column.Acl()); }));
+
+  static constexpr auto kViewColumn = Shape<kSql, const ViewAttribute>(
+    kAttribute, Col<"attname">(&Attribute::name),
+    Col<"attacl">([](const auto& row) { return AclOf(row.acl); }));
 
   static constexpr auto kSequenceColumn = Shape<kSql, const Attribute>(
     kAttribute, Col<"attname">(&Attribute::name),
@@ -121,7 +129,7 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   static constexpr SystemTypeShape kTypeShapes[] = {
     {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kTableColumn>::kProvided},
     {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kColumn>::kProvided},
-    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kColumn>::kProvided},
+    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kViewColumn>::kProvided},
     {duckdb::CatalogType::INDEX_ENTRY, SystemShapeOf<kColumn>::kProvided},
     {duckdb::CatalogType::SEQUENCE_ENTRY,
      SystemShapeOf<kSequenceColumn>::kProvided},
@@ -163,8 +171,9 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       return;
     }
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      Emit<kColumn>({view.oid, columns->names[i].GetIdentifierName(),
-                     static_cast<int16_t>(i + 1), columns->types[i]});
+      Emit<kViewColumn>({{view.oid, columns->names[i].GetIdentifierName(),
+                          static_cast<int16_t>(i + 1), columns->types[i]},
+                         view.ColumnAcl(i)});
     }
   }
 

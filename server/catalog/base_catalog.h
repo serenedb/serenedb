@@ -26,6 +26,7 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <functional>
+#include <span>
 #include <string>
 
 #include "catalog/entry_set.h"
@@ -55,10 +56,11 @@ class BaseCatalog : public duckdb::Catalog {
   BaseCatalog(duckdb::AttachedDatabase& db, bool case_sensitive)
     : duckdb::Catalog{db},
       _oids{db, SharedDependents(db)},
-      _schemas{case_sensitive, _oids} {}
+      _schemas{case_sensitive, _oids, 0, true} {}
 
   using duckdb::Catalog::CreateSchema;
   using duckdb::Catalog::Initialize;
+  using duckdb::Catalog::LookupEntry;
 
   bool CrossCatalogDependencies() const final {
     return !GetAttached().IsSystem();
@@ -80,6 +82,8 @@ class BaseCatalog : public duckdb::Catalog {
   void ScanSchemas(absl::FunctionRef<void(Schema&)> callback);
 
   void DropSchema(duckdb::ClientContext& context, duckdb::DropInfo& info) final;
+  void DropSchema(duckdb::ClientContext& context, duckdb::DropInfo& info,
+                  std::span<const duckdb::idx_t> together);
 
   void AlterSchemaEntry(duckdb::CatalogTransaction transaction,
                         duckdb::SchemaCatalogEntry& schema,
@@ -113,12 +117,32 @@ class BaseCatalog : public duckdb::Catalog {
     duckdb::CatalogTransaction transaction, duckdb::CatalogEntry& entry,
     const std::function<void(duckdb::CatalogEntry&)>& callback) final;
 
+  void ScanIndexes(
+    duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table,
+    absl::FunctionRef<void(duckdb::IndexCatalogEntry&)> callback) final;
+
   duckdb::catalog_entry_vector_t OwnedEntries(
     duckdb::CatalogTransaction transaction,
     const duckdb::CatalogEntry& owner) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
     duckdb::CatalogTransaction transaction, duckdb::CatalogEntry& owned) final;
+
+  void Scan(duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+            const std::function<void(duckdb::CatalogEntry&)>& callback) final;
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> LookupEntry(
+    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+    const duckdb::Identifier& name) final;
+
+  void DropEntries(
+    duckdb::ClientContext& context,
+    const duckdb::catalog_entry_vector_t& entries,
+    duckdb::catalog_entry_map_t<duckdb::vector<duckdb::DropInfo>>& drops) final;
+
+  duckdb::catalog_entry_vector_t DropOrder(
+    duckdb::CatalogTransaction transaction,
+    const duckdb::catalog_entry_vector_t& entries);
 
   virtual duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
     duckdb::CatalogTransaction transaction, Schema& schema,
@@ -143,10 +167,14 @@ class BaseCatalog : public duckdb::Catalog {
   duckdb::optional_ptr<duckdb::CatalogEntry> FindRelation(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
 
-  virtual EntrySet& Set(duckdb::CatalogType type);
+  EntrySet& Set(duckdb::CatalogType type);
+  virtual EntrySet* FindSet(duckdb::CatalogType type);
 
   EntrySet& SchemaSet(duckdb::CatalogTransaction transaction,
                       const duckdb::SchemaCatalogEntry& schema);
+
+  virtual void DropSchemaEntry(duckdb::CatalogTransaction transaction,
+                               const duckdb::SchemaCatalogEntry& schema);
 
   OidIndex& Oids() noexcept { return _oids; }
 
@@ -154,7 +182,7 @@ class BaseCatalog : public duckdb::Catalog {
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupOwner(
-    duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
+    duckdb::CatalogTransaction transaction, duckdb::idx_t oid) final;
 
   template<typename T>
   duckdb::optional_ptr<T> FindIn(duckdb::CatalogTransaction transaction,
@@ -172,6 +200,14 @@ class BaseCatalog : public duckdb::Catalog {
 
   bool DropFrom(EntrySet& set, duckdb::CatalogTransaction transaction,
                 duckdb::CatalogType type, duckdb::DropInfo& info);
+
+  struct AlteredEntry {
+    duckdb::optional_ptr<duckdb::CatalogEntry> before;
+    duckdb::optional_ptr<duckdb::CatalogEntry> after;
+  };
+
+  AlteredEntry AlterIn(EntrySet& set, duckdb::CatalogTransaction transaction,
+                       duckdb::AlterInfo& info);
 
   OidIndex _oids;
   EntrySet _schemas;

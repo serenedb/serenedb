@@ -242,6 +242,31 @@ bool FileExists(const std::string& path) {
   return !path.empty() && std::filesystem::exists(path, ec);
 }
 
+bool NamesServerFiles(std::string_view conninfo) {
+  char* error = nullptr;
+  std::unique_ptr<PQconninfoOption, decltype(&PQconninfoFree)> parsed{
+    PQconninfoParse(std::string{conninfo}.c_str(), &error), &PQconninfoFree};
+  if (!parsed) {
+    PQfreemem(error);
+    return false;
+  }
+  for (const auto* option = parsed.get(); option->keyword; ++option) {
+    if (!option->val) {
+      continue;
+    }
+    const std::string_view keyword{option->keyword};
+    if (keyword == "sslrootcert" && std::string_view{option->val} == "system") {
+      continue;
+    }
+    if (keyword == "passfile" || keyword == "service" || keyword == "sslcert" ||
+        keyword == "sslkey" || keyword == "sslrootcert" ||
+        keyword == "sslcrl" || keyword == "sslcrldir") {
+      return true;
+    }
+  }
+  return false;
+}
+
 ConnInfo ParseConnInfo(std::string_view conninfo) {
   char* error = nullptr;
   std::unique_ptr<PQconninfoOption, decltype(&PQconninfoFree)> parsed{

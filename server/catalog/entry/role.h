@@ -21,9 +21,9 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/catalog/catalog_entry/role_entry.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -33,22 +33,16 @@ using RoleOption = duckdb::RoleOption;
 using duckdb::HasOption;
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name);
-std::string StoredPassword(std::string_view password);
+std::string StoredPassword(duckdb::ClientContext& context,
+                           std::string_view role, std::string_view password);
 duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context);
 
-class RoleCatalogEntry final : public duckdb::InCatalogEntry {
+class RoleCatalogEntry final : public duckdb::RoleEntry {
  public:
-  static constexpr duckdb::CatalogType Type = duckdb::CatalogType::ROLE_ENTRY;
-  static constexpr const char* Name = "role";
-
   RoleCatalogEntry(duckdb::Catalog& catalog, duckdb::CreateRoleInfo& info);
 
-  RoleOption Options() const noexcept { return _options; }
   bool CanLogin() const noexcept {
-    return HasOption(_options, RoleOption::Login);
-  }
-  bool IsSuperuser() const noexcept {
-    return HasOption(_options, RoleOption::Superuser);
+    return HasOption(Options(), RoleOption::Login);
   }
 
   int32_t ConnLimit() const noexcept { return _conn_limit; }
@@ -56,9 +50,6 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
   bool HasValidUntil() const noexcept { return _valid_until != 0; }
 
   const std::string& Password() const noexcept { return _password; }
-  const duckdb::vector<duckdb::Membership>& MemberOf() const noexcept {
-    return _member_of;
-  }
   const duckdb::vector<std::string>& Config() const noexcept { return _config; }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
@@ -69,12 +60,15 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
   std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
-  RoleOption _options;
   int32_t _conn_limit;
   int64_t _valid_until;
   std::string _password;
-  duckdb::vector<duckdb::Membership> _member_of;
   duckdb::vector<std::string> _config;
 };
+
+void ApplyConfigChange(duckdb::vector<std::string>& config,
+                       std::span<const std::string> set_config,
+                       std::span<const std::string> reset_config,
+                       bool reset_all_config);
 
 }  // namespace sdb::catalog

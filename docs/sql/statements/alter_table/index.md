@@ -76,7 +76,7 @@ Add a primary key to a column of a table:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_014" />
 
-The `RENAME TO` clause renames an entire table, changing its name in the schema. Indexes follow the rename, except in an [attached DuckDB file](../attach/duckdb.md), where a table that has an index can't be renamed. Views, functions, foreign keys and trigger bodies that refer to the table follow the new name, and the table's own triggers keep firing on it.
+The `RENAME TO` clause renames an entire table, changing its name in the schema. Indexes follow the rename, except in an [attached DuckDB file](../attach/duckdb.md), where a table that has an index can't be renamed. Views, functions, foreign keys and trigger bodies that refer to the table follow the new name, qualified with the table's schema where the new name alone would find another relation first, and the table's own triggers keep firing on it.
 
 <DocCallout type="tip">
     `ALTER TABLE` changes the schema of an existing table.

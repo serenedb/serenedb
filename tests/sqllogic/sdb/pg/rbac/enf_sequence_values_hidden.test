@@ -1,0 +1,40 @@
+
+statement ok
+DROP ROLE IF EXISTS repro_seqval_reader;
+
+
+statement ok
+CREATE ROLE repro_seqval_reader LOGIN PASSWORD 'repro_seqval_reader_pw';
+
+
+statement ok
+CREATE SEQUENCE repro_seqval_orders;
+
+
+query
+SELECT nextval('repro_seqval_orders') + nextval('repro_seqval_orders') + nextval('repro_seqval_orders') AS total;
+----
+total
+6
+
+
+connection repro_seqval_conn user=repro_seqval_reader password=repro_seqval_reader_pw
+query
+SELECT last_value FROM pg_sequences WHERE sequencename = 'repro_seqval_orders';
+----
+last_value
+
+
+connection repro_seqval_conn user=repro_seqval_reader password=repro_seqval_reader_pw
+query error
+SELECT last_value, coalesce(strpos(sql, 'START 4') > 0, false) AS sql_shows_next FROM sdb_sequences() WHERE sequence_name = 'repro_seqval_orders' AND database_name = current_database();
+----
+db error: ERROR: permission denied for function sdb_sequences
+
+
+statement ok
+DROP SEQUENCE repro_seqval_orders;
+
+
+statement ok
+DROP ROLE repro_seqval_reader;

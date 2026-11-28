@@ -153,6 +153,9 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
   : duckdb::TableCatalogEntry{catalog, schema, info}, _table{table} {
   internal = true;
   permissions = pg::SystemPermissions(table.SuperuserOnly());
+  for (const auto& column : table.Columns().Logical()) {
+    has_column_acls |= !column.Acl().empty();
+  }
 }
 
 const duckdb::ColumnList& SystemTableEntry::GetColumns() const {

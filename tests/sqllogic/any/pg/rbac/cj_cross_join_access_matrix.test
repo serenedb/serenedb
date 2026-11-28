@@ -72,6 +72,7 @@ id	payload
 
 
 # Cross join referencing BOTH tables' columns: denied on the un-granted mop.
+onlyif postgres
 connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.payload, b.label FROM cj_clickclack a, cj_mop b;
@@ -79,12 +80,29 @@ SELECT a.payload, b.label FROM cj_clickclack a, cj_mop b;
 db error: ERROR: permission denied for table cj_mop<slt:ignore>
 
 
+skipif postgres
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
+statement error
+SELECT a.payload, b.label FROM cj_clickclack a, cj_mop b;
+----
+db error: ERROR: Table with name cj_mop does not exist!<slt:ignore>
+
+
 # Explicit JOIN whose ON references mop.id: denied on mop.
+onlyif postgres
 connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.payload FROM cj_clickclack a JOIN cj_mop b ON a.id = b.id;
 ----
 db error: ERROR: permission denied for table cj_mop<slt:ignore>
+
+
+skipif postgres
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
+statement error
+SELECT a.payload FROM cj_clickclack a JOIN cj_mop b ON a.id = b.id;
+----
+db error: ERROR: Table with name cj_mop does not exist!<slt:ignore>
 
 
 # Self cross join over only the granted columns: allowed.
@@ -107,11 +125,20 @@ db error: ERROR: permission denied for table cj_clickclack<slt:ignore>
 
 
 # Subquery referencing mop's column: denied on mop.
+onlyif postgres
 connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.payload FROM cj_clickclack a WHERE a.id IN (SELECT id FROM cj_mop);
 ----
 db error: ERROR: permission denied for table cj_mop<slt:ignore>
+
+
+skipif postgres
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
+statement error
+SELECT a.payload FROM cj_clickclack a WHERE a.id IN (SELECT id FROM cj_mop);
+----
+db error: ERROR: Table with name cj_mop does not exist!<slt:ignore>
 
 
 # After granting full SELECT on mop, the cross join referencing both succeeds.

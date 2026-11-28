@@ -91,6 +91,15 @@ def test_each_request_runs_as_the_role_it_authenticated_as(role, http_conn):
     assert all(s is sockets[0] for s in sockets)
 
 
+def test_is_superuser_follows_the_role_a_request_runs_as(role, http_conn):
+    answers = []
+    for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH):
+        http_conn.request("GET", "/test/is_superuser", headers={"Authorization": auth})
+        response = http_conn.getresponse()
+        answers.append((response.status, response.read().decode()))
+    assert answers == [(200, "on"), (200, "off"), (200, "on")]
+
+
 @pytest.mark.skipif(not TOKEN, reason="the server has no bearer token")
 def test_the_bearer_token_is_masked_in_settings():
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
@@ -131,3 +140,37 @@ def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
         (200, SUPERUSER_NAME),
         (200, role),
     ]
+
+
+LIMITED = "drv_http_session_limited"
+LIMITED_PASSWORD = "drv-http-session-limited-pw"
+
+
+@pytest.fixture()
+def limited_role():
+    database = conn_kwargs()["dbname"]
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f"DROP ROLE IF EXISTS {LIMITED}")
+        conn.execute(
+            f"CREATE ROLE {LIMITED} LOGIN PASSWORD '{LIMITED_PASSWORD}' "
+            "CONNECTION LIMIT 1"
+        )
+        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {LIMITED}')
+    yield LIMITED
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {LIMITED}')
+        conn.execute(f"DROP ROLE {LIMITED}")
+
+
+def test_http_sessions_count_toward_the_connection_limit(limited_role):
+    auth = "Basic " + base64.b64encode(
+        f"{limited_role}:{LIMITED_PASSWORD}".encode()
+    ).decode()
+    first = http.client.HTTPConnection(HOST, PORT, timeout=30)
+    second = http.client.HTTPConnection(HOST, PORT, timeout=30)
+    try:
+        assert session_user(first, auth) == (200, limited_role)
+        assert session_user(second, auth)[0] != 200
+    finally:
+        first.close()
+        second.close()

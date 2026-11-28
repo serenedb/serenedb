@@ -153,7 +153,7 @@ connection c_user user=fc_user password=fc_user_pw
 statement error
 SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
+db error: ERROR: Table with name "fc_rbac.chtest.vedernikoff" does not exist because schema "fc_rbac<slt:ignore>
 
 
 # The superuser grants USAGE on the server.
@@ -178,7 +178,7 @@ connection c_user user=fc_user password=fc_user_pw
 statement error
 SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
+db error: ERROR: Table with name "fc_rbac.chtest.vedernikoff" does not exist because schema "fc_rbac<slt:ignore>
 
 
 # ===== cleanup =====

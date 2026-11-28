@@ -1,0 +1,60 @@
+control substitution on
+
+statement ok
+CREATE ROLE tsso_owner_${__DATABASE__};
+
+
+statement ok
+CREATE ROLE tsso_member_${__DATABASE__};
+
+
+statement ok
+GRANT postgres TO tsso_member_${__DATABASE__};
+
+
+statement ok
+CREATE TABLESPACE tsso_${__DATABASE__} OWNER tsso_owner_${__DATABASE__} LOCATION '${__TEST_DIR__}/tsso';
+
+
+statement ok
+SET ROLE tsso_member_${__DATABASE__};
+
+
+query
+SELECT pg_tablespace_size('pg_global') > 0 AS sized;
+----
+sized
+t
+
+
+statement error
+SELECT pg_tablespace_size('tsso_${__DATABASE__}');
+----
+db error: ERROR: permission denied for tablespace tsso_<slt:ignore>
+
+
+statement ok
+SET ROLE tsso_owner_${__DATABASE__};
+
+
+query
+SELECT pg_tablespace_size('tsso_${__DATABASE__}') >= 0 AS sized;
+----
+sized
+t
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLESPACE tsso_${__DATABASE__};
+
+
+statement ok
+DROP ROLE tsso_member_${__DATABASE__};
+
+
+statement ok
+DROP ROLE tsso_owner_${__DATABASE__};

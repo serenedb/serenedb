@@ -48,7 +48,7 @@ struct StaticView {
 };
 
 inline constexpr duckdb::AclItem kPublicSelect{
-  .grantee = kPublicGrantee,
+  .grantee = duckdb::ACL_ID_PUBLIC,
   .grantor = kRootUser,
   .privs = duckdb::AclMode::Select};
 
@@ -72,6 +72,7 @@ const duckdb::CreateMacroInfo* GetSystemFunction(std::string_view schema,
 
 const duckdb::Permissions& SystemPermissions(bool superuser_only);
 const duckdb::Permissions& SchemaPermissions();
+const duckdb::Permissions& PublicSchemaPermissions();
 
 void VisitSystemTables(std::string_view schema,
                        absl::FunctionRef<void(const SystemTable&)> visitor);

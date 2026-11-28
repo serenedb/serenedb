@@ -535,7 +535,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     const auto& table = _relation.Cast<catalog::SearchTableEntry>();
     if (gstate.unique_key) {
       ConnectionContext::Get(context).Transaction().SearchTxn().VerifyUniqueKey(
-        context, table.Storage(), *gstate.unique_key);
+        context, table, table.Storage(), *gstate.unique_key);
     }
     table.AdoptAsWritten(context);
     gstate.build_claim.Finish();

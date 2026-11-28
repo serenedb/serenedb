@@ -1,0 +1,62 @@
+control substitution on
+
+statement ok
+DETACH IF EXISTS uar_${__DATABASE__};
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/uar.db' AS uar_${__DATABASE__};
+
+
+statement ok
+CREATE OR REPLACE TABLE uar_${__DATABASE__}.main.uar_t (a integer);
+
+
+connection attached
+statement ok
+USE uar_${__DATABASE__};
+
+
+connection attached
+query
+SELECT 'pg_class'::regclass;
+----
+regclass
+pg_class
+
+
+connection attached
+statement error
+SELECT 'uar_t'::regclass;
+----
+db error: ERROR: relation "uar_t" does not exist
+
+
+connection attached
+query
+SELECT 'information_schema.tables'::regclass;
+----
+regclass
+information_schema.tables
+
+
+connection attached
+statement ok
+SET search_path = pg_catalog, main;
+
+
+connection attached
+query
+SELECT 'pg_class'::regclass;
+----
+regclass
+pg_class
+
+
+connection attached
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DETACH uar_${__DATABASE__};

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <duckdb/catalog/role_graph.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -324,6 +325,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EmbeddingBind(
     .api = &kEmbeddingApi,
     .secret_name = FoldString(context, *options[1], fn, "secret_name"),
     .model = std::move(model),
+    .superuser = input.Role().is_superuser,
   };
   LoadEndpoint(context, bind->endpoint);
   bind->similarity = fn == "ai_similarity";

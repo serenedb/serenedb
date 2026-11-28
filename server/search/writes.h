@@ -26,6 +26,7 @@
 #include <array>
 #include <bitset>
 #include <cstdint>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
@@ -113,6 +114,7 @@ struct StoreWrites {
   struct VerifiedKey {
     KeySpec spec;
     std::shared_ptr<const TableState> state;
+    const catalog::SearchTableEntry* table = nullptr;
   };
   std::vector<VerifiedKey> verified_keys;
   // The unique keys of the rows this transaction removed, for every unique
@@ -130,6 +132,7 @@ struct StoreWrites {
   bool removed_rows = false;
   std::vector<std::vector<duckdb::string_t>> statement_references;
   duckdb::StringHeap statement_heap;
+  std::optional<duckdb::idx_t> writer;
   // The committed rows of a referenced or referencing table the first check
   // against it saw, by store.
   irs::containers::FlatHashMap<duckdb::idx_t, std::shared_ptr<const TableState>>
@@ -328,6 +331,7 @@ class Writes {
                         const KeySpec& spec);
 
   void VerifyUniqueKey(duckdb::ClientContext& context,
+                       const catalog::SearchTableEntry& table,
                        const std::shared_ptr<Store>& store,
                        const KeySpec& spec);
 
@@ -365,23 +369,27 @@ class Writes {
   void CheckChanged(const StoreWrites& w,
                     std::span<const StoreWrites::ChangedRows> changed);
   [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
+                                             const duckdb::RoleAccess& role,
                                              const StoreWrites& w,
                                              const KeySpec& spec,
                                              std::string_view key, bool upsert);
-  void CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
+  void CheckReferences(duckdb::ClientContext& context,
+                       const duckdb::RoleAccess& role, StoreWrites& w,
                        const KeySpec& spec,
                        std::span<const duckdb::string_t> keys);
-  void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
+  void CheckRemovedKeys(duckdb::ClientContext& context,
+                        const duckdb::RoleAccess& role, StoreWrites& w,
                         bool commit);
   void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w);
   std::shared_ptr<const TableState> VerifyAllReferences(
-    duckdb::ClientContext& context, const catalog::SearchTableEntry& table,
-    const KeySpec& spec);
+    duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+    const catalog::SearchTableEntry& table, const KeySpec& spec);
 
   struct ReferenceCheck {
     const catalog::SearchTableEntry* table = nullptr;
     KeySpec spec;
     std::shared_ptr<const TableState> referenced;
+    duckdb::idx_t role = 0;
   };
 
   duckdb::transaction_t _session;

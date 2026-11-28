@@ -3368,8 +3368,8 @@ DROP MACRO coro_m_outer;
 statement error
 DROP MACRO coro_m;
 ----
-db error: ERROR: cannot drop function coro_m(unknown,unknown) because other objects depend on it
-DETAIL: view coro_m_v depends on function coro_m(unknown,unknown)
+db error: ERROR: cannot drop function coro_m(unknown) because other objects depend on it
+DETAIL: view coro_m_v depends on function coro_m(unknown)
 HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 

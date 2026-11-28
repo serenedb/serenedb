@@ -1,0 +1,111 @@
+statement ok
+DROP FUNCTION IF EXISTS fspn_literal();
+
+
+statement ok
+DROP FUNCTION IF EXISTS fspn_argument(text);
+
+
+statement ok
+DROP FUNCTION IF EXISTS fspn_lookup(text);
+
+
+statement ok
+DROP FUNCTION IF EXISTS fspn_output();
+
+
+statement ok
+DROP TABLE IF EXISTS fspn_names;
+
+
+statement ok
+DROP TABLE IF EXISTS fspn_s.t;
+
+
+statement ok
+DROP SCHEMA IF EXISTS fspn_s;
+
+
+statement ok
+CREATE SCHEMA fspn_s;
+
+
+statement ok
+CREATE TABLE fspn_s.t (a integer);
+
+
+statement ok
+CREATE TABLE fspn_names (n text);
+
+
+statement ok
+INSERT INTO fspn_names VALUES ('t');
+
+
+statement ok
+CREATE FUNCTION fspn_literal() RETURNS text LANGUAGE sql SET search_path = fspn_s
+AS $$ SELECT 't'::regclass::text $$;
+
+
+statement ok
+CREATE FUNCTION fspn_argument(x text) RETURNS text LANGUAGE sql SET search_path = fspn_s
+AS $$ SELECT x::regclass::text $$;
+
+
+statement ok
+CREATE FUNCTION fspn_lookup(x text) RETURNS text LANGUAGE sql SET search_path = fspn_s
+AS $$ SELECT to_regclass(x)::text $$;
+
+
+statement ok
+CREATE FUNCTION fspn_output() RETURNS text LANGUAGE sql SET search_path = fspn_s
+AS $$ SELECT 'fspn_s.t'::regclass::text $$;
+
+
+query
+SELECT fspn_literal() AS literal, fspn_argument('t') AS argument, fspn_lookup('t') AS lookup, fspn_output() AS output;
+----
+literal	argument	lookup	output
+t	t	t	t
+
+
+query
+SELECT fspn_argument(n) AS per_row FROM fspn_names;
+----
+per_row
+t
+
+
+query
+SELECT 'fspn_s.t'::regclass::text AS outside;
+----
+outside
+fspn_s.t
+
+
+statement ok
+DROP FUNCTION fspn_literal();
+
+
+statement ok
+DROP FUNCTION fspn_argument(text);
+
+
+statement ok
+DROP FUNCTION fspn_lookup(text);
+
+
+statement ok
+DROP FUNCTION fspn_output();
+
+
+statement ok
+DROP TABLE fspn_names;
+
+
+statement ok
+DROP TABLE fspn_s.t;
+
+
+statement ok
+DROP SCHEMA fspn_s;

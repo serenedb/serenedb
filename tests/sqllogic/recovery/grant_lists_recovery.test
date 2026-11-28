@@ -1,0 +1,137 @@
+control substitution on
+
+statement ok
+DROP TABLE IF EXISTS glr_t;
+
+
+statement ok
+DROP SCHEMA IF EXISTS glr_s1 CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS glr_s2 CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS glr_reader, glr_writer, glr_auditor, glr_owner1, glr_owner2;
+
+
+statement ok
+CREATE ROLE glr_reader;
+
+
+statement ok
+CREATE ROLE glr_writer;
+
+
+statement ok
+CREATE ROLE glr_auditor;
+
+
+statement ok
+CREATE ROLE glr_owner1;
+
+
+statement ok
+CREATE ROLE glr_owner2;
+
+
+statement ok
+CREATE SCHEMA glr_s1;
+
+
+statement ok
+CREATE SCHEMA glr_s2;
+
+
+statement ok
+CREATE TABLE glr_t (a integer);
+
+
+statement ok
+GRANT SELECT, INSERT ON glr_t TO glr_reader, glr_writer;
+
+
+statement ok
+GRANT UPDATE ON glr_t TO glr_auditor;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE glr_owner1, glr_owner2 IN SCHEMA glr_s1, glr_s2 GRANT SELECT ON TABLES TO glr_reader, glr_writer;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE glr_owner1 IN SCHEMA glr_s1 GRANT INSERT ON TABLES TO glr_auditor;
+
+
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'glr_t' ORDER BY e;
+----
+e
+glr_auditor=w/postgres
+glr_reader=ar/postgres
+glr_writer=ar/postgres
+postgres=arwdDxtm/postgres
+
+
+query
+SELECT d.defaclrole::regrole::text AS role, d.defaclnamespace::regnamespace::text AS nsp,
+       array_to_string(d.defaclacl, ',') AS acl
+FROM pg_default_acl d
+WHERE d.defaclrole IN ('glr_owner1'::regrole, 'glr_owner2'::regrole)
+ORDER BY 1, 2;
+----
+role	nsp	acl
+glr_owner1	glr_s1	glr_reader=r/glr_owner1,glr_writer=r/glr_owner1,glr_auditor=a/glr_owner1
+glr_owner1	glr_s2	glr_reader=r/glr_owner1,glr_writer=r/glr_owner1
+glr_owner2	glr_s1	glr_reader=r/glr_owner2,glr_writer=r/glr_owner2
+glr_owner2	glr_s2	glr_reader=r/glr_owner2,glr_writer=r/glr_owner2
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'glr_t' ORDER BY e;
+----
+e
+glr_auditor=w/postgres
+glr_reader=ar/postgres
+glr_writer=ar/postgres
+postgres=arwdDxtm/postgres
+
+
+connection after_crash
+query
+SELECT d.defaclrole::regrole::text AS role, d.defaclnamespace::regnamespace::text AS nsp,
+       array_to_string(d.defaclacl, ',') AS acl
+FROM pg_default_acl d
+WHERE d.defaclrole IN ('glr_owner1'::regrole, 'glr_owner2'::regrole)
+ORDER BY 1, 2;
+----
+role	nsp	acl
+glr_owner1	glr_s1	glr_reader=r/glr_owner1,glr_writer=r/glr_owner1,glr_auditor=a/glr_owner1
+glr_owner1	glr_s2	glr_reader=r/glr_owner1,glr_writer=r/glr_owner1
+glr_owner2	glr_s1	glr_reader=r/glr_owner2,glr_writer=r/glr_owner2
+glr_owner2	glr_s2	glr_reader=r/glr_owner2,glr_writer=r/glr_owner2
+
+
+connection after_crash
+query
+SELECT has_table_privilege('glr_writer', 'glr_t', 'INSERT') AS writer_insert,
+       has_table_privilege('glr_auditor', 'glr_t', 'UPDATE') AS auditor_update,
+       has_table_privilege('glr_auditor', 'glr_t', 'SELECT') AS auditor_select;
+----
+writer_insert	auditor_update	auditor_select
+t	t	f

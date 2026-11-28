@@ -56,7 +56,6 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
-#include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry_set.h"
 #include "catalog/secret_store.h"
@@ -497,33 +496,7 @@ duckdb::vector<duckdb::idx_t> References(const Change& change) {
   if (change.set->Members()) {
     ForEachSubject(subject, add);
   } else {
-    add(subject.permissions.owner);
-    for (const auto& item : subject.permissions.acl) {
-      add(item.grantee);
-      add(item.grantor);
-    }
-  }
-  for (const auto& defaults : subject.permissions.defaults) {
-    add(defaults.role);
-    for (const auto& item : defaults.acl) {
-      add(item.grantee);
-      add(item.grantor);
-    }
-  }
-  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-    for (const auto& column :
-         subject.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
-      for (const auto& item : column.Acl()) {
-        add(item.grantee);
-        add(item.grantor);
-      }
-    }
-  }
-  if (subject.type == duckdb::CatalogType::ROLE_ENTRY) {
-    for (const auto& membership : subject.Cast<RoleCatalogEntry>().MemberOf()) {
-      add(membership.role);
-      add(membership.grantor);
-    }
+    ForEachRoleReference(subject, add);
   }
   absl::c_sort(references);
   references.erase(std::ranges::unique(references).begin(), references.end());
@@ -641,7 +614,12 @@ duckdb::vector<std::string> Supersedes(const duckdb::AlterInfo& info,
       keys.emplace_back(kDefinition);
       break;
     case duckdb::AlterType::SET_COMMENT:
-      keys.emplace_back(kComment);
+      if (const auto overload =
+            info.Cast<duckdb::SetCommentInfo>().overload_oid) {
+        keys.push_back(absl::StrCat(kComment, ":", overload));
+      } else {
+        keys.emplace_back(kComment);
+      }
       break;
     case duckdb::AlterType::SET_COLUMN_COMMENT:
       keys.push_back(

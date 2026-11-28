@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/function/pragma_function.hpp>
@@ -43,7 +44,6 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
@@ -158,8 +158,7 @@ struct ResolvedName {
 duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
   duckdb::ClientContext& context, duckdb::CatalogType type,
   const ResolvedName& target) {
-  return duckdb::Catalog::GetEntry(
-    context,
+  return duckdb::CatalogEntryRetriever{context}.GetEntry(
     duckdb::EntryLookupInfo{
       type, duckdb::QualifiedName{duckdb::Identifier{target.database},
                                   duckdb::Identifier{target.schema},
@@ -221,7 +220,8 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
                                 std::string_view name) {
   auto found =
     duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{name});
-  if (!found) {
+  if (!found ||
+      !duckdb::CatalogEntryRetriever(context).Shows(found->GetAttached())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
@@ -301,7 +301,8 @@ CollectMaintainTargets(duckdb::ClientContext& context,
       [&](duckdb::CatalogEntry& entry) {
         // Tables and views share one set, so the scan hands
         // back both.
-        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal) {
+        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal ||
+            !duckdb::CatalogEntryRetriever(context).Shows(entry)) {
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
@@ -336,11 +337,11 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
   }
 }
 
-bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
-                 std::string_view name, std::string_view verb) {
-  if (auth::ClosureFor(&conn_ctx, conn_ctx.GetRoleId())
-        ->Can(duckdb::CatalogType::TABLE_ENTRY, perm,
-              duckdb::AclMode::Maintain)) {
+bool MayMaintain(ConnectionContext& conn_ctx,
+                 const duckdb::CatalogEntry& relation, std::string_view name,
+                 std::string_view verb) {
+  if (duckdb::Check<duckdb::AclMode::Maintain>(conn_ctx, duckdb::Role(conn_ctx),
+                                               relation)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(
@@ -416,12 +417,10 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("relation \"", target.object, "\" does not exist"));
     }
-    // An index has no owner of its own; maintenance rides on its
-    // relation (a table, or a view for view-backed indexes).
     auto relation =
       index->GetRelation(index->catalog.GetCatalogTransaction(context));
-    if (relation && !MayMaintain(conn_ctx, relation->permissions,
-                                 relation->name.GetIdentifierName(), verb)) {
+    if (relation && !MayMaintain(conn_ctx, *relation,
+                                 index->name.GetIdentifierName(), verb)) {
       return;
     }
     if (inverted->Storage()) {
@@ -440,8 +439,7 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
                   "\" is not an in-memory table"),
           ERR_DETAIL("VACUUM (PACK_TABLE) applies to temporary tables."));
       }
-      if (MayMaintain(conn_ctx, table.permissions,
-                      table.name.GetIdentifierName(), verb)) {
+      if (MayMaintain(conn_ctx, table, table.name.GetIdentifierName(), verb)) {
         CollectInvertedSteps(context, table, steps);
       }
     });

@@ -280,6 +280,7 @@ db error: ERROR: permission denied for table evcb_mop_a<slt:ignore>
 
 # Control: direct base reads are still refused for both bases (fresh
 # connections -- never reuse a connection that already read an ALLOWing view).
+onlyif postgres
 connection c_base_a user=evcb_vedernikoff password=evcb_vedernikoff_pw
 statement error
 SELECT id FROM evcb_mop_a;
@@ -287,11 +288,28 @@ SELECT id FROM evcb_mop_a;
 db error: ERROR: permission denied for table evcb_mop_a<slt:ignore>
 
 
+skipif postgres
+connection c_base_a user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id FROM evcb_mop_a;
+----
+db error: ERROR: Table with name evcb_mop_a does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_base_b user=evcb_vedernikoff password=evcb_vedernikoff_pw
 statement error
 SELECT id FROM evcb_mop_b;
 ----
 db error: ERROR: permission denied for table evcb_mop_b<slt:ignore>
+
+
+skipif postgres
+connection c_base_b user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id FROM evcb_mop_b;
+----
+db error: ERROR: Table with name evcb_mop_b does not exist!<slt:ignore>
 
 
 statement ok

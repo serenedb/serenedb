@@ -123,11 +123,13 @@ class FuzzHandler final : public HttpHandler {
   }
 };
 
-class SessionUserHandler final : public HttpHandler {
+class ScalarQueryHandler final : public HttpHandler {
  public:
+  explicit ScalarQueryHandler(std::string_view query) : _query{query} {}
+
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
-    auto result = co_await context.RunQuery("SELECT current_user", false);
+    auto result = co_await context.RunQuery(_query, false);
     if (result->HasError()) {
       writer.Error(HttpStatus::InternalError, "query_failed");
     } else {
@@ -136,6 +138,9 @@ class SessionUserHandler final : public HttpHandler {
     }
     co_return {};
   }
+
+ private:
+  std::string_view _query;
 };
 
 class CopyHandler final : public HttpHandler {
@@ -203,7 +208,10 @@ std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
     case Endpoint::Status:
       return std::make_unique<StatusHandler>();
     case Endpoint::SessionUser:
-      return std::make_unique<SessionUserHandler>();
+      return std::make_unique<ScalarQueryHandler>("SELECT current_user");
+    case Endpoint::IsSuperuser:
+      return std::make_unique<ScalarQueryHandler>(
+        "SELECT current_setting('is_superuser')");
     case Endpoint::Copy:
       return std::make_unique<CopyHandler>();
   }

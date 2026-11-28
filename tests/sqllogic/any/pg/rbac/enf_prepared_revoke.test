@@ -59,11 +59,20 @@ REVOKE SELECT ON mop_ledger FROM ved_reader;
 
 
 # Same prepared statement, re-checked on EXECUTE -> denied.
+onlyif postgres
 connection c_ved user=ved_reader password=ved_reader_pw
 statement error
 EXECUTE p_ved;
 ----
 db error: ERROR: permission denied for table mop_ledger<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=ved_reader password=ved_reader_pw
+statement error
+EXECUTE p_ved;
+----
+db error: ERROR: Table with name mop_ledger does not exist!<slt:ignore>
 
 
 # Admin re-grants SELECT.

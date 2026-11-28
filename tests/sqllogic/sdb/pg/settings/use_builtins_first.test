@@ -1,0 +1,53 @@
+control substitution on
+
+statement ok
+DETACH DATABASE IF EXISTS ubf_ddb;
+
+
+statement ok
+CREATE MACRO public.upper(x) AS 'user-upper';
+
+
+query
+SELECT upper('a') AS here;
+----
+here
+A
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/ubf.duckdb' AS ubf_ddb;
+
+
+statement ok
+CREATE OR REPLACE MACRO ubf_ddb.main.upper(x) AS 'user-upper';
+
+
+statement ok
+USE ubf_ddb;
+
+
+query
+SELECT upper('a') AS duckdb_mode;
+----
+duckdb_mode
+user-upper
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+query
+SELECT upper('a') AS back;
+----
+back
+A
+
+
+statement ok
+DETACH DATABASE ubf_ddb;
+
+
+statement ok
+DROP MACRO public.upper;

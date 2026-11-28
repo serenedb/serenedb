@@ -116,7 +116,7 @@ connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 statement error
 SELECT count(*) FROM zebrafin_vault;
 ----
-db error: ERROR: permission denied for table zebrafin_vault<slt:ignore>
+db error: ERROR: Table with name zebrafin_vault does not exist!<slt:ignore>
 
 
 # ---- definer rights on ordinary user views are unchanged ----
@@ -166,25 +166,42 @@ visible
 2
 
 
-# A wrapper over the alias behaves exactly like a wrapper over the source, and
-# one over sqlite_master now resolves at all.
+connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
+statement error
+SELECT count(*) FROM zebrafin_pub.w_source
+----
+db error: ERROR: permission denied for function sdb_tables
+
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
-query
-SELECT
-  (SELECT count(*) FROM zebrafin_pub.w_source) AS source_rows,
-  (SELECT count(*) FROM zebrafin_pub.w_alias) AS alias_rows,
-  (SELECT count(*) >= 0 FROM zebrafin_pub.w_sqlite) AS sqlite_wrapper
+statement error
+SELECT count(*) FROM zebrafin_pub.w_alias
 ----
-source_rows	alias_rows	sqlite_wrapper
-1	1	t
+db error: ERROR: permission denied for function sdb_tables
+
+
+connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
+statement error
+SELECT count(*) FROM zebrafin_pub.w_sqlite
+----
+db error: ERROR: permission denied for function sdb_tables
 
 
 # ---- no escalation: an unprivileged definer view is still its owner's ----
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
+statement error
+CREATE VIEW zebrafin_pub.w_escalate AS SELECT id, secret FROM zebrafin_vault
+----
+db error: ERROR: Table with name zebrafin_vault does not exist!<slt:ignore>
+
+
 statement ok
 CREATE VIEW zebrafin_pub.w_escalate AS SELECT id, secret FROM zebrafin_vault
+
+
+statement ok
+ALTER VIEW zebrafin_pub.w_escalate OWNER TO zebrafin_clerk
 
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw

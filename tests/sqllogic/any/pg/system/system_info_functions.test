@@ -293,6 +293,7 @@ statement ok
 SET ROLE sif_role_${__DATABASE__};
 
 
+onlyif postgres
 query
 SELECT * FROM pg_get_sequence_data('sif_seq_plain');
 ----
@@ -300,6 +301,14 @@ last_value	is_called
 NULL	NULL
 
 
+skipif postgres
+statement error
+SELECT * FROM pg_get_sequence_data('sif_seq_plain');
+----
+db error: ERROR: relation "sif_seq_plain" does not exist
+
+
+onlyif postgres
 query
 SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
 ----
@@ -307,10 +316,25 @@ last_value
 NULL
 
 
+skipif postgres
+statement error
+SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
+----
+db error: ERROR: relation "sif_seq_plain" does not exist
+
+
+onlyif postgres
 statement error
 SELECT * FROM pg_sequence_parameters('sif_seq_plain'::regclass);
 ----
 db error: ERROR: permission denied for sequence sif_seq_plain
+
+
+skipif postgres
+statement error
+SELECT * FROM pg_sequence_parameters('sif_seq_plain'::regclass);
+----
+db error: ERROR: relation "sif_seq_plain" does not exist
 
 
 statement error

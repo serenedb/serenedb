@@ -25,6 +25,7 @@
 #include <absl/strings/substitute.h>
 #include <simdjson.h>
 
+#include <duckdb/catalog/role_graph.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -412,6 +413,7 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemOneBind(
     .api = &kSystemOneApi,
     .secret_name = FoldString(context, *args[8], kFn, "secret_name"),
     .model = FoldString(context, *args[7], kFn, "model"),
+    .superuser = input.Role().is_superuser,
   };
   const auto kinds =
     int{noul.has_value()} + int{choice.has_value()} + int{score.has_value()};

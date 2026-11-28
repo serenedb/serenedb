@@ -1,0 +1,96 @@
+control substitution on
+
+statement ok
+DROP SCHEMA IF EXISTS sdod_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS sdod_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS sdod_owner;
+
+
+statement ok
+CREATE ROLE sdod_owner;
+
+
+statement ok
+CREATE ROLE sdod_caller LOGIN PASSWORD 'sdod_pw';
+
+
+statement ok
+CREATE DATABASE sdod_other_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE sdod_other_${__DATABASE__}.public.sdod_remote (a integer);
+
+
+statement ok
+INSERT INTO sdod_other_${__DATABASE__}.public.sdod_remote VALUES (1), (2);
+
+
+statement ok
+GRANT SELECT ON sdod_other_${__DATABASE__}.public.sdod_remote TO sdod_owner;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE sdod_other_${__DATABASE__} FROM PUBLIC;
+
+
+statement ok
+GRANT CONNECT ON DATABASE sdod_other_${__DATABASE__} TO sdod_owner;
+
+
+statement ok
+CREATE SCHEMA sdod_s AUTHORIZATION sdod_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA sdod_s TO sdod_caller;
+
+
+statement ok
+SET ROLE sdod_owner;
+
+
+statement ok
+CREATE FUNCTION sdod_s.remote_rows() RETURNS bigint LANGUAGE sql SECURITY DEFINER
+AS 'SELECT count(*) FROM sdod_other_${__DATABASE__}.public.sdod_remote';
+
+
+statement ok
+RESET ROLE;
+
+
+connection c_caller user=sdod_caller password=sdod_pw
+statement error
+SELECT count(*) FROM sdod_other_${__DATABASE__}.public.sdod_remote;
+----
+db error: ERROR: Table with name "sdod_other_<slt:ignore>.public.sdod_remote" does not exist because schema "sdod_other_<slt:ignore>.public" does not exist.
+
+
+connection c_caller user=sdod_caller password=sdod_pw
+query
+SELECT sdod_s.remote_rows() AS remote_rows;
+----
+remote_rows
+2
+
+
+statement ok
+DROP SCHEMA sdod_s CASCADE;
+
+
+statement ok
+DROP DATABASE sdod_other_${__DATABASE__};
+
+
+statement ok
+DROP ROLE sdod_caller;
+
+
+statement ok
+DROP ROLE sdod_owner;

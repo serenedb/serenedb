@@ -176,6 +176,7 @@ db error: ERROR: permission denied for table ident_iceberg<slt:ignore>
 # deadinside has no grants: implicit-self oracle is all f on its own connection,
 # and the real SELECT is refused.
 
+onlyif postgres
 connection c_dead user=ident_deadinside password=ident_deadinside_pw
 query
 SELECT has_table_privilege('ident_iceberg','SELECT') AS sel,
@@ -185,11 +186,36 @@ sel	ins
 f	f
 
 
+skipif postgres
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
+statement error
+SELECT has_table_privilege('ident_iceberg','SELECT') AS sel,
+       has_table_privilege('ident_iceberg','INSERT') AS ins;
+----
+db error: ERROR: relation "ident_iceberg" does not exist
+
+
+onlyif postgres
 connection c_dead user=ident_deadinside password=ident_deadinside_pw
 statement error
 SELECT * FROM ident_iceberg;
 ----
 db error: ERROR: permission denied for table ident_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
+statement error
+SELECT * FROM ident_iceberg;
+----
+db error: ERROR: Table with name ident_iceberg does not exist!<slt:ignore>
+
+
+query
+SELECT current_user = current_user AS same, current_user = session_user AS session;
+----
+same	session
+t	t
 
 
 # ============================================================================

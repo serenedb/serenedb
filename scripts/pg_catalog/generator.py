@@ -23,5 +23,7 @@ class Generator:
         return rows[0]
 
     def write(self, name, lines):
-        self.outputs[os.path.join(GENERATED_DIR, name)] = generated(
-            self.version, lines)
+        self.write_path(os.path.join(GENERATED_DIR, name), lines)
+
+    def write_path(self, path, lines):
+        self.outputs[path] = generated(self.version, lines)

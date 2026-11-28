@@ -181,11 +181,20 @@ gu_ins	zh_sel	pa_del
 f	t	t
 
 
+onlyif postgres
 connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 INSERT INTO iso_gul VALUES (12, 'myasnig');
 ----
 db error: ERROR: permission denied for table iso_gul<slt:ignore>
+
+
+skipif postgres
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
+statement error
+INSERT INTO iso_gul VALUES (12, 'myasnig');
+----
+db error: ERROR: Table with name iso_gul does not exist!<slt:ignore>
 
 
 # iso_zhidky SELECT still works after the unrelated revoke on iso_gul.

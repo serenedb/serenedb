@@ -56,7 +56,7 @@ connection c_user_other user=xdb_user password=xdb_pw database=xdb_other
 statement error
 SELECT count(*) FROM xdb_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server xdb_srv<slt:ignore>
+db error: ERROR: Table with name "xdb_srv.chtest.vedernikoff" does not exist because schema "xdb_srv<slt:ignore>
 
 
 # Same denial in the server's OWN database (behaviour was already correct here).
@@ -64,7 +64,7 @@ connection c_user_home user=xdb_user password=xdb_pw
 statement error
 SELECT count(*) FROM xdb_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server xdb_srv<slt:ignore>
+db error: ERROR: Table with name "xdb_srv.chtest.vedernikoff" does not exist because schema "xdb_srv<slt:ignore>
 
 
 # GRANT USAGE lets both the cross-database and home sessions through.
@@ -95,7 +95,7 @@ connection c_user_other user=xdb_user password=xdb_pw database=xdb_other
 statement error
 SELECT count(*) FROM xdb_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server xdb_srv<slt:ignore>
+db error: ERROR: Table with name "xdb_srv.chtest.vedernikoff" does not exist because schema "xdb_srv<slt:ignore>
 
 
 # Cleanup.

@@ -1,0 +1,205 @@
+statement ok
+DROP TABLE IF EXISTS iee_triples;
+
+
+statement ok
+DROP SCHEMA IF EXISTS iee_other CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS iee_items;
+
+
+statement ok
+DROP FUNCTION IF EXISTS iee_double(INTEGER);
+
+
+statement ok
+DROP ROLE IF EXISTS iee_vedernikoff;
+
+
+statement ok
+CREATE ROLE iee_vedernikoff;
+
+
+statement ok
+CREATE FUNCTION iee_double(x INTEGER) RETURNS INTEGER AS $$ SELECT x * 2 $$ LANGUAGE sql IMMUTABLE SECURITY DEFINER;
+
+
+statement ok
+CREATE TABLE iee_items (a INTEGER, b INTEGER);
+
+
+statement ok
+CREATE INDEX iee_items_double ON iee_items (iee_double(a));
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON iee_items TO iee_vedernikoff;
+
+
+statement ok
+INSERT INTO iee_items VALUES (1, 1);
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION iee_double(INTEGER) FROM PUBLIC;
+
+
+statement ok
+SET ROLE iee_vedernikoff;
+
+
+statement error
+INSERT INTO iee_items VALUES (2, 2);
+----
+db error: ERROR: permission denied for function iee_double
+
+
+statement error
+UPDATE iee_items SET a = 3;
+----
+db error: ERROR: permission denied for function iee_double
+
+
+statement ok
+UPDATE iee_items SET b = 4;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION iee_double(INTEGER) TO iee_vedernikoff;
+
+
+statement ok
+SET ROLE iee_vedernikoff;
+
+
+statement ok
+PREPARE iee_insert(INTEGER) AS INSERT INTO iee_items VALUES ($1, $1);
+
+
+statement ok
+EXECUTE iee_insert(5);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION iee_double(INTEGER) FROM iee_vedernikoff;
+
+
+statement ok
+SET ROLE iee_vedernikoff;
+
+
+statement error
+EXECUTE iee_insert(6);
+----
+db error: ERROR: permission denied for function iee_double
+
+
+statement ok
+DEALLOCATE iee_insert;
+
+
+statement ok
+DELETE FROM iee_items WHERE a = 5;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT a, b FROM iee_items ORDER BY a;
+----
+a	b
+1	4
+
+
+statement ok
+CREATE SCHEMA iee_other;
+
+
+statement ok
+CREATE FUNCTION iee_other.iee_triple(x INTEGER) RETURNS INTEGER AS $$ SELECT x * 3 $$ LANGUAGE sql IMMUTABLE;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION iee_other.iee_triple(INTEGER) FROM PUBLIC;
+
+
+statement ok
+CREATE TABLE iee_triples (a INTEGER);
+
+
+statement ok
+GRANT INSERT ON iee_triples TO iee_vedernikoff;
+
+
+statement ok
+SET search_path = iee_other, public;
+
+
+statement ok
+CREATE INDEX iee_triples_triple ON iee_triples (iee_triple(a));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+SET ROLE iee_vedernikoff;
+
+
+statement error
+INSERT INTO iee_triples VALUES (1);
+----
+db error: ERROR: permission denied for function iee_triple
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION iee_other.iee_triple(INTEGER) TO iee_vedernikoff;
+
+
+statement ok
+SET ROLE iee_vedernikoff;
+
+
+statement ok
+INSERT INTO iee_triples VALUES (1);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE iee_triples;
+
+
+statement ok
+DROP SCHEMA iee_other CASCADE;
+
+
+statement ok
+DROP TABLE iee_items;
+
+
+statement ok
+DROP FUNCTION iee_double(INTEGER);
+
+
+statement ok
+DROP ROLE iee_vedernikoff;

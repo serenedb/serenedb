@@ -41,6 +41,7 @@ constexpr auto kRoutes = std::to_array<Route>({
   {HttpMethod::Post, "/test/fuzz", Handler<Endpoint::Fuzz>},
   {HttpMethod::Get, "/test/status", Handler<Endpoint::Status>},
   {HttpMethod::Get, "/test/session_user", Handler<Endpoint::SessionUser>},
+  {HttpMethod::Get, "/test/is_superuser", Handler<Endpoint::IsSuperuser>},
   {HttpMethod::Post, "/test/copy", Handler<Endpoint::Copy>,
    SessionScope::Request},
 });

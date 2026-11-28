@@ -68,10 +68,10 @@ class SystemEmptyScan final : public SystemScan {
 std::vector<SystemTable*> gTables;
 std::deque<SystemTable> gEmptyTables;
 
-const duckdb::AclItem kOwnerAcl{.grantee = kRootUser,
-                                .grantor = kRootUser,
-                                .privs = duckdb::Permissions::AllPrivileges(
-                                  duckdb::CatalogType::TABLE_ENTRY)};
+const duckdb::AclItem kOwnerAcl{
+  .grantee = kRootUser,
+  .grantor = kRootUser,
+  .privs = duckdb::ObjectKindOf(duckdb::CatalogType::TABLE_ENTRY).privileges};
 
 using Key = std::pair<std::string_view, std::string_view>;
 using FunctionKey =
@@ -375,8 +375,20 @@ const duckdb::Permissions& SchemaPermissions() {
     .acl = {{.grantee = kRootUser,
              .grantor = kRootUser,
              .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
-            {.grantee = kPublicGrantee,
+            {.grantee = duckdb::ACL_ID_PUBLIC,
              .grantor = kRootUser,
+             .privs = duckdb::AclMode::Usage}}};
+  return kPermissions;
+}
+
+const duckdb::Permissions& PublicSchemaPermissions() {
+  static const duckdb::Permissions kPermissions{
+    .owner = kPgDatabaseOwnerRole,
+    .acl = {{.grantee = kPgDatabaseOwnerRole,
+             .grantor = kPgDatabaseOwnerRole,
+             .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
+            {.grantee = duckdb::ACL_ID_PUBLIC,
+             .grantor = kPgDatabaseOwnerRole,
              .privs = duckdb::AclMode::Usage}}};
   return kPermissions;
 }

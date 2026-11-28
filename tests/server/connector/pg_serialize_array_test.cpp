@@ -276,6 +276,25 @@ TEST_F(PgSerializeArrayTest, EmptyInnerVsEmptyOuterDistinct) {
             outer_empty.ToString());
 }
 
+TEST_F(PgSerializeArrayTest, EmptyInnerListsBoundedByEncoding) {
+  const auto inner = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+  const auto type = duckdb::LogicalType::LIST(inner);
+  const auto value =
+    duckdb::Value::LIST(inner, {IntList({}), IntList({}), IntList({})});
+  auto framed = SerializeOne(type, value, sdb::pg::VarFormat::Binary);
+  EXPECT_EQ(Deserialize(type, framed, sdb::pg::VarFormat::Binary).ToString(),
+            value.ToString());
+
+  absl::big_endian::Store32(framed.data() + 16, 0x7FFFFFFF);
+  sdb::pg::DeserializeContext dctx{};
+  duckdb::Value out(type);
+  sdb::pg::ValueSink sink{type, out};
+  const auto fn = sdb::pg::GetDeserialization<sdb::pg::ValueSink>(
+    type, sdb::pg::VarFormat::Binary);
+  ASSERT_NE(fn, nullptr);
+  EXPECT_FALSE(fn(dctx, std::string_view{framed}.substr(4), sink));
+}
+
 // A NULL sub-list [[1],NULL,[2]] cannot sit in a PG rectangular multi-dim array
 // (only leaf elements may be NULL), so binary serialization throws; text
 // renders the NULL inline.

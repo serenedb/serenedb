@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cstdint>
+#include <duckdb/catalog/acl.hpp>
 #include <duckdb/common/constants.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <span>
@@ -33,10 +34,6 @@ inline constexpr uint64_t kInvalidOid = 0;
 
 constexpr uint32_t WireOid(uint64_t oid) { return static_cast<uint32_t>(oid); }
 
-// Postgres' PUBLIC pseudo-role. It is not a role id at all: 0 is the oid no
-// pg_authid row can carry, which is what lets an acl item name "everybody".
-inline constexpr duckdb::idx_t kPublicGrantee = 0;
-
 inline constexpr int32_t kSqlAsciiEncoding = 0;
 inline constexpr int32_t kUtf8Encoding = 6;
 inline constexpr int32_t kLatin1Encoding = 8;
@@ -46,7 +43,7 @@ inline constexpr duckdb::idx_t kMaxSystem = 262144;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 
-inline constexpr duckdb::idx_t kRootUser = kMinSystem;
+inline constexpr duckdb::idx_t kRootUser = duckdb::BOOTSTRAP_ROLE_OID;
 
 inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
 inline constexpr duckdb::idx_t kPgAmIResearch = kMinSystem + 301;

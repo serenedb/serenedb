@@ -128,6 +128,7 @@ f	f
 
 
 # Both reads and writes are denied.
+onlyif postgres
 connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 SELECT * FROM revx_vitalik;
@@ -135,11 +136,28 @@ SELECT * FROM revx_vitalik;
 db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
 
 
+skipif postgres
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
+statement error
+SELECT * FROM revx_vitalik;
+----
+db error: ERROR: Table with name revx_vitalik does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 INSERT INTO revx_vitalik VALUES (5, 'zhidky');
 ----
 db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
+
+
+skipif postgres
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
+statement error
+INSERT INTO revx_vitalik VALUES (5, 'zhidky');
+----
+db error: ERROR: Table with name revx_vitalik does not exist!<slt:ignore>
 
 
 # ============================================================================
@@ -194,11 +212,20 @@ sel	ins	upd	del
 f	f	f	f
 
 
+onlyif postgres
 connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 SELECT * FROM revx_vitalik;
 ----
 db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
+
+
+skipif postgres
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
+statement error
+SELECT * FROM revx_vitalik;
+----
+db error: ERROR: Table with name revx_vitalik does not exist!<slt:ignore>
 
 
 # ============================================================================

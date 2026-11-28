@@ -20,8 +20,14 @@
 
 #include "catalog/base_catalog.h"
 
+#include <absl/algorithm/container.h>
+
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/privileges.hpp>
+#include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_schema_info.hpp>
@@ -39,6 +45,7 @@
 #include <duckdb/storage/database_size.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -81,50 +88,6 @@ int EntryErrcode(duckdb::CatalogType type, bool exists) {
   }
 }
 
-std::string_view EntryNoun(duckdb::CatalogType type) {
-  using enum duckdb::CatalogType;
-  switch (type) {
-    case TABLE_ENTRY:
-    case VIEW_ENTRY:
-    case INDEX_ENTRY:
-    case SEQUENCE_ENTRY:
-      return "relation";
-    case SCHEMA_ENTRY:
-      return "schema";
-    case DATABASE_ENTRY:
-      return "database";
-    case TABLE_FUNCTION_ENTRY:
-    case SCALAR_FUNCTION_ENTRY:
-    case AGGREGATE_FUNCTION_ENTRY:
-    case WINDOW_FUNCTION_ENTRY:
-    case COPY_FUNCTION_ENTRY:
-    case PRAGMA_FUNCTION_ENTRY:
-    case MACRO_ENTRY:
-    case TABLE_MACRO_ENTRY:
-      return "function";
-    case TYPE_ENTRY:
-      return "type";
-    case COLLATION_ENTRY:
-      return "collation";
-    case TOKENIZER_ENTRY:
-      return "text search dictionary";
-    case ROLE_ENTRY:
-      return "role";
-    case FOREIGN_SERVER_ENTRY:
-      return "server";
-    case SUBSCRIPTION_ENTRY:
-      return "subscription";
-    case TRIGGER_ENTRY:
-      return "trigger";
-    case JOB_ENTRY:
-      return "job";
-    case COORDINATE_SYSTEM_ENTRY:
-      return "coordinate system";
-    default:
-      return "object";
-  }
-}
-
 }  // namespace
 
 std::shared_ptr<DependentIndex> SharedDependents(duckdb::AttachedDatabase& db) {
@@ -140,15 +103,15 @@ std::shared_ptr<DependentIndex> SharedDependents(duckdb::AttachedDatabase& db) {
 void ThrowEntryExists(duckdb::CatalogType type,
                       const duckdb::Identifier& name) {
   THROW_SQL_ERROR(ERR_CODE(EntryErrcode(type, true)),
-                  ERR_MSG(EntryNoun(type), " \"", name.GetIdentifierName(),
-                          "\" already exists"));
+                  ERR_MSG(duckdb::CatalogTypeToNoun(type), " \"",
+                          name.GetIdentifierName(), "\" already exists"));
 }
 
 void ThrowMissingEntry(duckdb::CatalogType type,
                        const duckdb::Identifier& name) {
   THROW_SQL_ERROR(ERR_CODE(EntryErrcode(type, false)),
-                  ERR_MSG(EntryNoun(type), " \"", name.GetIdentifierName(),
-                          "\" does not exist"));
+                  ERR_MSG(duckdb::CatalogTypeToNoun(type), " \"",
+                          name.GetIdentifierName(), "\" does not exist"));
 }
 
 void DeclareModified(duckdb::CatalogTransaction transaction,
@@ -252,6 +215,12 @@ void BaseCatalog::ScanSchemas(absl::FunctionRef<void(Schema&)> callback) {
 
 void BaseCatalog::DropSchema(duckdb::ClientContext& context,
                              duckdb::DropInfo& info) {
+  DropSchema(context, info, {});
+}
+
+void BaseCatalog::DropSchema(duckdb::ClientContext& context,
+                             duckdb::DropInfo& info,
+                             std::span<const duckdb::idx_t> together) {
   auto transaction = GetCatalogTransaction(context);
   const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::SCHEMA_ENTRY,
                                        info.GetQualifiedName()};
@@ -268,7 +237,12 @@ void BaseCatalog::DropSchema(duckdb::ClientContext& context,
   }
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  DropDependents(transaction, schema, info.cascade);
+  DropDependents(transaction, schema, info.cascade, together);
+  DropSchemaEntry(transaction, schema);
+}
+
+void BaseCatalog::DropSchemaEntry(duckdb::CatalogTransaction transaction,
+                                  const duckdb::SchemaCatalogEntry& schema) {
   SchemaSet(transaction, schema).Drop(transaction, schema.name);
 }
 
@@ -359,6 +333,19 @@ void BaseCatalog::ScanSubjects(
         const duckdb::DependencyDependentFlags&) { callback(subject); });
 }
 
+void BaseCatalog::ScanIndexes(
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table,
+  absl::FunctionRef<void(duckdb::IndexCatalogEntry&)> callback) {
+  _oids.ForEachDependent(
+    GetCatalogTransaction(context), table.oid,
+    [&](duckdb::CatalogEntry& member) {
+      if (member.type == duckdb::CatalogType::INDEX_ENTRY &&
+          member.Cast<duckdb::IndexCatalogEntry>().table_oid == table.oid) {
+        callback(member.Cast<duckdb::IndexCatalogEntry>());
+      }
+    });
+}
+
 duckdb::catalog_entry_vector_t BaseCatalog::OwnedEntries(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& owner) {
   return catalog::OwnedEntries(transaction, owner);
@@ -412,14 +399,114 @@ bool BaseCatalog::DropFrom(EntrySet& set,
   return false;
 }
 
+BaseCatalog::AlteredEntry BaseCatalog::AlterIn(
+  EntrySet& set, duckdb::CatalogTransaction transaction,
+  duckdb::AlterInfo& info) {
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::ALTER_TABLE);
+  const auto& name = info.GetQualifiedName().Name();
+  auto entry = set.Get(transaction, name);
+  if (!entry) {
+    if (info.if_not_found == duckdb::OnEntryNotFound::THROW_EXCEPTION) {
+      ThrowMissingEntry(info.GetCatalogType(), name);
+    }
+    return {};
+  }
+  return {entry, AlterEntry(transaction, set, *entry, info)};
+}
+
 EntrySet& BaseCatalog::Set(duckdb::CatalogType type) {
-  if (type != duckdb::CatalogType::SCHEMA_ENTRY) {
+  auto* set = FindSet(type);
+  if (!set) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("Unsupported catalog type ", duckdb::CatalogTypeToString(type),
               " in catalog ", GetName().GetIdentifierName()));
   }
-  return _schemas;
+  return *set;
+}
+
+EntrySet* BaseCatalog::FindSet(duckdb::CatalogType type) {
+  return type == duckdb::CatalogType::SCHEMA_ENTRY ? &_schemas : nullptr;
+}
+
+void BaseCatalog::Scan(
+  duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+  const std::function<void(duckdb::CatalogEntry&)>& callback) {
+  if (auto* set = FindSet(type)) {
+    set->Scan(transaction, callback);
+  }
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupEntry(
+  duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+  const duckdb::Identifier& name) {
+  auto* set = FindSet(type);
+  return set ? set->Get(transaction, name) : nullptr;
+}
+
+void BaseCatalog::DropEntries(
+  duckdb::ClientContext& context, const duckdb::catalog_entry_vector_t& entries,
+  duckdb::catalog_entry_map_t<duckdb::vector<duckdb::DropInfo>>& drops) {
+  auto transaction = GetCatalogTransaction(context);
+  if (entries.size() > 1 && !drops[entries.front()].front().cascade) {
+    RefuseDroppingTogether(transaction, entries);
+  }
+  std::vector<duckdb::idx_t> together;
+  together.reserve(entries.size());
+  for (const auto& entry : entries) {
+    together.push_back(entry.get().oid);
+  }
+  for (auto& entry : DropOrder(transaction, entries)) {
+    for (auto& drop : drops[entry]) {
+      if (drop.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        DropSchema(context, drop, together);
+      } else if (duckdb::ObjectKindOf(drop.type).container ==
+                 duckdb::ObjectContainer::CLUSTER) {
+        DropEntry(context, drop);
+      } else {
+        entry.get()
+          .ParentSchema(transaction)
+          .Cast<Schema>()
+          .DropEntry(context, drop, together);
+      }
+    }
+  }
+}
+
+duckdb::catalog_entry_vector_t BaseCatalog::DropOrder(
+  duckdb::CatalogTransaction transaction,
+  const duckdb::catalog_entry_vector_t& entries) {
+  irs::containers::FlatHashMap<duckdb::idx_t, size_t> positions;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    positions.try_emplace(entries[i].get().oid, i);
+  }
+  std::vector<std::vector<size_t>> dependents(entries.size());
+  for (size_t i = 0; i < entries.size(); ++i) {
+    ScanSubjects(transaction, entries[i], [&](duckdb::CatalogEntry& subject) {
+      if (const auto it = positions.find(subject.oid);
+          it != positions.end() && it->second != i) {
+        dependents[it->second].push_back(i);
+      }
+    });
+  }
+  duckdb::catalog_entry_vector_t order;
+  order.reserve(entries.size());
+  std::vector<bool> visited(entries.size(), false);
+  const auto visit = [&](this const auto& self, size_t i) -> void {
+    if (visited[i]) {
+      return;
+    }
+    visited[i] = true;
+    for (const auto dependent : dependents[i]) {
+      self(dependent);
+    }
+    order.push_back(entries[i]);
+  };
+  for (size_t i = 0; i < entries.size(); ++i) {
+    visit(i);
+  }
+  return order;
 }
 
 EntrySet& BaseCatalog::SchemaSet(duckdb::CatalogTransaction transaction,
@@ -446,10 +533,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupOid(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupOwner(
   duckdb::CatalogTransaction transaction, duckdb::idx_t oid) {
-  if (const auto owner = _oids.Owner(oid)) {
-    return _oids.Find(transaction, owner);
+  const auto owners = _oids.OwnersOf(oid);
+  for (auto owner = owners.rbegin(); owner != owners.rend(); ++owner) {
+    auto entry = _oids.Find(transaction, *owner);
+    if (entry && (owners.size() == 1 ||
+                  absl::c_linear_search(entry->GetSubObjectOids(), oid))) {
+      return entry;
+    }
   }
-  return LookupOid(transaction, oid);
+  return owners.empty() ? LookupOid(transaction, oid)
+                        : _oids.Find(transaction, oid);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::FindRelation(

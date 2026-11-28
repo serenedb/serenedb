@@ -312,6 +312,7 @@ db error: ERROR: permission denied for view evdn_iid_2<slt:ignore>
 
 
 # Control: the reader still cannot touch the BASE TABLE directly.
+onlyif postgres
 connection c_base user=evdn_vedernikoff password=evdn_vedernikoff_pw
 statement error
 SELECT mop FROM evdn_iceberg;
@@ -319,14 +320,31 @@ SELECT mop FROM evdn_iceberg;
 db error: ERROR: permission denied for table evdn_iceberg<slt:ignore>
 
 
+skipif postgres
+connection c_base user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_iceberg;
+----
+db error: ERROR: Table with name evdn_iceberg does not exist!<slt:ignore>
+
+
 # Control: reading an INTERMEDIATE view the reader was never granted
 # (evdn_ddd_1). It is read directly (unenclosed), so it is caller-checked; the
 # caller has no grant on it -> DENY on the VIEW relation itself.
+onlyif postgres
 connection c_mid user=evdn_vedernikoff password=evdn_vedernikoff_pw
 statement error
 SELECT mop FROM evdn_ddd_1 ORDER BY mop;
 ----
 db error: ERROR: permission denied for view evdn_ddd_1<slt:ignore>
+
+
+skipif postgres
+connection c_mid user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_ddd_1 ORDER BY mop;
+----
+db error: ERROR: Table with name evdn_ddd_1 does not exist!<slt:ignore>
 
 
 # ---- teardown ----

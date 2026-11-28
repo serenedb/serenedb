@@ -75,11 +75,18 @@ ok
 t
 
 
-# GRANT on a nonexistent type errors like PG.
+onlyif postgres
 statement error
 GRANT USAGE ON TYPE gobjacl_nope TO gobjacl_type_vedernikoff;
 ----
 db error: ERROR: type "gobjacl_nope" does not exist<slt:ignore>
+
+
+skipif postgres
+statement error
+GRANT USAGE ON TYPE gobjacl_nope TO gobjacl_type_vedernikoff;
+----
+db error: ERROR: Type with name gobjacl_nope does not exist<slt:ignore>
 
 
 statement ok

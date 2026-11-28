@@ -297,7 +297,7 @@ t
 statement error
 ALTER TABLESPACE "PG_upper_${__DATABASE__}" RENAME TO "quote""inside_${__DATABASE__}";
 ----
-db error: ERROR: object "<slt:ignore>" already exists
+db error: ERROR: tablespace "<slt:ignore>" already exists
 
 
 statement ok

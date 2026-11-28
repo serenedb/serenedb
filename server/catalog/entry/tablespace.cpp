@@ -51,6 +51,7 @@ TablespaceCatalogEntry::TablespaceCatalogEntry(
 duckdb::unique_ptr<duckdb::CreateInfo> TablespaceCatalogEntry::GetInfo() const {
   auto info = duckdb::make_uniq<duckdb::CreateTablespaceInfo>();
   info->SetName(name);
+  info->oid = oid;
   info->location = _location;
   info->comment = comment;
   info->tags = tags;

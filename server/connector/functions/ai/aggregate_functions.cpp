@@ -23,6 +23,7 @@
 #include <absl/strings/substitute.h>
 #include <simdjson.h>
 
+#include <duckdb/catalog/role_graph.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
@@ -176,8 +177,8 @@ duckdb::unique_ptr<duckdb::FunctionData> AggBind(
 
   auto bind = duckdb::make_uniq<AggBindData>(context);
   bind->chat =
-    BindChat(context, name, std::span{args}.subspan(summarize ? 1 : 2), 0.0,
-             bind->endpoint);
+    BindChat(context, input.Role().is_superuser, name,
+             std::span{args}.subspan(summarize ? 1 : 2), 0.0, bind->endpoint);
   const auto max_context =
     FoldArgument(context, *args.back(), name, "max_context_chars");
   const auto chars =

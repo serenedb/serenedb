@@ -45,11 +45,6 @@ char DefaultAclType(duckdb::CatalogType type) {
   return 'r';
 }
 
-struct DefaultAcl {
-  duckdb::idx_t oid;
-  const duckdb::DefaultAcl& acl;
-};
-
 class PgDefaultAcl final : public SystemTableScan<kPgDefaultAclSql> {
  public:
   using SystemTableScan::SystemTableScan;
@@ -57,23 +52,21 @@ class PgDefaultAcl final : public SystemTableScan<kPgDefaultAclSql> {
   static constexpr std::tuple kSources{CatalogSetSource{
     SystemCatalog::Cluster, duckdb::CatalogType::DATABASE_ENTRY, {}}};
 
-  static constexpr auto kDefaultAcl = Shape<kSql, const DefaultAcl>(
-    Col<"oid">(&DefaultAcl::oid),
-    Col<"defaclrole">([](const auto& row) { return row.acl.role; }),
-    Col<"defaclnamespace">([](const auto& row) { return row.acl.scope; }),
+  static constexpr auto kDefaultAcl = Shape<kSql, const duckdb::DefaultAcl>(
+    Col<"oid">(&duckdb::DefaultAcl::oid),
+    Col<"defaclrole">(&duckdb::DefaultAcl::role),
+    Col<"defaclnamespace">(&duckdb::DefaultAcl::scope),
     Col<"defaclobjtype">(
-      [](const auto& row) { return DefaultAclType(row.acl.objtype); }),
-    Col<"defaclacl">(
-      [](const auto& row) -> const auto& { return row.acl.acl; }));
+      [](const auto& row) { return DefaultAclType(row.objtype); }),
+    Col<"defaclacl">(&duckdb::DefaultAcl::acl));
 
   void Row(const catalog::DatabaseCatalogEntry& database) {
     if (database.oid != Database().GetAttached().oid) {
       return;
     }
-    VisitDefaultAcls(Context(), database,
-                     [&](duckdb::idx_t oid, const duckdb::DefaultAcl& row) {
-                       Emit<kDefaultAcl>({oid, row});
-                     });
+    VisitDefaultAcls(Context(), database, [&](const duckdb::DefaultAcl& row) {
+      Emit<kDefaultAcl>(row);
+    });
   }
 };
 

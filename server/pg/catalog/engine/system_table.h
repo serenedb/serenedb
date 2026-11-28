@@ -38,6 +38,7 @@
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
@@ -71,7 +72,6 @@
 #include <variant>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/base_catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/entry/database.h"
@@ -331,6 +331,22 @@ struct SystemOptional<std::optional<V>> : std::true_type {
   using Type = V;
 };
 
+inline std::optional<std::span<const duckdb::AclItem>> AclOf(
+  const duckdb::Permissions& permissions) {
+  if (permissions.UsesDefaultAcl()) {
+    return std::nullopt;
+  }
+  return permissions.acl;
+}
+
+inline std::optional<std::span<const duckdb::AclItem>> AclOf(
+  std::span<const duckdb::AclItem> acl) {
+  if (acl.empty()) {
+    return std::nullopt;
+  }
+  return acl;
+}
+
 struct SystemConcatText {
   std::array<std::string_view, 4> parts;
 };
@@ -568,6 +584,11 @@ void SortedBy(const SystemRows<Row, Holder>& rows, const SystemFilter& filter,
   }
 }
 
+inline constexpr uint64_t kVisibleToAll = ~uint64_t{0};
+
+uint64_t VisibilityBits(const duckdb::CatalogEntry& entry);
+uint64_t ViewerBits(const duckdb::RoleAccess& role);
+
 class SystemScan {
  public:
   static constexpr std::span<const SystemFact> kFacts{};
@@ -585,6 +606,28 @@ class SystemScan {
   SystemScan& operator=(const SystemScan&) = delete;
 
   duckdb::ClientContext& Context() const noexcept { return _context; }
+  const duckdb::RoleAccess& Role() const noexcept { return _role; }
+  uint64_t Viewer() const noexcept { return _viewer; }
+  bool Shows(duckdb::CatalogEntry& entry) const {
+    return _retriever.Shows(entry);
+  }
+  bool Shows(duckdb::CatalogEntry& entry,
+             const duckdb::SchemaView& schema) const {
+    return _retriever.Shows(entry, schema);
+  }
+  duckdb::SchemaView View(const duckdb::SchemaCatalogEntry& schema) const {
+    return _retriever.View(schema);
+  }
+  bool ShowsColumn(const duckdb::CatalogEntry& relation,
+                   std::span<const duckdb::LogicalIndex> column);
+  bool ShowsActivityOf(duckdb::idx_t role) const {
+    return duckdb::Check<duckdb::AclMode::Usage>(
+             _context, _role,
+             duckdb::PrivilegeTarget::Role(
+               duckdb::RoleCapability::ReadAllStats)) ||
+           duckdb::Check<duckdb::AclMode::Usage>(
+             _context, _role, duckdb::PrivilegeTarget::Role(role));
+  }
   catalog::BaseCatalog& Database() const noexcept { return _database; }
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
@@ -788,7 +831,7 @@ class SystemScan {
         SDB_ASSERT(scan._table.Holds(kColumn, Integer<int64_t>(value)));
       }
       if constexpr (kMeta.physical == duckdb::PhysicalType::LIST) {
-        scan.PutList<kMeta.element, !kMeta.not_null>(target, value);
+        scan.PutList<kMeta.element>(target, value);
       } else {
         scan.Put<kMeta.physical>(target, scan._row, value);
       }
@@ -938,19 +981,12 @@ class SystemScan {
     }
   }
 
-  template<duckdb::PhysicalType E, bool Nullable, typename R>
+  template<duckdb::PhysicalType E, typename R>
   void PutList(const SystemVector& target, R& items) {
-    if constexpr (Nullable && std::is_same_v<std::ranges::range_value_t<R>,
-                                             duckdb::AclItem>) {
-      if (std::ranges::empty(items)) {
-        target.validity->SetInvalid(_row);
-        return;
-      }
-    }
     auto& vector = *target.vector;
     const auto offset = duckdb::ListVector::GetListSize(vector);
-    const auto length = static_cast<duckdb::idx_t>(std::ranges::size(items));
-    duckdb::ListVector::Reserve(vector, offset + length);
+    duckdb::ListVector::Reserve(
+      vector, offset + static_cast<duckdb::idx_t>(std::ranges::size(items)));
     auto& child = duckdb::ListVector::GetChildMutable(vector);
     const SystemVector elements{&child,
                                 duckdb::FlatVector::GetDataMutable(child),
@@ -959,8 +995,8 @@ class SystemScan {
     for (const auto& item : items) {
       Put<E>(elements, row++, item);
     }
-    Cells<duckdb::list_entry_t>(target)[_row] = {offset, length};
-    duckdb::ListVector::SetListSize(vector, offset + length);
+    Cells<duckdb::list_entry_t>(target)[_row] = {offset, row - offset};
+    duckdb::ListVector::SetListSize(vector, row);
   }
 
   template<const SystemSql& Sql, uint32_t C>
@@ -987,7 +1023,8 @@ class SystemScan {
 #ifdef SDB_DEV
   bool Declared(uint64_t provided) const;
 #endif
-  void Compile(duckdb::column_t column, const duckdb::TableFilter& filter);
+  void Compile(duckdb::column_t column, const duckdb::TableFilter& filter,
+               duckdb::optional_idx caller);
   const SystemIndex* Choose(std::span<const SystemIndex> indexes,
                             size_t name_probes) const;
   std::string_view NamePrefix(std::span<const SystemIndex> indexes) const;
@@ -1007,7 +1044,12 @@ class SystemScan {
   catalog::BaseCatalog& _database;
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
-  std::shared_ptr<const auth::RoleGraph> _roles;
+  const duckdb::RoleAccess& _role;
+  duckdb::CatalogEntryRetriever _retriever;
+  uint64_t _viewer = 0;
+  const duckdb::CatalogEntry* _columns_of = nullptr;
+  bool _all_columns = false;
+  duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};
   std::vector<SystemConstant> _constants;
@@ -1058,7 +1100,11 @@ concept Visits = requires(T& table, Entry& entry) { table.Row(entry); };
 
 template<typename Entry, typename T>
   requires Visits<T, Entry>
-void Visit(T& table, duckdb::CatalogEntry& entry) {
+void Visit(T& table, duckdb::CatalogEntry& entry,
+           duckdb::optional_ptr<const duckdb::SchemaView> schema = nullptr) {
+  if (!(schema ? table.Shows(entry, *schema) : table.Shows(entry))) {
+    return;
+  }
 #ifdef SDB_DEV
   table.Visiting(entry.type);
 #endif
@@ -1069,7 +1115,8 @@ void Visit(T& table, duckdb::CatalogEntry& entry) {
 }
 
 template<typename Entry>
-void Visit(SystemScan&, duckdb::CatalogEntry&) {
+void Visit(SystemScan&, duckdb::CatalogEntry&,
+           duckdb::optional_ptr<const duckdb::SchemaView> = nullptr) {
   static_assert(sizeof(Entry) > 0,
                 "dispatching an entry kind needs its definition");
 }
@@ -1112,6 +1159,7 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
     case duckdb::CatalogType::COORDINATE_SYSTEM_ENTRY:
     case duckdb::CatalogType::JOB_ENTRY:
     case duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY:
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
     case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
     case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
     case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
@@ -1253,13 +1301,15 @@ class SystemCursor<SystemEntries> final {
     if constexpr (Visits<T, duckdb::TableCatalogEntry> ||
                   Visits<T, duckdb::ViewCatalogEntry>) {
       if (relations) {
-        return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-          if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
-            Visit<duckdb::TableCatalogEntry>(table, entry);
-          } else {
-            Visit<duckdb::ViewCatalogEntry>(table, entry);
-          }
-        });
+        return Walk(
+          table, schema,
+          [&](duckdb::CatalogEntry& entry, const duckdb::SchemaView& view) {
+            if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+              Visit<duckdb::TableCatalogEntry>(table, entry, &view);
+            } else {
+              Visit<duckdb::ViewCatalogEntry>(table, entry, &view);
+            }
+          });
       }
     }
     if constexpr (Visits<T, duckdb::IndexCatalogEntry>) {
@@ -1293,18 +1343,48 @@ class SystemCursor<SystemEntries> final {
 
   template<typename Entry, typename T>
   bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema) {
-    return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-      Visit<Entry>(table, entry);
-    });
+    return Walk(
+      table, schema,
+      [&](duckdb::CatalogEntry& entry, const duckdb::SchemaView& view) {
+        Visit<Entry>(table, entry, &view);
+      });
+  }
+
+  template<typename T>
+  std::span<const uint64_t> Visibility(
+    const T& table, const duckdb::SchemaCatalogEntry& schema) const {
+    if (table.Viewer() == kVisibleToAll) {
+      return {};
+    }
+    const auto& snapshot = *_set.snapshot;
+    const auto& bits =
+      snapshot.visibility.Get([&](std::vector<uint64_t>& visibility) {
+        visibility.reserve(snapshot.entries.size());
+        for (const auto* entry : snapshot.entries) {
+          visibility.push_back(VisibilityBits(*entry));
+        }
+      });
+    return std::span{bits}.subspan(
+      _set.entries.data() - snapshot.entries.data(), _set.entries.size());
   }
 
   template<typename T, typename V>
   bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema, V&& visit) {
     const auto entries = _set.entries;
+    const auto visibility = Visibility(table, schema);
+    const auto viewer = table.Viewer();
+    const auto hidden = [&](size_t pos) {
+      return !visibility.empty() && !(visibility[pos] & viewer);
+    };
     const bool user_schema = !schema.internal;
+    const auto view = table.View(schema);
     table.Walking(_set.snapshot.get());
     for (; _pos < entries.size(); ++_pos) {
-      if (_pos + kPrefetchAhead < entries.size()) {
+      if (hidden(_pos)) {
+        continue;
+      }
+      if (_pos + kPrefetchAhead < entries.size() &&
+          !hidden(_pos + kPrefetchAhead)) {
         __builtin_prefetch(entries[_pos + kPrefetchAhead]);
       }
       auto& entry = *entries[_pos];
@@ -1312,7 +1392,7 @@ class SystemCursor<SystemEntries> final {
           (entry.internal && user_schema)) {
         continue;
       }
-      if (table.Step([&] { visit(entry); })) {
+      if (table.Step([&] { visit(entry, view); })) {
         return true;
       }
     }

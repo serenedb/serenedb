@@ -36,6 +36,7 @@ f	f	f
 
 
 # Unprivileged nextval is refused.
+onlyif postgres
 connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 statement error
 SELECT nextval('enf_sq_mop_counter');
@@ -43,7 +44,16 @@ SELECT nextval('enf_sq_mop_counter');
 db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
 
 
+skipif postgres
+connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
+statement error
+SELECT nextval('enf_sq_mop_counter');
+----
+db error: ERROR: Sequence with name enf_sq_mop_counter does not exist!<slt:ignore>
+
+
 # Unprivileged currval is refused.
+onlyif postgres
 connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 statement error
 SELECT currval('enf_sq_mop_counter');
@@ -51,12 +61,29 @@ SELECT currval('enf_sq_mop_counter');
 db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
 
 
+skipif postgres
+connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
+statement error
+SELECT currval('enf_sq_mop_counter');
+----
+db error: ERROR: Sequence with name enf_sq_mop_counter does not exist!<slt:ignore>
+
+
 # Unprivileged setval is refused.
+onlyif postgres
 connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 statement error
 SELECT setval('enf_sq_mop_counter', 5);
 ----
 db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
+
+
+skipif postgres
+connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
+statement error
+SELECT setval('enf_sq_mop_counter', 5);
+----
+db error: ERROR: Sequence with name enf_sq_mop_counter does not exist!<slt:ignore>
 
 
 # Grant all three sequence privileges.

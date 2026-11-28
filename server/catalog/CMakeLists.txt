@@ -4,6 +4,7 @@ target_sources(
         base_catalog.cpp
         boot.cpp
         catalog.cpp
+        catalog_subscription.cpp
         cluster.cpp
         database_directory.cpp
         dependency.cpp
@@ -15,6 +16,7 @@ target_sources(
         secret_store.cpp
         transaction.cpp
         entry/database.cpp
+        entry/foreign_data_wrapper.cpp
         entry/foreign_server.cpp
         entry/inverted_index.cpp
         entry/job.cpp

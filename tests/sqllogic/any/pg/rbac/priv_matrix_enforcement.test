@@ -42,6 +42,7 @@ f	f
 
 # ---- And the real query path agrees: both SELECT and INSERT are denied ----
 
+onlyif postgres
 connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 SELECT * FROM pm_kostya;
@@ -49,11 +50,28 @@ SELECT * FROM pm_kostya;
 db error: ERROR: permission denied for table pm_kostya<slt:ignore>
 
 
+skipif postgres
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+SELECT * FROM pm_kostya;
+----
+db error: ERROR: Table with name pm_kostya does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 INSERT INTO pm_kostya VALUES (3, 'pudge');
 ----
 db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+skipif postgres
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+INSERT INTO pm_kostya VALUES (3, 'pudge');
+----
+db error: ERROR: Table with name pm_kostya does not exist!<slt:ignore>
 
 
 # ---- Grant SELECT: oracle flips, real read works, write still denied ----
@@ -187,6 +205,7 @@ sel	ins	upd	del
 f	f	f	f
 
 
+onlyif postgres
 connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 SELECT * FROM pm_kostya;
@@ -194,11 +213,28 @@ SELECT * FROM pm_kostya;
 db error: ERROR: permission denied for table pm_kostya<slt:ignore>
 
 
+skipif postgres
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+SELECT * FROM pm_kostya;
+----
+db error: ERROR: Table with name pm_kostya does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 INSERT INTO pm_kostya VALUES (5, 'zhidky');
 ----
 db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+skipif postgres
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+INSERT INTO pm_kostya VALUES (5, 'zhidky');
+----
+db error: ERROR: Table with name pm_kostya does not exist!<slt:ignore>
 
 
 # ---- The superuser owner is never denied (positive control) ----

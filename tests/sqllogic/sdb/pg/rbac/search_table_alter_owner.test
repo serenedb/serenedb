@@ -1,0 +1,65 @@
+statement ok
+DROP SCHEMA IF EXISTS stao_shelf CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS stao_vedernikoff;
+
+
+statement ok
+CREATE ROLE stao_vedernikoff LOGIN;
+
+
+statement ok
+CREATE SCHEMA stao_shelf;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA stao_shelf TO stao_vedernikoff;
+
+
+statement ok
+SET ROLE stao_vedernikoff;
+
+
+statement ok
+CREATE TABLE stao_shelf.stao_books (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA stao_shelf FROM stao_vedernikoff;
+
+
+statement ok
+SET ROLE stao_vedernikoff;
+
+
+statement ok
+ALTER TABLE stao_shelf.stao_books SET (compaction_max_segments = 8);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE stao_shelf.stao_books SET (compaction_max_segments = 9);
+
+
+query
+SELECT tableowner FROM pg_tables WHERE schemaname = 'stao_shelf' AND tablename = 'stao_books';
+----
+tableowner
+stao_vedernikoff
+
+
+statement ok
+DROP SCHEMA stao_shelf CASCADE;
+
+
+statement ok
+DROP ROLE stao_vedernikoff;

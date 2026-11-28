@@ -73,11 +73,20 @@ xao_otn_vedernikoff
 
 
 # (a) non-owner (babsky) cannot transfer
+onlyif postgres
 connection cbabsky user=xao_otn_babsky password=xao_otn_babsky_pw
 statement error
 ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_babsky;
 ----
 db error: ERROR: must be owner of table xao_otn_clickclack<slt:ignore>
+
+
+skipif postgres
+connection cbabsky user=xao_otn_babsky password=xao_otn_babsky_pw
+statement error
+ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_babsky;
+----
+db error: ERROR: Table with name xao_otn_clickclack does not exist!<slt:ignore>
 
 
 # (b) owner cannot transfer to a role it cannot SET ROLE to (iceberg)

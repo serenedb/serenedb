@@ -105,11 +105,20 @@ member_leaf	usage_leaf	dead_usage_leaf
 t	f	f
 
 
+onlyif postgres
 connection c_mop user=xmb_cte_mop password=xmb_cte_mop_pw
 statement error
 SELECT * FROM xmb_cte_makak;
 ----
 db error: ERROR: permission denied for table xmb_cte_makak<slt:ignore>
+
+
+skipif postgres
+connection c_mop user=xmb_cte_mop password=xmb_cte_mop_pw
+statement error
+SELECT * FROM xmb_cte_makak;
+----
+db error: ERROR: Table with name xmb_cte_makak does not exist!<slt:ignore>
 
 
 # ---- Restore the top edge: full chain flows again ----

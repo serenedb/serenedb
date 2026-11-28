@@ -39,7 +39,6 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/duckdb_storage_extension.h"
-#include "connector/duckdb_subscription.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
@@ -99,6 +98,22 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
   config.options.product_version = SERENEDB_VERSION;
   config.options.product_source_id = build::Commit();
   config.options.manage_extensions = false;
+  for (const std::string_view name : {
+         "duckdb_api",
+         "allow_community_extensions",
+         "allow_extension_repositories",
+         "allow_extensions_metadata_mismatch",
+         "allow_unsigned_extensions",
+         "autoinstall_extension_repository",
+         "autoinstall_known_extensions",
+         "autoload_known_extensions",
+         "custom_extension_repository",
+         "extension_directories",
+         "extension_directory",
+         "extension_repository_directory",
+       }) {
+    config.hidden_settings.emplace(name);
+  }
   config.create_internal_catalog =
     [layout = catalog::DataDirectory{datadir}](duckdb::AttachedDatabase& db) {
       return catalog::CreateInternalCatalog(db, layout);
@@ -110,7 +125,8 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
   config.AddExtensionOption(
     duckdb::Identifier{"data_directory"}, "Shows the data directory.",
     duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
-    duckdb::SetScope::AUTOMATIC, true);
+    duckdb::SetScope::AUTOMATIC, true, false,
+    duckdb::SettingAccess{duckdb::SettingContext::INTERNAL, true});
   connector::RegisterIResearchReplacementScan(config);
 }
 
@@ -148,10 +164,7 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // feeding the scheduler. Default external_threads=1 would over-count
   // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
   // workers; zero makes the count exact and `threads=1` a true single worker.
-  // Sessions run as tasks on that pool, so it must never be left empty; the
-  // value is refused for the lifetime of the process (IsUnchangeableSetting),
-  // which is what keeps `threads -
-  // external_threads` from ever resolving to zero internal workers.
+  // Sessions run as tasks on that pool, so it must never be left empty.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
 }
 
@@ -187,8 +200,6 @@ void RegisterEngineModules(duckdb::DatabaseInstance& db) {
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   RegisterEngineModules(db);
-
-  connector::RegisterSubscriptionPragma(db);
 
   pg::RegisterFunctions(db);
 

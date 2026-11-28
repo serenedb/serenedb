@@ -54,7 +54,8 @@ struct ChatTemplate {
 
 void AddChatOptions(duckdb::FunctionSignature& signature);
 
-ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
+ChatConfig BindChat(duckdb::ClientContext& context, bool superuser,
+                    std::string_view fn,
                     std::span<duckdb::unique_ptr<duckdb::Expression>> options,
                     double default_temperature, EndpointRef& endpoint);
 

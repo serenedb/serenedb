@@ -460,6 +460,26 @@ def test_startup_utf8_client_encoding_no_warning():
         )
 
 
+def test_startup_role_parameter_sets_the_current_role():
+    other = WireConn()
+    try:
+        other.run_ok("CREATE ROLE ns_startup_role")
+        try:
+            m = _startup_collect({"role": "ns_startup_role"})
+            assert "Z" in types(m) and "E" not in types(m), types(m)
+            assert dict(param_status(m)).get("is_superuser") == "off", param_status(m)
+        finally:
+            other.run_ok("DROP ROLE ns_startup_role")
+    finally:
+        other.close()
+
+
+def test_startup_search_path_parameter_applies():
+    m = _startup_collect({"search_path": "pg_catalog"})
+    assert "Z" in types(m) and "E" not in types(m), types(m)
+    assert dict(param_status(m)).get("search_path") == "pg_catalog", param_status(m)
+
+
 def _run_with(conn, query: str, params=()):
     conn.parse("", query)
     conn.bind("", "", params=params)
@@ -1984,6 +2004,33 @@ def test_copy_from_stdin_extended(conn):
         assert b"2" in rows(m)[0] and b"one" in rows(m)[0]
     finally:
         conn.run_ok("drop table if exists smoke_copy_ext")
+
+
+def test_copy_from_stdin_answers_a_hidden_table_as_a_missing_one(conn):
+    conn.run_ok("drop table if exists copy_hidden_t")
+    conn.run_ok("drop role if exists copy_hidden_reader")
+    conn.run_ok("create table copy_hidden_t(a int, b text, c int)")
+    conn.run_ok("create role copy_hidden_reader")
+    try:
+        conn.run_ok("set role copy_hidden_reader")
+        responses = []
+        for table in ("copy_hidden_t", "copy_hidden_missing"):
+            conn.parse("", f"copy {table} from stdin")
+            conn.bind("", "")
+            conn.execute("")
+            assert conn.read_msg()[0] == "1"
+            assert conn.read_msg()[0] == "2"
+            t, payload = conn.read_msg()
+            assert t == "G"
+            responses.append(payload)
+            conn.send("c")
+            conn.sync()
+            assert errors(conn.drain_to_ready())
+        assert responses[0] == responses[1]
+    finally:
+        conn.run_ok("reset role")
+        conn.run_ok("drop table if exists copy_hidden_t")
+        conn.run_ok("drop role if exists copy_hidden_reader")
 
 
 def test_copy_from_stdin_quoted_upper_case_format(conn):
@@ -3875,6 +3922,56 @@ def test_discard_all_in_a_transaction_block_is_25001(conn):
     assert not errors(conn.run("DISCARD ALL"))
 
 
+def _execute_named(conn, name):
+    conn.bind("", name)
+    conn.execute("")
+    conn.sync()
+    return conn.drain_to_ready()
+
+
+def test_transaction_block_rules_follow_the_block_at_execute(conn):
+    other = WireConn()
+    try:
+        _parse_ok(conn, "ns_block_drop", "DROP DATABASE IF EXISTS ns_block_absent")
+        _parse_ok(conn, "ns_block_discard", "DISCARD ALL")
+        other.run_ok("CREATE ROLE ns_block_role")
+        try:
+            m = _execute_named(conn, "ns_block_drop")
+            assert not errors(m), errors(m)
+            assert not errors(_simple(conn, "BEGIN"))
+            assert sqlstates(_execute_named(conn, "ns_block_drop")) == ["25001"]
+            assert not errors(_simple(conn, "ROLLBACK"))
+            m = _execute_named(conn, "ns_block_discard")
+            assert not errors(m), errors(m)
+        finally:
+            other.run_ok("DROP ROLE ns_block_role")
+    finally:
+        other.close()
+
+
+@pytest.mark.usefixtures("own_server")
+def test_prepared_statement_counts_one_plan_per_execution(conn):
+    other = WireConn()
+    try:
+        conn.run_ok("PREPARE ns_counted AS SELECT 1")
+        _parse_ok(conn, "ns_counted_execute", "EXECUTE ns_counted")
+        other.run_ok("CREATE ROLE ns_counted_role")
+        try:
+            for _ in range(2):
+                m = _execute_named(conn, "ns_counted_execute")
+                assert not errors(m), errors(m)
+        finally:
+            other.run_ok("DROP ROLE ns_counted_role")
+        m = conn.run_ok(
+            "SELECT generic_plans, custom_plans FROM pg_prepared_statements "
+            "WHERE name = 'ns_counted'"
+        )
+        assert all_fields(m) == [b"1", b"1"], all_fields(m)
+    finally:
+        other.close()
+        conn.run_ok("DEALLOCATE ALL")
+
+
 def test_sql_execute_runs_protocol_statement(conn):
     _parse_ok(conn, "ns_exec", "select $1::int4 + 1", oids=(23,))
     m = _simple(conn, "EXECUTE ns_exec(41)")
@@ -4188,6 +4285,27 @@ def test_sequence_sqlstates(conn):
     assert not errors(_simple(conn, "DROP SEQUENCE ns_seq"))
 
 
+def test_database_owner_membership_is_feature_not_supported(conn):
+    assert not errors(_simple(conn, "DROP ROLE IF EXISTS ns_dor_member"))
+    assert not errors(_simple(conn, "CREATE ROLE ns_dor_member"))
+    assert sqlstates(_simple(conn, "GRANT pg_database_owner TO ns_dor_member")) == ["0A000"]
+    assert sqlstates(_simple(conn, "GRANT ns_dor_member TO pg_database_owner")) == ["0A000"]
+    assert not errors(_simple(conn, "DROP ROLE ns_dor_member"))
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "ALTER SERVER ns_no_server OWNER TO postgres",
+        "DROP SERVER ns_no_server",
+        "DROP SUBSCRIPTION ns_no_subscription",
+        "DROP TEXT SEARCH DICTIONARY ns_no_dictionary",
+    ],
+)
+def test_missing_object_is_undefined_object(conn, query):
+    assert sqlstates(_simple(conn, query)) == ["42704"]
+
+
 def test_deallocate_all_releases_protocol_statements(conn):
     handles = (
         "SELECT count(*) FROM sdb_prepared_statements()"
@@ -4288,6 +4406,40 @@ def test_string_over_the_size_limit(conn):
         ("54000", "Cannot create a string of size: '5368709120', the maximum "
                   "supported string size is: '4294967295'")
     ]
+
+
+def _int4_array(dims, values):
+    payload = struct.pack("!iii", len(dims), 0, 23)
+    for size in dims:
+        payload += struct.pack("!ii", size, 1)
+    for value in values:
+        payload += struct.pack("!ii", 4, value)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "dims, values, expected",
+    [([2], [7, 9], b"2"), ([3, 0], [], b"0"), ([0x7FFFFFFF, 0], [], b"0")],
+)
+def test_int4_array_binary_param(conn, dims, values, expected):
+    conn.parse("", "select cardinality($1::int4[])", oids=(1007,))
+    conn.bind("", "", params=(_int4_array(dims, values),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+@pytest.mark.parametrize("dims", [[0x7FFFFFFF], [0x10000, 0x10000]])
+def test_int4_array_binary_param_with_more_elements_than_bytes(conn, dims):
+    conn.parse("", "select cardinality($1::int4[])", oids=(1007,))
+    conn.bind("", "", params=(_int4_array(dims, [1]),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert errors(m), m
+    conn.run_ok("select 1")
 
 
 def test_xact_start_is_the_start_of_each_statements_transaction(conn):

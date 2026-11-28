@@ -207,11 +207,20 @@ id	av	sweep
 
 
 # === Control: the partial base grants do NOT leak the un-granted glacier ===
+onlyif postgres
 connection c_base user=evj_vedernikoff password=evj_vedernikoff_pw
 statement error
 SELECT id, drift FROM evj_glacier;
 ----
 db error: ERROR: permission denied for table evj_glacier<slt:ignore>
+
+
+skipif postgres
+connection c_base user=evj_vedernikoff password=evj_vedernikoff_pw
+statement error
+SELECT id, drift FROM evj_glacier;
+----
+db error: ERROR: Table with name evj_glacier does not exist!<slt:ignore>
 
 
 statement ok

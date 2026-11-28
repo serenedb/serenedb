@@ -284,12 +284,29 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("only inverted indexes are supported on a table"));
   }
+  auto& home = table.ParentSchema(context);
+  for (size_t i = 0; i < info->expressions.size(); ++i) {
+    binder.QualifyUserFunctions(home, *info->expressions[i]);
+    binder.QualifyUserFunctions(home, *info->parsed_expressions[i]);
+  }
+  if (info->where_clause) {
+    binder.QualifyUserFunctions(home, *info->where_clause);
+  }
   auto& dependencies = info->dependencies;
   auto& catalog = table.ParentCatalog();
   duckdb::catalog_entry_callback_t lookup_callback =
     [&dependencies, &catalog](duckdb::CatalogEntry& entry) {
       if (&catalog == &entry.ParentCatalog()) {
         dependencies.AddDependency(entry);
+      } else if (!entry.internal &&
+                 (entry.type == duckdb::CatalogType::MACRO_ENTRY ||
+                  entry.type == duckdb::CatalogType::TABLE_MACRO_ENTRY)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("cross-database references are not implemented: \"",
+                  entry.ParentCatalog().GetName().GetIdentifierName(), ".",
+                  entry.ParentSchemaName().GetIdentifierName(), ".",
+                  entry.name.GetIdentifierName(), "\""));
       }
     };
   duckdb::IndexBinder index_binder(binder, context, &table, info.get());

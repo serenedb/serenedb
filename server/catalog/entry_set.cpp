@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_versions.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/catalog/schema_info.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -38,6 +39,7 @@
 #include "catalog/base_catalog.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/transaction.h"
 
@@ -123,13 +125,12 @@ void ForEachSubject(
       }
     }
   }
+  ForEachRoleReference(version,
+                       [&](duckdb::idx_t role) { subject(role, nullptr); });
   if (version.type == duckdb::CatalogType::ROLE_ENTRY) {
-    return;
-  }
-  subject(version.permissions.owner, nullptr);
-  for (const auto& item : version.permissions.acl) {
-    subject(item.grantee, nullptr);
-    subject(item.grantor, nullptr);
+    for (const auto& membership : version.Cast<RoleCatalogEntry>().MemberOf()) {
+      subject(membership.role, nullptr);
+    }
   }
 }
 
@@ -215,6 +216,23 @@ void ForEachSubject(const duckdb::CatalogEntry& version,
     [&](duckdb::idx_t oid, const duckdb::LogicalDependency*) { visit(oid); });
 }
 
+void ForEachRoleReference(const duckdb::CatalogEntry& entry,
+                          absl::FunctionRef<void(duckdb::idx_t)> visit) {
+  duckdb::AnyRoleReference(entry, [&](const duckdb::RoleReference& reference) {
+    if (reference.role != duckdb::ACL_ID_PUBLIC) {
+      visit(reference.role);
+    }
+    return false;
+  });
+}
+
+bool ReferencesRole(const duckdb::CatalogEntry& entry, duckdb::idx_t role) {
+  return duckdb::AnyRoleReference(entry,
+                                  [&](const duckdb::RoleReference& reference) {
+                                    return reference.role == role;
+                                  });
+}
+
 void DependentIndex::Add(duckdb::idx_t subject, duckdb::idx_t dependent,
                          OidIndex& index) {
   auto database = index.Database();
@@ -240,8 +258,8 @@ void DependentIndex::Remove(duckdb::idx_t subject, duckdb::idx_t dependent,
   }
 }
 
-std::vector<Dependent> DependentIndex::Of(duckdb::idx_t subject) {
-  std::vector<Dependent> dependents;
+absl::InlinedVector<Dependent, 8> DependentIndex::Of(duckdb::idx_t subject) {
+  absl::InlinedVector<Dependent, 8> dependents;
   absl::ReaderMutexLock lock{&_mutex};
   if (const auto it = _dependents.find(subject); it != _dependents.end()) {
     dependents.reserve(it->second.size());
@@ -317,14 +335,17 @@ void OidIndex::Forget(const EntrySet& set,
 void OidIndex::Alias(std::span<const duckdb::idx_t> oids, duckdb::idx_t owner) {
   absl::MutexLock lock{&_owners_mutex};
   for (const auto oid : oids) {
-    _owners.try_emplace(oid, owner);
+    auto& owners = _owners[oid];
+    if (!absl::c_linear_search(owners, owner)) {
+      owners.push_back(owner);
+    }
   }
 }
 
-duckdb::idx_t OidIndex::Owner(duckdb::idx_t oid) {
+OidIndex::Owners OidIndex::OwnersOf(duckdb::idx_t oid) {
   absl::ReaderMutexLock lock{&_owners_mutex};
   const auto it = _owners.find(oid);
-  return it == _owners.end() ? 0 : it->second;
+  return it == _owners.end() ? Owners{} : it->second;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> OidIndex::Find(
@@ -480,11 +501,7 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
       roles.CheckLive(view, role, false);
     }
   };
-  check_role(version.permissions.owner);
-  for (const auto& item : version.permissions.acl) {
-    check_role(item.grantee);
-    check_role(item.grantor);
-  }
+  ForEachRoleReference(version, check_role);
 }
 
 void OidIndex::CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,
@@ -497,7 +514,8 @@ void OidIndex::CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,
   if (indexed) {
     return;
   }
-  if (const auto owner = Owner(oid)) {
+  if (const auto owners = OwnersOf(oid); !owners.empty()) {
+    const auto owner = owners.back();
     VisitNewest(owner, [&](EntrySet& set, const duckdb::Identifier& name) {
       set.CheckSubjectLive(view, name, owner, oid, false);
     });
@@ -802,12 +820,8 @@ duckdb::CatalogEntry& EntrySet::Push(
   if (head->type == duckdb::CatalogType::SCHEMA_ENTRY) {
     head->Cast<duckdb::SchemaCatalogEntry>().GetSchemaInfo()->versions->Install(
       *head);
-  } else if (head->type == duckdb::CatalogType::TABLE_ENTRY) {
-    _oids.Alias(head->Cast<duckdb::TableCatalogEntry>().GetSubObjectOids(),
-                head->oid);
-  } else if (head->type == duckdb::CatalogType::VIEW_ENTRY) {
-    _oids.Alias(head->Cast<duckdb::ViewCatalogEntry>().GetSubObjectOids(),
-                head->oid);
+  } else if (const auto oids = head->GetSubObjectOids(); !oids.empty()) {
+    _oids.Alias(oids, head->oid);
   }
   PushChange(transaction, Change{.set = this,
                                  .version = head.get(),

@@ -31,7 +31,7 @@ connection c_ved user=edo_vedernikoff password=ved_pw
 statement error
 SELECT * FROM edo_mop_vault;
 ----
-db error: ERROR: permission denied for table edo_mop_vault<slt:ignore>
+db error: ERROR: Table with name edo_mop_vault does not exist!<slt:ignore>
 
 
 # Turning the optimizer off via PRAGMA must NOT bypass the access check.
@@ -44,21 +44,24 @@ connection c_ved user=edo_vedernikoff password=ved_pw
 statement error
 SELECT * FROM edo_mop_vault;
 ----
-db error: ERROR: permission denied for table edo_mop_vault<slt:ignore>
+db error: ERROR: Table with name edo_mop_vault does not exist!<slt:ignore>
 
 
 # ... and neither via SET debug_disable_optimizer (the session-scoped knob the
 # optimizer also honors; `disable_optimizer` itself is pragma-only in serened).
 connection c_ved3 user=edo_vedernikoff password=ved_pw
-statement ok
+statement error
 SET debug_disable_optimizer = true;
+----
+db error: ERROR: permission denied to set parameter "debug_disable_optimizer"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
 
 
 connection c_ved3 user=edo_vedernikoff password=ved_pw
 statement error
 SELECT * FROM edo_mop_vault;
 ----
-db error: ERROR: permission denied for table edo_mop_vault<slt:ignore>
+db error: ERROR: Table with name edo_mop_vault does not exist!<slt:ignore>
 
 
 # A granted read still works with the optimizer off (enforcement passes, it does

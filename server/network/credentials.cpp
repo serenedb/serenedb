@@ -53,6 +53,11 @@ std::string Md5Hex(std::string_view data) {
     {reinterpret_cast<const char*>(digest), sizeof(digest)});
 }
 
+std::string SaslPrep(std::string_view password) {
+  // ASCII passthrough; full RFC 4013 NFKC normalization is a follow-up.
+  return std::string{password};
+}
+
 }  // namespace
 
 std::optional<std::string> Base64Decode(std::string_view in) {
@@ -65,11 +70,6 @@ std::optional<std::string> Base64Decode(std::string_view in) {
 
 bool RandomBytes(std::span<uint8_t> out) {
   return RAND_bytes(out.data(), static_cast<int>(out.size())) == 1;
-}
-
-std::string SaslPrep(std::string_view password) {
-  // ASCII passthrough; full RFC 4013 NFKC normalization is a follow-up.
-  return std::string{password};
 }
 
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password) {
@@ -295,20 +295,13 @@ bool VerifyCleartextAgainstMd5(std::string_view stored_md5,
     {reinterpret_cast<const uint8_t*>(stored_md5.data()), stored_md5.size()});
 }
 
-bool VerifyCleartext(const Credential& stored, std::string_view username,
-                     std::string_view password) {
-  if (stored.cleartext) {
-    const std::string given = SaslPrep(password);
-    const std::string want = SaslPrep(*stored.cleartext);
-    return ConstantTimeEqual(
-      {reinterpret_cast<const uint8_t*>(given.data()), given.size()},
-      {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
+bool VerifyCleartext(const Credential& credential, std::string_view username,
+                     std::string_view cleartext) {
+  if (credential.scram) {
+    return VerifyCleartextAgainstScram(*credential.scram, cleartext);
   }
-  if (stored.scram) {
-    return VerifyCleartextAgainstScram(*stored.scram, password);
-  }
-  return stored.md5 &&
-         VerifyCleartextAgainstMd5(*stored.md5, username, password);
+  return credential.md5 &&
+         VerifyCleartextAgainstMd5(*credential.md5, username, cleartext);
 }
 
 }  // namespace sdb::network

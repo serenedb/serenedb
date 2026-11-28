@@ -34,7 +34,6 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/entry/system_table.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
@@ -188,21 +187,18 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
   duckdb::vector<duckdb::LogicalType>& types,
   duckdb::vector<duckdb::Identifier>& names) {
   const auto& table = input.info->Cast<SystemFunctionInfo>().table;
-  if (table.SuperuserOnly() && !auth::SessionClosure(context)->is_superuser) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied for function ", table.Sql().name));
-  }
   for (const auto& column : table.Columns().Logical()) {
     types.emplace_back(column.Type());
     names.emplace_back(column.Name());
   }
-  return duckdb::make_uniq<SystemTableBindData>(
-    table,
+  auto& catalog =
     duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context))
-      .Cast<catalog::BaseCatalog>(),
-    nullptr);
+      .Cast<catalog::BaseCatalog>();
+  if (input.binder) {
+    input.binder->GetStatementProperties().RegisterDBRead(catalog, context);
+  }
+  return duckdb::make_uniq<SystemTableBindData>(table, catalog, nullptr);
 }
 
 }  // namespace
@@ -224,6 +220,9 @@ void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
     function.bind = SystemFunctionBind;
     function.function_info =
       duckdb::make_shared_ptr<SystemFunctionInfo>(*table);
+    if (table->SuperuserOnly()) {
+      function.required_capability = duckdb::RoleCapability::Superuser;
+    }
     duckdb::CreateTableFunctionInfo info{std::move(function)};
     info.SetSchema(duckdb::Identifier{table->Sql().schema});
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;

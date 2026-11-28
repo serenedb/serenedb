@@ -18,7 +18,6 @@ target_sources(
         inet_filter_builder.cpp
         inet_terms.cpp
         search_filter_printer.cpp
-        duckdb_subscription.cpp
         scan/col_filter_share.cpp
         scan/col_filter_verify.cpp
         scan/deferred_check.cpp

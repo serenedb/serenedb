@@ -27,6 +27,7 @@
 #include <absl/strings/substitute.h>
 #include <simdjson.h>
 
+#include <duckdb/catalog/role_graph.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/function_set.hpp>
@@ -347,8 +348,9 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
 
   auto bind = duckdb::make_uniq<TextBindData>();
   bind->spec = &spec;
-  bind->chat = BindChat(context, spec.name, std::span{args}.subspan(index),
-                        spec.temperature, bind->endpoint);
+  bind->chat =
+    BindChat(context, input.Role().is_superuser, spec.name,
+             std::span{args}.subspan(index), spec.temperature, bind->endpoint);
 
   auto& system = bind->system;
   switch (spec.kind) {

@@ -1,0 +1,42 @@
+statement ok
+DROP FUNCTION IF EXISTS drko_one();
+
+
+statement ok
+DROP ROLE IF EXISTS drko_vedernikoff;
+
+
+statement ok
+CREATE ROLE drko_vedernikoff LOGIN;
+
+
+statement ok
+CREATE FUNCTION drko_one() RETURNS INTEGER AS $$ SELECT 1 $$ LANGUAGE sql;
+
+
+statement ok
+SET ROLE drko_vedernikoff;
+
+
+statement error
+DROP PROCEDURE drko_one();
+----
+db error: ERROR: drko_one() is not a procedure
+
+
+statement error
+DROP FUNCTION drko_one();
+----
+db error: ERROR: must be owner of function drko_one
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP FUNCTION drko_one();
+
+
+statement ok
+DROP ROLE drko_vedernikoff;

@@ -39,6 +39,7 @@ FIXTURE = [
     "COMMENT ON TABLE stc_parent IS 'fixture parent'",
     "COMMENT ON COLUMN stc_parent.name IS 'fixture column'",
     "CREATE ROLE stc_role",
+    "COMMENT ON ROLE stc_role IS 'fixture role'",
     "CREATE ROLE stc_member",
     "GRANT stc_role TO stc_member",
     "GRANT SELECT ON stc_parent TO stc_role",

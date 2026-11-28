@@ -24,11 +24,19 @@
 
 #include <algorithm>
 #include <compare>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/catalog/privileges.hpp>
+#include <duckdb/catalog/schema_info.hpp>
+#include <duckdb/common/types/hash.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/utils/assert.hpp>
 
+#include "catalog/cluster.h"
 #include "connector/column_id.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
@@ -38,6 +46,47 @@
 #include "pg/types/mapping.h"
 
 namespace sdb::pg {
+namespace {
+
+constexpr uint64_t kPublicBit = uint64_t{1} << 63;
+
+uint64_t RoleBit(duckdb::idx_t role) {
+  return role == duckdb::ACL_ID_PUBLIC
+           ? kPublicBit
+           : uint64_t{1} << (duckdb::Hash(uint64_t{role}) % 63);
+}
+
+}  // namespace
+
+uint64_t VisibilityBits(const duckdb::CatalogEntry& entry) {
+  uint64_t bits = 0;
+  duckdb::ForEachSeer(entry, [&](duckdb::idx_t seer) {
+    bits |= RoleBit(seer);
+    return false;
+  });
+  if ((bits & kPublicBit) || !entry.ParentSchemaOid()) {
+    return bits;
+  }
+  const auto& schema_info =
+    entry.type == duckdb::CatalogType::SCHEMA_ENTRY
+      ? *entry.Cast<duckdb::SchemaCatalogEntry>().GetSchemaInfo()->parent
+      : *entry.Cast<duckdb::StandardEntry>().schema_info;
+  const auto schema = schema_info.versions->GetCommitted();
+  return schema ? bits | RoleBit(schema->permissions.owner) : bits;
+}
+
+uint64_t ViewerBits(const duckdb::RoleAccess& role) {
+  if (role.is_superuser ||
+      role.PredefinedRoleModes(duckdb::CatalogType::TABLE_ENTRY) !=
+        duckdb::AclMode::NoRights) {
+    return kVisibleToAll;
+  }
+  auto bits = kPublicBit | RoleBit(role.role);
+  for (const auto member : role.closure) {
+    bits |= RoleBit(member);
+  }
+  return bits;
+}
 
 duckdb::LogicalType SystemColumnType(int32_t oid) {
   const auto& type = *FindBuiltinType(oid);
@@ -108,11 +157,14 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
   : _context{context},
     _database{input.bind_data->Cast<SystemTableBindData>().catalog},
     _transaction{_database.GetCatalogTransaction(context)},
-    _table{input.bind_data->Cast<SystemTableBindData>().table} {
+    _table{input.bind_data->Cast<SystemTableBindData>().table},
+    _role{duckdb::Role(context, input.bound_role)},
+    _retriever{context, _role},
+    _viewer{ViewerBits(_role)} {
   const auto& ids = input.column_ids;
   if (input.filters) {
     for (const auto& entry : *input.filters) {
-      Compile(ids[entry.GetIndex()], entry.Filter());
+      Compile(ids[entry.GetIndex()], entry.Filter(), input.bound_role);
     }
   }
   const auto& projection = input.projection_ids;
@@ -134,7 +186,7 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
       _slots[column] = place;
       _needed |= uint64_t{1} << column;
       if (!_roles && _table.Sql().columns[column].type == kAclitemArray) {
-        _roles = auth::RolesOf(&context);
+        _roles = catalog::RolesOf(&context);
       }
     }
   }
@@ -151,6 +203,21 @@ bool SystemScan::Declared(uint64_t provided) const {
 #endif
 
 SystemScan::~SystemScan() = default;
+
+bool SystemScan::ShowsColumn(const duckdb::CatalogEntry& relation,
+                             std::span<const duckdb::LogicalIndex> column) {
+  constexpr auto kAnyColumnPrivilege =
+    duckdb::ACL_COLUMN_PRIVILEGES | duckdb::AclMode::Any;
+  if (&relation != _columns_of) {
+    _columns_of = &relation;
+    _all_columns =
+      duckdb::Check<duckdb::AclMode::Own>(_context, _role, relation) ||
+      duckdb::Check<kAnyColumnPrivilege>(_context, _role, relation);
+  }
+  return _all_columns ||
+         duckdb::Check<kAnyColumnPrivilege>(
+           _context, _role, duckdb::PrivilegeTarget::Columns(relation, column));
+}
 
 void SystemScan::Begin(duckdb::DataChunk& output) {
   output.Reset();

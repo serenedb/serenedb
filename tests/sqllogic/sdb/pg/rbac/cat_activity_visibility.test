@@ -7,6 +7,14 @@ DROP ROLE IF EXISTS pudge_activity_spy;
 
 
 statement ok
+DROP ROLE IF EXISTS pudge_activity_twin;
+
+
+statement ok
+DROP ROLE IF EXISTS pudge_activity_twin_old;
+
+
+statement ok
 CREATE ROLE pudge_activity_spy LOGIN PASSWORD 'pudge_activity_pw';
 
 
@@ -47,6 +55,17 @@ FROM pg_stat_activity
 WHERE usename <> current_user;
 ----
 hidden	no_details
+t	t
+
+
+connection spy user=pudge_activity_spy password=pudge_activity_pw
+query
+SELECT bool_and(usesysid IS NOT NULL) AS identity_kept,
+       bool_and(query = '<insufficient privilege>') AS hidden
+FROM pg_stat_get_activity(NULL)
+WHERE usesysid <> (SELECT oid FROM pg_roles WHERE rolname = current_user);
+----
+identity_kept	hidden
 t	t
 
 
@@ -97,8 +116,65 @@ query
 
 connection default
 statement ok
+CREATE ROLE pudge_activity_twin LOGIN PASSWORD 'pudge_activity_twin_pw';
+
+
+connection twin user=pudge_activity_twin password=pudge_activity_twin_pw
+query
+SELECT 'first twin' AS pudge_activity_twin_marker;
+----
+pudge_activity_twin_marker
+first twin
+
+
+connection default
+statement ok
+ALTER ROLE pudge_activity_twin RENAME TO pudge_activity_twin_old;
+
+
+connection default
+statement ok
+CREATE ROLE pudge_activity_twin;
+
+
+connection default
+statement ok
+GRANT pudge_activity_twin TO chin_activity_boss;
+
+
+connection boss user=chin_activity_boss password=chin_activity_pw
+query
+SELECT query
+FROM sdb_progress
+WHERE usename = 'pudge_activity_twin';
+----
+query
+<insufficient privilege>
+
+
+connection default
+query
+SELECT count(*) AS sessions,
+       bool_and(usesysid = (SELECT oid FROM pg_roles WHERE rolname = 'pudge_activity_twin_old')) AS attributed
+FROM pg_stat_activity
+WHERE usename = 'pudge_activity_twin_old';
+----
+sessions	attributed
+1	t
+
+
+connection default
+statement ok
 DROP ROLE chin_activity_boss;
 
 
 statement ok
 DROP ROLE pudge_activity_spy;
+
+
+statement ok
+DROP ROLE pudge_activity_twin;
+
+
+statement ok
+DROP ROLE pudge_activity_twin_old;

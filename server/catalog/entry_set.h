@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
@@ -49,8 +50,18 @@ enum class ChangeKind : uint8_t {
 class EntrySet;
 class OidIndex;
 
+inline bool IsStandardEntry(const duckdb::CatalogEntry& entry) {
+  return entry.type != duckdb::CatalogType::SCHEMA_ENTRY &&
+         entry.ParentSchemaOid() != 0;
+}
+
 void ForEachSubject(const duckdb::CatalogEntry& version,
                     absl::FunctionRef<void(duckdb::idx_t)> visit);
+
+void ForEachRoleReference(const duckdb::CatalogEntry& entry,
+                          absl::FunctionRef<void(duckdb::idx_t)> visit);
+
+bool ReferencesRole(const duckdb::CatalogEntry& entry, duckdb::idx_t role);
 
 struct DroppedSubject {
   duckdb::idx_t oid = 0;
@@ -72,7 +83,7 @@ class DependentIndex final {
 
   void Remove(duckdb::idx_t subject, duckdb::idx_t dependent, OidIndex& index);
 
-  std::vector<Dependent> Of(duckdb::idx_t subject);
+  absl::InlinedVector<Dependent, 8> Of(duckdb::idx_t subject);
 
   void Forget(const OidIndex& index);
 
@@ -111,9 +122,11 @@ class OidIndex {
   void Forget(const EntrySet& set,
               std::span<duckdb::CatalogEntry* const> versions);
 
+  using Owners = absl::InlinedVector<duckdb::idx_t, 1>;
+
   void Alias(std::span<const duckdb::idx_t> oids, duckdb::idx_t owner);
 
-  duckdb::idx_t Owner(duckdb::idx_t oid);
+  Owners OwnersOf(duckdb::idx_t oid);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> Find(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
@@ -164,7 +177,7 @@ class OidIndex {
   irs::containers::FlatHashMap<duckdb::idx_t, std::vector<Slot>> _slots
     ABSL_GUARDED_BY(_mutex);
   absl::Mutex _owners_mutex;
-  irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> _owners
+  irs::containers::FlatHashMap<duckdb::idx_t, Owners> _owners
     ABSL_GUARDED_BY(_owners_mutex);
   duckdb::AttachedDatabase& _database;
   std::shared_ptr<DependentIndex> _dependents;

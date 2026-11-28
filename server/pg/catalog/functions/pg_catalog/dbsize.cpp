@@ -45,7 +45,6 @@
 #include <type_traits>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
@@ -241,12 +240,19 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
   auto& context = state.GetContext();
+  const auto& role = duckdb::Role(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
       const auto entry = DatabaseEntry(context, key);
       duckdb::optional_ptr<duckdb::Catalog> database =
-        entry ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
-              : nullptr;
+        entry &&
+            (duckdb::Check<duckdb::AclMode::Connect>(context, role, *entry) ||
+             duckdb::Check<duckdb::AclMode::Usage>(
+               context, role,
+               duckdb::PrivilegeTarget::Role(
+                 duckdb::RoleCapability::ReadAllStats)))
+          ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
+          : nullptr;
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database ", KeyText(key), " does not exist"));
@@ -258,9 +264,10 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
   const Session& session, duckdb::string_t name) {
-  return session.database->GetSchema(
+  auto schema = session.database->GetSchema(
     *session.transaction, duckdb::Identifier{connector::AsView(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
+  return schema && Shown(session, *schema) ? schema : nullptr;
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
@@ -274,8 +281,7 @@ void SchemaSizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   const auto& session = SessionOf(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
-      const auto schema =
-        session.database ? SchemaEntry(session, key) : nullptr;
+      auto schema = session.database ? SchemaEntry(session, key) : nullptr;
       if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema ", KeyText(key), " does not exist"));
@@ -299,17 +305,13 @@ duckdb::idx_t SessionTablespace(const Session& session) {
 
 int64_t TablespaceBytes(const Session& session,
                         const catalog::TablespaceCatalogEntry& tablespace) {
-  auto& context = *session.context;
-  if (tablespace.oid != SessionTablespace(session)) {
-    if (const auto closure = auth::SessionClosure(context);
-        closure && !closure->Owns(kRootUser) &&
-        !closure->CanAny(duckdb::CatalogType::TABLESPACE_ENTRY,
-                         PrivilegePermissions(tablespace),
-                         duckdb::AclMode::Create)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for tablespace ",
-                              tablespace.name.GetIdentifierName()));
-    }
+  if (tablespace.oid != SessionTablespace(session) &&
+      !duckdb::Check<duckdb::AclMode::Usage>(
+        *session.context, session.role,
+        duckdb::PrivilegeTarget::Role(duckdb::RoleCapability::ReadAllStats))) {
+    duckdb::Check<duckdb::AclMode::Create>(*session.context, session.role,
+                                           tablespace)
+      .Require();
   }
   if (tablespace.oid == kPgGlobalTablespace) {
     const auto* log = catalog::Transactions::Get().GetLog();

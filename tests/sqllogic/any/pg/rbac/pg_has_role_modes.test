@@ -1,0 +1,74 @@
+statement ok
+DROP ROLE IF EXISTS phrm_a;
+
+
+statement ok
+DROP ROLE IF EXISTS phrm_b;
+
+
+statement ok
+DROP ROLE IF EXISTS phrm_c;
+
+
+statement ok
+CREATE ROLE phrm_a;
+
+
+statement ok
+CREATE ROLE phrm_b NOINHERIT;
+
+
+statement ok
+CREATE ROLE phrm_c;
+
+
+statement ok
+GRANT phrm_c TO phrm_b WITH INHERIT FALSE, SET FALSE;
+
+
+statement ok
+GRANT phrm_a TO phrm_c WITH ADMIN OPTION;
+
+
+query
+SELECT pg_has_role('phrm_a', 'phrm_a', 'USAGE') AS usage,
+       pg_has_role('phrm_a', 'phrm_a', 'MEMBER') AS member,
+       pg_has_role('phrm_a', 'phrm_a', 'SET') AS set,
+       pg_has_role('phrm_a', 'phrm_a', 'USAGE WITH ADMIN OPTION') AS admin;
+----
+usage	member	set	admin
+t	t	t	f
+
+
+query
+SELECT pg_has_role('phrm_b', 'phrm_c', 'USAGE') AS usage,
+       pg_has_role('phrm_b', 'phrm_c', 'MEMBER') AS member,
+       pg_has_role('phrm_b', 'phrm_c', 'SET') AS set,
+       pg_has_role('phrm_b', 'phrm_c', 'MEMBER WITH ADMIN OPTION') AS admin,
+       pg_has_role('phrm_b', 'phrm_c', 'USAGE, MEMBER') AS usage_or_member;
+----
+usage	member	set	admin	usage_or_member
+f	t	f	f	t
+
+
+query
+SELECT pg_has_role('phrm_c', 'phrm_a', 'USAGE') AS c_usage,
+       pg_has_role('phrm_c', 'phrm_a', 'SET WITH ADMIN OPTION') AS c_admin,
+       pg_has_role('phrm_b', 'phrm_a', 'MEMBER') AS b_member,
+       pg_has_role('phrm_b', 'phrm_a', 'USAGE') AS b_usage,
+       pg_has_role('phrm_b', 'phrm_a', 'USAGE WITH ADMIN OPTION') AS b_admin;
+----
+c_usage	c_admin	b_member	b_usage	b_admin
+t	t	t	f	t
+
+
+statement ok
+DROP ROLE phrm_b;
+
+
+statement ok
+DROP ROLE phrm_c;
+
+
+statement ok
+DROP ROLE phrm_a;

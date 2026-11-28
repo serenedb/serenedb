@@ -116,7 +116,7 @@ connection c_grantee user=fs_grantee password=grantee_pw
 statement error
 SELECT count(*) FROM fs_g.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fs_g<slt:ignore>
+db error: ERROR: Table with name "fs_g.chtest.vedernikoff" does not exist because schema "fs_g<slt:ignore>
 
 
 connection default

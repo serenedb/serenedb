@@ -46,6 +46,7 @@
 #include "network/cpu_resumer.h"
 #include "network/gate.h"
 #include "network/io_context.h"
+#include "network/pg/login.h"
 #include "network/proxy_protocol.h"
 #include "network/send_gate.h"
 #include "network/socket.h"
@@ -285,9 +286,15 @@ class Transport : public TransportBase {
 
   std::optional<asio_ns::ip::address> ClientAddress() {
     asio_ns::error_code ec;
-    const auto address = _proxy_client
-                           ? asio_ns::ip::make_address(*_proxy_client, ec)
-                           : _socket.Lowest().remote_endpoint(ec).address();
+    asio_ns::ip::address address;
+    if (_proxy_client) {
+      address = asio_ns::ip::make_address(*_proxy_client, ec);
+    } else if constexpr (Kind == SocketKind::Unix ||
+                         Kind == SocketKind::Client) {
+      return std::nullopt;
+    } else {
+      address = _socket.Lowest().remote_endpoint(ec).address();
+    }
     if (ec) {
       return std::nullopt;
     }
@@ -297,6 +304,13 @@ class Transport : public TransportBase {
       }
     }
     return address;
+  }
+
+  pg::LoginPeer Peer() {
+    const auto address = ClientAddress();
+    return {.address = address ? *address : asio_ns::ip::address{},
+            .is_local = Kind == SocketKind::Unix && !_proxy_client,
+            .is_ssl = _socket.IsTls()};
   }
 
   void InjectRecv(const uint8_t* data, size_t len) {

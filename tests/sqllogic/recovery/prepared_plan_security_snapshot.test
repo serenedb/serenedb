@@ -1,0 +1,67 @@
+statement ok
+CREATE ROLE ppss_reader;
+
+
+statement ok
+PREPARE ppss_one AS SELECT 1 AS one;
+
+
+query
+EXECUTE ppss_one;
+----
+one
+1
+
+
+statement ok
+SET ROLE ppss_reader;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+EXECUTE ppss_one;
+----
+one
+1
+
+
+query
+SELECT custom_plans FROM pg_prepared_statements WHERE name = 'ppss_one';
+----
+custom_plans
+0
+
+
+statement ok
+CREATE ROLE ppss_other;
+
+
+query
+EXECUTE ppss_one;
+----
+one
+1
+
+
+query
+SELECT custom_plans FROM pg_prepared_statements WHERE name = 'ppss_one';
+----
+custom_plans
+1
+
+
+query
+EXECUTE ppss_one;
+----
+one
+1
+
+
+query
+SELECT custom_plans FROM pg_prepared_statements WHERE name = 'ppss_one';
+----
+custom_plans
+1

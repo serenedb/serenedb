@@ -1,0 +1,97 @@
+statement ok
+DROP FUNCTION IF EXISTS dsic_once();
+
+
+statement ok
+DROP FUNCTION IF EXISTS dsic_twice();
+
+
+statement ok
+DROP TABLE IF EXISTS dsic_s.dsic_t;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dsic_s;
+
+
+statement ok
+DROP ROLE IF EXISTS dsic_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dsic_caller;
+
+
+statement ok
+CREATE ROLE dsic_owner;
+
+
+statement ok
+CREATE ROLE dsic_caller LOGIN PASSWORD 'dsic_pw';
+
+
+statement ok
+CREATE SCHEMA dsic_s;
+
+
+statement ok
+CREATE TABLE dsic_s.dsic_t (a integer);
+
+
+statement ok
+GRANT USAGE ON SCHEMA dsic_s TO dsic_owner;
+
+
+statement ok
+GRANT SELECT ON dsic_s.dsic_t TO dsic_owner;
+
+
+statement ok
+CREATE FUNCTION dsic_once() RETURNS bigint LANGUAGE sql SECURITY DEFINER
+AS $$ SELECT count(*) FROM pg_class WHERE relname = 'dsic_t' $$;
+
+
+statement ok
+CREATE FUNCTION dsic_twice() RETURNS bigint LANGUAGE sql SECURITY DEFINER
+AS $$ WITH c AS NOT MATERIALIZED (SELECT oid FROM pg_class WHERE relname = 'dsic_t')
+  SELECT (SELECT count(*) FROM c) + (SELECT count(*) FROM c) $$;
+
+
+statement ok
+ALTER FUNCTION dsic_once() OWNER TO dsic_owner;
+
+
+statement ok
+ALTER FUNCTION dsic_twice() OWNER TO dsic_owner;
+
+
+connection c_dsic user=dsic_caller password=dsic_pw
+query
+SELECT dsic_once() AS once, dsic_twice() AS twice;
+----
+once	twice
+1	2
+
+
+statement ok
+DROP FUNCTION dsic_once();
+
+
+statement ok
+DROP FUNCTION dsic_twice();
+
+
+statement ok
+DROP TABLE dsic_s.dsic_t;
+
+
+statement ok
+DROP SCHEMA dsic_s;
+
+
+statement ok
+DROP ROLE dsic_owner;
+
+
+statement ok
+DROP ROLE dsic_caller;

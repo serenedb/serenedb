@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `REVOKE` statement is the inverse of [`GRANT`](../grant/index.md): it removes privileges on an object from a role, or removes a role's membership in another role. The `GRANT OPTION FOR` / `ADMIN OPTION FOR` forms remove only the right to re-grant, keeping the underlying privilege or membership.
+The `REVOKE` statement is the inverse of [`GRANT`](../grant/index.md): it removes privileges on an object from a role, or removes a role's membership in another role. The `GRANT OPTION FOR` / `ADMIN OPTION FOR` forms remove only the right to re-grant, keeping the underlying privilege or membership. `INHERIT OPTION FOR` and `SET OPTION FOR` keep a membership but stop the member from inheriting the role's privileges or from switching to it with `SET ROLE`.
 
 ## Examples
 
@@ -40,8 +40,10 @@ Revoke role membership:
 
 ## Notes
 
-- Revoking requires the same authority as granting: object ownership (or `GRANT OPTION`) for privileges, `ADMIN OPTION` / `CREATEROLE` / superuser for membership.
+- Revoking requires the same authority as granting: object ownership (or `GRANT OPTION`) for privileges, `ADMIN OPTION` or superuser for membership. A role that is not the owner revokes the grants made by the role it would grant as, picked the same way as for [`GRANT`](../grant/index.md#notes).
+- Revoking a privilege that columns can also hold (`SELECT`, `INSERT`, `UPDATE`, `REFERENCES`) from a table revokes it from each of its columns too, picking the grantor for each column on its own.
 - Revoking a privilege the role does not hold is not an error — the statement simply has no effect.
+- Several objects, roles and members can be listed, separated by commas: `REVOKE SELECT ON t1, t2 FROM r1, r2` revokes from every pair, and if any part fails nothing is revoked.
 
 ## See also
 

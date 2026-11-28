@@ -27,9 +27,11 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/common/enums/on_create_conflict.hpp>
+#include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <functional>
 #include <memory>
+#include <span>
 
 #include "catalog/entry_set.h"
 
@@ -115,6 +117,8 @@ class Schema final : public duckdb::SchemaCatalogEntry {
     const duckdb::EntryLookupInfo& lookup_info) final;
 
   void DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info) final;
+  void DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info,
+                 std::span<const duckdb::idx_t> together);
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
@@ -171,6 +175,15 @@ class Schema final : public duckdb::SchemaCatalogEntry {
   void CheckRelationName(duckdb::CatalogTransaction transaction,
                          duckdb::CatalogType type,
                          const duckdb::Identifier& name);
+
+  void CheckRoutineName(
+    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+    const duckdb::Identifier& name,
+    const duckdb::vector<duckdb::unique_ptr<duckdb::MacroFunction>>& overloads);
+
+  void CheckRoutineName(duckdb::CatalogTransaction transaction,
+                        const duckdb::CatalogEntry& entry,
+                        const duckdb::Identifier& name);
 
   void Move(duckdb::CatalogTransaction transaction, EntrySet& set,
             duckdb::CatalogType type, duckdb::CatalogEntry& entry,

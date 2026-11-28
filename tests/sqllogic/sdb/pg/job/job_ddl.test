@@ -732,10 +732,75 @@ CREATE JOB jd_invalid AFTER 1 HOUR AS ALTER TABLE jd_missing ADD COLUMN r DOUBLE
 db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
 
 
-statement error
-CREATE JOB jd_invalid AFTER 1 HOUR AS DROP ROLE jd_role_a, jd_role_b;
+statement ok
+CREATE JOB jd_drop_roles AFTER 1 HOUR SUSPENDED AS DROP ROLE IF EXISTS jd_role_a, jd_role_b;
+
+
+statement ok
+CREATE PROCEDURE jd_proc(x INTEGER) AS $$ SELECT x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE JOB jd_drop_proc AFTER 1 HOUR SUSPENDED AS DROP PROCEDURE jd_proc(INTEGER);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jd_dict AS split_text();
+
+
+statement ok
+CREATE JOB jd_drop_dict AFTER 1 HOUR SUSPENDED AS DROP TEXT SEARCH DICTIONARY jd_dict, jd_dict_missing;
+
+
+statement ok
+CREATE JOB jd_drop_server AFTER 1 HOUR SUSPENDED AS DROP SERVER IF EXISTS jd_server_a, jd_server_b CASCADE;
+
+
+query
+SELECT job_name, body FROM sdb_jobs() WHERE database_name = current_database() AND starts_with(job_name, 'jd_drop_') ORDER BY job_name;
 ----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+job_name	body
+jd_drop_dict	DROP TEXT SEARCH DICTIONARY jd_dict, jd_dict_missing;
+jd_drop_proc	DROP PROCEDURE jd_proc(INTEGER);
+jd_drop_roles	DROP ROLE IF EXISTS jd_role_a, jd_role_b;
+jd_drop_server	DROP SERVER IF EXISTS jd_server_a, jd_server_b CASCADE;
+
+
+statement ok
+EXECUTE JOB jd_drop_proc;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'jd_proc';
+----
+n
+0
+
+
+statement ok
+EXECUTE JOB jd_drop_roles;
+
+
+statement ok
+EXECUTE JOB jd_drop_server;
+
+
+query
+SELECT job_name, run_count, last_status FROM sdb_jobs() WHERE database_name = current_database() AND starts_with(job_name, 'jd_drop_') ORDER BY job_name;
+----
+job_name	run_count	last_status
+jd_drop_dict	0	NULL
+jd_drop_proc	1	success
+jd_drop_roles	1	success
+jd_drop_server	1	success
+
+
+statement ok
+DROP JOB jd_drop_roles, jd_drop_proc, jd_drop_dict, jd_drop_server;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY jd_dict;
 
 
 statement ok

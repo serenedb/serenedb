@@ -1,0 +1,91 @@
+statement ok
+DROP ROLE IF EXISTS dmo_a, dmo_b;
+
+
+statement ok
+CREATE ROLE dmo_a;
+
+
+statement ok
+CREATE ROLE dmo_b;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO dmo_a, dmo_b;
+
+
+statement ok
+SET ROLE dmo_a;
+
+
+statement ok
+CREATE FUNCTION dmo_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE dmo_b;
+
+
+statement ok
+CREATE FUNCTION dmo_f(x TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE dmo_a;
+
+
+statement error
+DROP MACRO dmo_f;
+----
+db error: ERROR: must be owner of function dmo_f
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT oid::regprocedure::text AS f FROM pg_proc WHERE proname = 'dmo_f' ORDER BY 1;
+----
+f
+dmo_f(integer)
+dmo_f(text)
+
+
+statement ok
+ALTER FUNCTION dmo_f(TEXT) OWNER TO dmo_a;
+
+
+statement ok
+SET ROLE dmo_a;
+
+
+statement ok
+DROP MACRO dmo_f;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'dmo_f';
+----
+n
+0
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM dmo_a, dmo_b;
+
+
+statement ok
+DROP ROLE dmo_a, dmo_b;

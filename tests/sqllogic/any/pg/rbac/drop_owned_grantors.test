@@ -1,0 +1,100 @@
+statement ok
+DROP TABLE IF EXISTS dog_t;
+
+
+statement ok
+DROP ROLE IF EXISTS dog_bob, dog_carol, dog_dave;
+
+
+statement ok
+CREATE ROLE dog_bob LOGIN PASSWORD 'dog_pw';
+
+
+statement ok
+CREATE ROLE dog_carol LOGIN PASSWORD 'dog_pw';
+
+
+statement ok
+CREATE ROLE dog_dave LOGIN PASSWORD 'dog_pw';
+
+
+statement ok
+CREATE TABLE dog_t (a int);
+
+
+statement ok
+ALTER TABLE dog_t OWNER TO dog_bob;
+
+
+connection c_bob user=dog_bob password=dog_pw
+statement ok
+GRANT SELECT ON dog_t TO dog_carol;
+
+
+connection c_bob user=dog_bob password=dog_pw
+statement ok
+GRANT SELECT ON dog_t TO dog_dave WITH GRANT OPTION;
+
+
+connection c_dave user=dog_dave password=dog_pw
+statement ok
+GRANT SELECT ON dog_t TO dog_carol;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dog_bob GRANT SELECT ON TABLES TO dog_carol;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dog_carol GRANT SELECT ON TABLES TO dog_dave;
+
+
+connection c_carol user=dog_carol password=dog_pw
+statement ok
+DROP OWNED BY dog_carol;
+
+
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE relname = 'dog_t';
+----
+acl
+dog_bob=arwdDxtm/dog_bob,dog_carol=r/dog_bob,dog_dave=r*/dog_bob,dog_carol=r/dog_dave
+
+
+query
+SELECT count(*) AS defaults
+FROM pg_default_acl
+WHERE defaclrole IN ('dog_bob'::regrole, 'dog_carol'::regrole);
+----
+defaults
+0
+
+
+statement ok
+DROP OWNED BY dog_carol;
+
+
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE relname = 'dog_t';
+----
+acl
+dog_bob=arwdDxtm/dog_bob,dog_dave=r*/dog_bob,dog_carol=r/dog_dave
+
+
+statement ok
+DROP OWNED BY dog_dave;
+
+
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE relname = 'dog_t';
+----
+acl
+dog_bob=arwdDxtm/dog_bob
+
+
+statement ok
+DROP TABLE dog_t;
+
+
+statement ok
+DROP ROLE dog_bob, dog_carol, dog_dave;

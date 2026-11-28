@@ -69,31 +69,31 @@ SET ROLE epsr_reader_${__DATABASE__};
 statement error
 SELECT count(*) AS n FROM epsr_s;
 ----
-db error: ERROR: permission denied for table epsr_s
+db error: ERROR: Table with name epsr_s does not exist!<slt:ignore>
 
 
 statement error
 EXECUTE epsr_q1;
 ----
-db error: ERROR: permission denied for table epsr_s
+db error: ERROR: Table with name epsr_s does not exist!<slt:ignore>
 
 
 statement error
 EXECUTE epsr_q2;
 ----
-db error: ERROR: permission denied for table epsr_t
+db error: ERROR: Table with name epsr_idx does not exist!<slt:ignore>
 
 
 statement error
 EXECUTE epsr_q3;
 ----
-db error: ERROR: permission denied for table epsr_log
+db error: ERROR: Table with name epsr_log does not exist!<slt:ignore>
 
 
 statement error
 EXECUTE epsr_q4;
 ----
-db error: ERROR: permission denied for sequence epsr_seq
+db error: ERROR: Sequence with name epsr_seq does not exist!<slt:ignore>
 
 
 statement ok

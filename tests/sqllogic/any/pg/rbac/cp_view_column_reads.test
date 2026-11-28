@@ -5,22 +5,6 @@
 # per column (pg_attribute.attacl), and a grant on the VIEW does not leak onto
 # the base table -- a role holding only a view grant is still refused on t.
 #
-# SCOPED OUT -- SereneDB diverges from PostgreSQL on view privilege semantics
-# (probed against real PG 18 and SereneDB on 2026-06-19):
-#   1. Owner-rights vs invoker-rights. In PG a view runs with the view OWNER's
-#      rights, so a role with SELECT on the view (and none on the base table)
-#      reads the view fine. SereneDB enforces the base table for the CALLER:
-#      the same read is refused ("permission denied for table vcr_iceberg").
-#   2. No-grant view read wording. PG reports "permission denied for view
-#      vcr_clickclack"; SereneDB reports "permission denied for table
-#      vcr_iceberg" (it resolves through to the base relation).
-#   3. Column GRANT on a VIEW. PG accepts GRANT SELECT (a) ON <view>; SereneDB
-#      rejects it ("relation \"vcr_clickclack\" does not exist"). Only the
-#      table-level GRANT ... ON <view> is accepted.
-# Those three cases are therefore NOT asserted here. The "view grant does not
-# leak the base table" property is still asserted, via the byte-identical
-# direction: a table-level view grant does not let the holder read t directly.
-#
 # Lore: vedernikoff/babsky read; mop has nothing. iceberg is the base table,
 # clickclack the view.
 
@@ -64,11 +48,20 @@ CREATE ROLE vcr_babsky LOGIN PASSWORD 'vcr_babsky_pw';
 
 # No grant of any kind -> reading the base table directly is refused, naming the
 # table. Byte-identical on PG and SereneDB.
+onlyif postgres
 connection c_ved user=vcr_vedernikoff password=vcr_vedernikoff_pw
 statement error
 SELECT a FROM vcr_iceberg;
 ----
 db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=vcr_vedernikoff password=vcr_vedernikoff_pw
+statement error
+SELECT a FROM vcr_iceberg;
+----
+db error: ERROR: Table with name vcr_iceberg does not exist!<slt:ignore>
 
 
 # === Column grant on the base table is per-column ===
@@ -129,6 +122,7 @@ GRANT SELECT ON vcr_clickclack TO vcr_babsky;
 
 # Reading the base table directly is still refused: the view grant did not leak
 # onto vcr_iceberg. Byte-identical on PG and SereneDB.
+onlyif postgres
 connection c_bab user=vcr_babsky password=vcr_babsky_pw
 statement error
 SELECT a FROM vcr_iceberg;
@@ -136,13 +130,30 @@ SELECT a FROM vcr_iceberg;
 db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
 
 
+skipif postgres
+connection c_bab user=vcr_babsky password=vcr_babsky_pw
+statement error
+SELECT a FROM vcr_iceberg;
+----
+db error: ERROR: Table with name vcr_iceberg does not exist!<slt:ignore>
+
+
 # The column grant on the base table did not leak onto babsky either: babsky
 # never received SELECT (a) ON vcr_iceberg, so the base table stays refused.
+onlyif postgres
 connection c_bab2 user=vcr_babsky password=vcr_babsky_pw
 statement error
 SELECT a, b FROM vcr_iceberg;
 ----
 db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_bab2 user=vcr_babsky password=vcr_babsky_pw
+statement error
+SELECT a, b FROM vcr_iceberg;
+----
+db error: ERROR: Table with name vcr_iceberg does not exist!<slt:ignore>
 
 
 statement ok

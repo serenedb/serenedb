@@ -47,6 +47,13 @@ n
 0
 
 
+connection c_bab user=cdb_babsky password=cdb_babsky_pw
+statement error
+CREATE DATABASE cdb_clickclack TABLESPACE pg_default;
+----
+db error: ERROR: permission denied for tablespace pg_default
+
+
 # A role with CREATEDB succeeds.
 connection c_bab user=cdb_babsky password=cdb_babsky_pw
 statement ok

@@ -1,0 +1,52 @@
+
+statement ok
+DROP ROLE IF EXISTS repro_nested_drop_intruder;
+
+
+statement ok
+CREATE ROLE repro_nested_drop_intruder;
+
+
+statement ok
+CREATE SCHEMA repro_nd_outer;
+
+
+statement ok
+CREATE SCHEMA repro_nd_outer.repro_nd_inner;
+
+
+statement ok
+CREATE TABLE repro_nd_outer.repro_nd_inner.t (id INT);
+
+
+statement ok
+INSERT INTO repro_nd_outer.repro_nd_inner.t VALUES (1), (2);
+
+
+statement ok
+SET ROLE repro_nested_drop_intruder;
+
+
+statement error
+DROP SCHEMA repro_nd_outer.repro_nd_inner CASCADE;
+----
+db error: ERROR: Schema with name repro_nd_inner does not exist!
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n FROM repro_nd_outer.repro_nd_inner.t;
+----
+n
+2
+
+
+statement ok
+DROP SCHEMA repro_nd_outer CASCADE;
+
+
+statement ok
+DROP ROLE repro_nested_drop_intruder;

@@ -49,7 +49,7 @@ connection c_denied user=dbc_vedernikoff password=mop_secret database=dbc_vault
 statement error
 SELECT 1;
 ----
-db error: FATAL: permission denied for database "dbc_vault"<slt:ignore>
+db error: FATAL: database "dbc_vault" does not exist
 
 
 # ---- (3) an explicit grant to the role re-admits it.

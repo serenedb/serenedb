@@ -14,6 +14,7 @@ not on whether psycopg3 happened to materialise a `datetime.date`.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import struct
@@ -474,6 +475,22 @@ def test_reset_restores_the_session_start():
         admin.close()
 
 
+def test_custom_parameter_and_object_sqlstates():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            for sql, sqlstate in (
+                ("SELECT set_config('app..tenant', 'x', false)", "42602"),
+                ("SELECT current_setting('app.never_set_by_psycopg')", "42704"),
+                ("GRANT USAGE ON FOREIGN DATA WRAPPER no_such_wrapper TO PUBLIC", "42704"),
+            ):
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == sqlstate, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        c.close()
+
+
 def test_role_settings_apply_at_login():
     login = f"drv_role_settings_{os.getpid()}"
     admin = psycopg.connect(**conn_kwargs(), autocommit=True)
@@ -521,6 +538,36 @@ def test_binder_error_sqlstates():
     finally:
         with c.cursor() as cur:
             cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.close()
+
+
+def test_function_overload_error_sqlstates():
+    """A name with several overloads and no argument list is ambiguous_function
+    (42725), and an argument list no overload has is undefined_function
+    (42883), like PG.
+    """
+    function = f"rfq_fn_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cur.execute(f"CREATE FUNCTION \"{function}\"(x int) RETURNS int LANGUAGE SQL AS 'SELECT x'")
+            cur.execute(f"CREATE FUNCTION \"{function}\"(x text) RETURNS text LANGUAGE SQL AS 'SELECT x'")
+            cases = [
+                (f'DROP FUNCTION "{function}"', "42725"),
+                (f'GRANT EXECUTE ON FUNCTION "{function}" TO PUBLIC', "42725"),
+                (f'ALTER FUNCTION "{function}" STABLE', "42725"),
+                (f'DROP FUNCTION "{function}"(boolean)', "42883"),
+                (f'GRANT EXECUTE ON FUNCTION "{function}"(boolean) TO PUBLIC', "42883"),
+                (f'ALTER FUNCTION "{function}"(boolean) STABLE', "42883"),
+            ]
+            for sql, code in cases:
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == code, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        with c.cursor() as cur:
+            cur.execute(f'DROP FUNCTION IF EXISTS "{function}"(int)')
+            cur.execute(f'DROP FUNCTION IF EXISTS "{function}"(text)')
         c.close()
 
 
@@ -940,6 +987,23 @@ def test_standalone_commit_rollback_no_txn_warns_25p01():
         c.close()
 
 
+def test_set_local_outside_a_transaction_block_warns_25p01():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.sqlstate, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("SHOW application_name")
+            before = cur.fetchone()
+            cur.execute("SET LOCAL application_name = 'set_local_warns'")
+            cur.execute("SELECT set_config('application_name', 'set_config_quiet', true)")
+            cur.execute("SHOW application_name")
+            assert cur.fetchone() == before
+        assert diags == [("WARNING", "25P01", "SET LOCAL can only be used in transaction blocks")], diags
+    finally:
+        c.close()
+
+
 def test_engine_warning_reaches_the_client_as_a_notice():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     diags: list[tuple] = []
@@ -986,6 +1050,149 @@ def test_distinct_statistics_on_a_boolean_or_bit_column_warn():
         with c.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS distinct_warn")
         c.close()
+
+
+def test_client_side_password_hash_and_md5_rename_notice():
+    role = f"pw_client_{os.getpid()}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[tuple] = []
+    admin.add_notice_handler(lambda d: notices.append((d.severity, d.message_primary)))
+    try:
+        admin.execute(f"CREATE ROLE {role} LOGIN")
+        verifier = admin.pgconn.encrypt_password(b"pw_client_secret", role.encode()).decode()
+        assert verifier.startswith("SCRAM-SHA-256$"), verifier
+        admin.execute(f"ALTER ROLE {role} PASSWORD '{verifier}'")
+        with psycopg.connect(**{**conn_kwargs(), "user": role, "password": "pw_client_secret"}) as c:
+            assert c.execute("SELECT current_user").fetchone() == (role,)
+        admin.execute("SET password_encryption = 'md5'")
+        md5 = admin.pgconn.encrypt_password(b"pw_client_secret", role.encode()).decode()
+        assert md5 == "md5" + hashlib.md5(b"pw_client_secret" + role.encode()).hexdigest(), md5
+        admin.execute(f"ALTER ROLE {role} PASSWORD '{md5}'")
+        admin.execute(f"ALTER ROLE {role} RENAME TO {role}_r")
+        assert ("NOTICE", "MD5 password cleared because of role rename") in notices, notices
+    finally:
+        admin.execute(f"DROP ROLE IF EXISTS {role}")
+        admin.execute(f"DROP ROLE IF EXISTS {role}_r")
+        admin.close()
+
+
+def test_vacuum_walk_warns_only_about_tables_the_role_can_see():
+    suffix = os.getpid()
+    role = f"vac_walk_role_{suffix}"
+    hidden = f"vac_walk_hidden_{suffix}"
+    shown = f"vac_walk_shown_{suffix}"
+    index = f"vac_walk_ix_{suffix}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'vac_walk_pw'")
+        admin.execute(f"CREATE TABLE {hidden} (a integer)")
+        admin.execute(f"CREATE INDEX {index} ON {hidden} USING inverted(a)")
+        admin.execute(f"CREATE TABLE {shown} (a integer)")
+        admin.execute(f"GRANT SELECT ON {shown} TO {role}")
+        c = psycopg.connect(
+            **{**conn_kwargs(), "user": role, "password": "vac_walk_pw"}, autocommit=True
+        )
+        notices: list[str] = []
+        c.add_notice_handler(lambda d: notices.append(d.message_primary))
+        try:
+            c.execute("VACUUM (COMPACT_ALL)")
+            c.execute("VACUUM (FLUSH_ALL)")
+            with pytest.raises(psycopg.errors.UndefinedObject) as ei:
+                c.execute(f"VACUUM (FLUSH_INDEX) {index}")
+            assert ei.value.diag.message_primary == f'relation "{index}" does not exist'
+        finally:
+            c.close()
+        assert f'permission denied to compact "{shown}", skipping it' in notices, notices
+        assert f'permission denied to flush "{shown}", skipping it' in notices, notices
+        assert not any(hidden in n or index in n for n in notices), notices
+    finally:
+        admin.execute(f"DROP TABLE IF EXISTS {hidden}")
+        admin.execute(f"DROP TABLE IF EXISTS {shown}")
+        admin.execute(f"DROP ROLE IF EXISTS {role}")
+        admin.close()
+
+
+def test_analyze_without_maintain_warns_and_skips():
+    suffix = os.getpid()
+    role = f"analyze_reader_{suffix}"
+    table = f"analyze_ledger_{suffix}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'analyze_pw'")
+        admin.execute(f"CREATE TABLE {table} (a integer)")
+        admin.execute(f"GRANT SELECT ON {table} TO {role}")
+        c = psycopg.connect(
+            **{**conn_kwargs(), "user": role, "password": "analyze_pw"}, autocommit=True
+        )
+        notices: list[str] = []
+        c.add_notice_handler(lambda d: notices.append(d.message_primary))
+        try:
+            c.execute(f"ANALYZE {table}")
+            c.execute(f"VACUUM {table}")
+        finally:
+            c.close()
+        assert notices == [
+            f'permission denied to analyze "{table}", skipping it',
+            f'permission denied to vacuum "{table}", skipping it',
+        ], notices
+    finally:
+        admin.execute(f"DROP TABLE IF EXISTS {table}")
+        admin.execute(f"DROP ROLE IF EXISTS {role}")
+        admin.close()
+
+
+def test_partial_grant_and_revoke_warn_as_postgresql():
+    suffix = os.getpid()
+    grantor = f"pgw_grantor_{suffix}"
+    grantee = f"pgw_grantee_{suffix}"
+    other = f"pgw_other_{suffix}"
+    table = f"pgw_ledger_{suffix}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {grantor} LOGIN PASSWORD 'pgw_pw'")
+        admin.execute(f"CREATE ROLE {grantee}")
+        admin.execute(f"CREATE ROLE {other}")
+        admin.execute(f"CREATE TABLE {table} (a integer, b integer)")
+        admin.execute(f"GRANT SELECT ON {table} TO {grantor}")
+        admin.execute(f"GRANT INSERT ON {table} TO {grantor} WITH GRANT OPTION")
+        admin.execute(f"GRANT UPDATE (a) ON {table} TO {grantor} WITH GRANT OPTION")
+        c = psycopg.connect(
+            **{**conn_kwargs(), "user": grantor, "password": "pgw_pw"}, autocommit=True
+        )
+        diags: list[tuple] = []
+        c.add_notice_handler(lambda d: diags.append((d.severity, d.sqlstate, d.message_primary)))
+        try:
+            c.execute(f"GRANT SELECT ON {table} TO {grantee}")
+            c.execute(f"GRANT SELECT, INSERT ON {table} TO {grantee}")
+            c.execute(f"GRANT ALL ON {table} TO {grantee}")
+            c.execute(f"GRANT UPDATE (a, b) ON {table} TO {grantee}")
+            c.execute(f"REVOKE SELECT ON {table} FROM {grantee}")
+            c.execute(f"REVOKE INSERT ON {table} FROM {grantee}")
+            c.execute(f"GRANT SELECT ON {table} TO {grantee}, {other}")
+        finally:
+            c.close()
+        assert diags == [
+            ("WARNING", "01007", f'no privileges were granted for "{table}"'),
+            ("WARNING", "01007", f'not all privileges were granted for "{table}"'),
+            ("WARNING", "01007", f'no privileges were granted for column "b" of relation "{table}"'),
+            ("WARNING", "01006", f'no privileges could be revoked for "{table}"'),
+            ("WARNING", "01006", f'no privileges could be revoked for column "a" of relation "{table}"'),
+            ("WARNING", "01006", f'no privileges could be revoked for column "b" of relation "{table}"'),
+            ("WARNING", "01007", f'no privileges were granted for "{table}"'),
+        ], diags
+        held = admin.execute(
+            f"SELECT has_table_privilege('{grantee}', '{table}', 'SELECT'),"
+            f" has_table_privilege('{grantee}', '{table}', 'INSERT'),"
+            f" has_column_privilege('{grantee}', '{table}', 'a', 'UPDATE'),"
+            f" has_column_privilege('{grantee}', '{table}', 'b', 'UPDATE')"
+        ).fetchone()
+        assert held == (False, False, True, False), held
+    finally:
+        admin.execute(f"DROP TABLE IF EXISTS {table}")
+        admin.execute(f"DROP ROLE IF EXISTS {other}")
+        admin.execute(f"DROP ROLE IF EXISTS {grantee}")
+        admin.execute(f"DROP ROLE IF EXISTS {grantor}")
+        admin.close()
 
 
 def test_unenforced_setting_warns_when_its_value_changes():

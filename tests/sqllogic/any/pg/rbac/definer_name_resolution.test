@@ -1,0 +1,119 @@
+statement ok
+DROP FUNCTION IF EXISTS dnr_cast();
+
+
+statement ok
+DROP FUNCTION IF EXISTS dnr_lookup();
+
+
+statement ok
+DROP FUNCTION IF EXISTS dnr_privilege();
+
+
+statement ok
+DROP SCHEMA IF EXISTS dnr_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dnr_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dnr_caller;
+
+
+statement ok
+CREATE ROLE dnr_owner;
+
+
+statement ok
+CREATE ROLE dnr_caller;
+
+
+statement ok
+CREATE SCHEMA dnr_s AUTHORIZATION dnr_owner;
+
+
+statement ok
+CREATE TABLE dnr_s.t (a integer);
+
+
+statement ok
+ALTER TABLE dnr_s.t OWNER TO dnr_owner;
+
+
+statement ok
+CREATE FUNCTION dnr_cast() RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT 'dnr_s.t'::regclass::text $$;
+
+
+statement ok
+ALTER FUNCTION dnr_cast() OWNER TO dnr_owner;
+
+
+statement ok
+CREATE FUNCTION dnr_lookup() RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT to_regclass('dnr_s.t')::text $$;
+
+
+statement ok
+ALTER FUNCTION dnr_lookup() OWNER TO dnr_owner;
+
+
+statement ok
+CREATE FUNCTION dnr_privilege() RETURNS boolean LANGUAGE sql SECURITY DEFINER AS $$ SELECT has_table_privilege('dnr_s.t', 'SELECT') $$;
+
+
+statement ok
+ALTER FUNCTION dnr_privilege() OWNER TO dnr_owner;
+
+
+statement ok
+SET ROLE dnr_caller;
+
+
+query
+SELECT dnr_cast() AS cast_name, dnr_lookup() AS lookup_name, dnr_privilege() AS owner_select;
+----
+cast_name	lookup_name	owner_select
+dnr_s.t	dnr_s.t	t
+
+
+onlyif postgres
+statement error
+SELECT 'dnr_s.t'::regclass;
+----
+db error: ERROR: permission denied for schema dnr_s
+
+
+skipif postgres
+statement error
+SELECT 'dnr_s.t'::regclass;
+----
+db error: ERROR: relation "dnr_s.t" does not exist<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP FUNCTION dnr_cast();
+
+
+statement ok
+DROP FUNCTION dnr_lookup();
+
+
+statement ok
+DROP FUNCTION dnr_privilege();
+
+
+statement ok
+DROP SCHEMA dnr_s CASCADE;
+
+
+statement ok
+DROP ROLE dnr_owner;
+
+
+statement ok
+DROP ROLE dnr_caller;

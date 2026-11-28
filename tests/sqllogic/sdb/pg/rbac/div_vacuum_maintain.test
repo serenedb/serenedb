@@ -51,11 +51,11 @@ statement ok
 VACUUM (compact_table) vac_mop;
 
 
-# Non-owner without MAINTAIN: the table is SKIPPED with a warning, not an error
-# -- the statement still succeeds (PG warn-and-skip semantics).
 connection c_other user=vac_vedernikoff password=vac_vedernikoff_pw
-statement ok
+statement error
 VACUUM (compact_table) vac_mop;
+----
+db error: ERROR: relation "vac_mop" does not exist
 
 
 # Grant MAINTAIN to the non-owner; the oracle flips and the gate now lets it
@@ -76,7 +76,6 @@ statement ok
 VACUUM (compact_table) vac_mop;
 
 
-# REVOKE puts the role back outside the gate; still a no-op skip, not an error.
 statement ok
 REVOKE MAINTAIN ON vac_mop FROM vac_vedernikoff;
 
@@ -89,12 +88,12 @@ f
 
 
 connection c_other3 user=vac_vedernikoff password=vac_vedernikoff_pw
-statement ok
+statement error
 VACUUM (compact_table) vac_mop;
+----
+db error: ERROR: relation "vac_mop" does not exist
 
 
-# A NONEXISTENT relation is a hard error (PG: a missing VACUUM target errors,
-# even though a no-privilege target only warns + skips). Asymmetry is PG-faithful.
 connection default
 statement error
 VACUUM (compact_table) vac_nonesuch;

@@ -63,7 +63,7 @@ The publisher may require `trust`, `password`, `md5` or `scram-sha-256` authenti
 | `synchronous_commit` | `off` | Stored for compatibility; every applied transaction is durable before its position is reported to the publisher. |
 | `two_phase` | `false` | Only `false` is accepted. |
 
-Creating a subscription requires `CREATE` on the current database. A non-superuser must put a password in `CONNECTION` unless `password_required` is `false`. When `create_slot` is `true`, `CREATE SUBSCRIPTION` cannot run inside a transaction block, because a replication slot on the publisher cannot be rolled back.
+Creating a subscription requires the privileges of the [`pg_create_subscription`](../../../security/privileges.md#predefined-roles) role and `CREATE` on the current database. A non-superuser must put a password in `CONNECTION` unless `password_required` is `false`. When `create_slot` is `true`, `CREATE SUBSCRIPTION` cannot run inside a transaction block, because a replication slot on the publisher cannot be rolled back.
 
 ## `ALTER SUBSCRIPTION`
 
@@ -83,6 +83,7 @@ ALTER SUBSCRIPTION name OWNER TO new_owner
 
 Only the owner of a subscription may alter it, and only a superuser may alter one with `password_required = false`. Every change takes effect when the transaction commits: a running subscription reconnects with the new settings, a disabled one stays disconnected until `ENABLE`.
 
+- `CONNECTION` replaces the connection string. Unless `password_required` is `false` or the subscription's owner is a superuser, the new string must contain a password, even when a superuser changes it.
 - `SET (...)` accepts `slot_name`, `binary`, `streaming`, `origin`, `disable_on_error`, `password_required`, `run_as_owner`, `failover` and `synchronous_commit`. `slot_name = NONE` is only allowed on a disabled subscription. `failover` is only allowed on a disabled subscription with a slot, and changes the slot on the publisher, so it cannot run inside a transaction block.
 - `SET`, `ADD` and `DROP PUBLICATION` change the publications the subscription asks for. With the default `refresh = true` the subscription must be enabled, the statement cannot run inside a transaction block, and the tables are refreshed as by `REFRESH PUBLICATION`, with its `copy_data` option; `refresh = false` only records the change. A subscription keeps at least one publication.
 - `REFRESH PUBLICATION` reads the tables of the publications again. Tables that are new to the subscription are copied (unless `copy_data = false`) and then replicated; tables no longer published stop being replicated. It needs an enabled subscription and cannot run inside a transaction block.

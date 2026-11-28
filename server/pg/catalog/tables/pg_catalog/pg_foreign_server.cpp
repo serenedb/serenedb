@@ -54,9 +54,8 @@ class PgForeignServer final : public SystemTableScan<kPgForeignServerSql> {
           FindSystemObject(kForeignDataWrappers, server.FdwName());
         return wrapper ? wrapper->oid : kInvalidOid;
       }),
-      Col<"srvacl">([](const auto& server) -> const auto& {
-        return server.permissions.acl;
-      }),
+      Col<"srvacl">(
+        [](const auto& server) { return AclOf(server.permissions); }),
       Col<"srvoptions">([](const auto& server) {
         return NonEmpty(server.Options() |
                         std::views::transform([](const auto& option) {

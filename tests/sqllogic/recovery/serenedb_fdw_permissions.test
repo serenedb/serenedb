@@ -47,7 +47,7 @@ connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT count(*) FROM sfp_snap.public.sfp_docs;
 ----
-db error: ERROR: permission denied for foreign server sfp_snap
+db error: ERROR: Table with name "sfp_snap.public.sfp_docs" does not exist because schema "sfp_snap.public" does not exist.<slt:ignore>
 
 
 connection default
@@ -84,6 +84,15 @@ t
 
 connection sfp_reader user=sfp_reader password=sfp_pw
 query
+SELECT relname, relkind FROM sfp_snap.pg_catalog.pg_class
+WHERE relname LIKE 'sfp%' AND relkind IN ('r', 'v') ORDER BY relname;
+----
+relname	relkind
+sfp_docs	r
+sfp_secret_v	v
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
 SELECT has_table_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS docs,
        has_any_column_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS any_column,
        has_column_privilege('sfp_snap.public.sfp_docs', 'body', 'SELECT') AS body,
@@ -116,14 +125,14 @@ connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT rolname FROM sfp_session.pg_catalog.pg_authid ORDER BY rolname;
 ----
-db error: ERROR: permission denied for table pg_authid
+db error: ERROR: Table with name "sfp_session.pg_catalog.pg_authid" does not exist because schema "sfp_session.pg_catalog" does not exist.
 
 
 connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT count(*) FROM sfp_session.pg_catalog.pg_hba_file_rules;
 ----
-db error: ERROR: permission denied for function pg_hba_file_rules
+db error: ERROR: Table with name "sfp_session.pg_catalog.pg_hba_file_rules" does not exist because schema "sfp_session.pg_catalog" does not exist.
 
 
 connection default
@@ -134,7 +143,7 @@ connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT id, note FROM sfp_live.public.sfp_secret;
 ----
-db error: ERROR: permission denied for table sfp_secret
+db error: ERROR: Table with name sfp_secret does not exist!<slt:ignore>
 
 
 connection sfp_reader user=sfp_reader password=sfp_pw
@@ -213,7 +222,7 @@ connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT count(*) FROM sfp_snap.public.sfp_docs;
 ----
-db error: ERROR: permission denied for foreign server sfp_snap
+db error: ERROR: Table with name "sfp_snap.public.sfp_docs" does not exist because schema "sfp_snap.public" does not exist.<slt:ignore>
 
 
 connection default

@@ -36,20 +36,22 @@ namespace sdb::pg {
 namespace {
 
 struct RegInputState final : InputState {
-  explicit RegInputState(duckdb::ClientContext* context)
-    : session{MakeSession(context)} {}
+  explicit RegInputState(duckdb::CastLocalStateParameters& parameters)
+    : session{MakeSession(parameters.context.get(), parameters.bound_role,
+                          parameters.search_path)} {}
 
   Session session;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegInput(
   duckdb::CastLocalStateParameters& parameters) {
-  return duckdb::make_uniq<RegInputState>(parameters.context.get());
+  return duckdb::make_uniq<RegInputState>(parameters);
 }
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegCast(
   duckdb::CastLocalStateParameters& parameters) {
-  return duckdb::make_uniq<SessionState>(parameters.context.get());
+  return duckdb::make_uniq<SessionState>(
+    parameters.context.get(), parameters.bound_role, parameters.search_path);
 }
 
 template<RegKind Kind>

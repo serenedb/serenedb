@@ -54,7 +54,6 @@
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 
-#include "catalog/cluster.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
 #include "network/cpu_resumer.h"
@@ -187,23 +186,14 @@ class HttpSession final
       }
       const std::string_view dbname =
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-      duckdb::idx_t database_id = 0;
-      duckdb::Permissions permissions;
-      if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
-            dbname, [&](const catalog::DatabaseCatalogEntry& database) {
-              database_id = database.oid;
-              permissions = database.permissions;
-            })) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                        ERR_MSG("database \"", dbname, "\" does not exist"));
-      }
       const std::string_view user =
         _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
-      auto login = sdb::pg::RequireLoginRole(user, dbname, permissions);
+      auto login = sdb::pg::RequireLoginRole(user, dbname);
       if (!login.role) {
         THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
       }
       const auto& role = login.role;
+      const auto database_id = login.database;
 
       _conn =
         MakeConnection(irs::DuckDBEngine::Instance().instance(),
@@ -224,6 +214,12 @@ class HttpSession final
       }
       _progress =
         sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
+      if (auto error = sdb::pg::ConnectionLimitError(login, dbname)) {
+        ReleaseConnection();
+        THROW_SQL_ERROR_FROM_DATA(std::move(*error));
+      }
+      _conn->context->RunFunctionInTransaction(
+        [&] { _connection_ctx->ApplyRoleSettings(); });
       _conn_user = _user;
     }
     return *_conn;
@@ -480,9 +476,7 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    const auto client = this->ClientAddress();
-    _peer = {.address = client ? *client : asio_ns::ip::address{},
-             .is_ssl = _socket.IsTls()};
+    _peer = this->Peer();
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
@@ -783,6 +777,13 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
               writer.Error(http::HttpStatus::InternalError, "internal");
             }
           }
+          if (_connection_ctx) {
+            // No NoticeResponse equivalent on this protocol (and the
+            // ConnectionContext dtor asserts the queue is empty).
+            _connection_ctx->ConsumeNotices(
+              [](const irs::pg::SqlErrorData&) {});
+            _connection_ctx->ReportIdle();
+          }
           if (writer.HeadWritten() && !writer.Finished()) {
             // The head promised a body that never fully materialized; a clean
             // HTTP error is no longer possible -- drop the connection so the
@@ -793,15 +794,8 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           if (!writer.HeadWritten()) {
             writer.Error(http::HttpStatus::InternalError, "internal");
           }
-          if (_connection_ctx) {
-            // No NoticeResponse equivalent on this protocol (and the
-            // ConnectionContext dtor asserts the queue is empty).
-            _connection_ctx->ConsumeNotices(
-              [](const irs::pg::SqlErrorData&) {});
-            _connection_ctx->ReportIdle();
-            if (route.session == SessionScope::Request) {
-              ReleaseConnection();
-            }
+          if (_connection_ctx && route.session == SessionScope::Request) {
+            ReleaseConnection();
           }
         } else {
           writer.Error(http::HttpStatus::NotFound, "not_found");

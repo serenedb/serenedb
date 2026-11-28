@@ -76,11 +76,20 @@ sel	ins
 f	f
 
 
+onlyif postgres
 connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement error
 SELECT * FROM ident_shlepach;
 ----
 db error: ERROR: permission denied for table ident_shlepach<slt:ignore>
+
+
+skipif postgres
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
+statement error
+SELECT * FROM ident_shlepach;
+----
+db error: ERROR: Table with name ident_shlepach does not exist!<slt:ignore>
 
 
 # ============================================================================
@@ -230,11 +239,20 @@ sel	ins	upd	del
 f	f	f	f
 
 
+onlyif postgres
 connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement error
 INSERT INTO ident_shlepach VALUES (5, 'zhidky');
 ----
 db error: ERROR: permission denied for table ident_shlepach<slt:ignore>
+
+
+skipif postgres
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
+statement error
+INSERT INTO ident_shlepach VALUES (5, 'zhidky');
+----
+db error: ERROR: Table with name ident_shlepach does not exist!<slt:ignore>
 
 
 # The superuser owner is never denied (positive control): the 4 rows pavel

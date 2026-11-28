@@ -15,3 +15,7 @@ The `ANALYZE` statement recomputes the statistics of a table in an attached Duck
 `ANALYZE` without a table name is accepted and does no work:
 
 <SqlLogicTest id="sql/statements/analyze/example_001" />
+
+## Privileges
+
+Analyzing a table needs the `MAINTAIN` privilege on it or ownership of it; reading the table is not required. For a table the role may not maintain, `ANALYZE` emits the warning `permission denied to analyze "<table>", skipping it` and changes nothing. `VACUUM` follows the same rule.

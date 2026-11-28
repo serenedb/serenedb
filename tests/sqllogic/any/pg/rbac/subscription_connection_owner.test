@@ -1,0 +1,44 @@
+statement ok
+DROP SUBSCRIPTION IF EXISTS sco_sub;
+
+
+statement ok
+DROP ROLE IF EXISTS sco_owner;
+
+
+statement ok
+CREATE ROLE sco_owner LOGIN PASSWORD 'sco_pw';
+
+
+statement ok
+CREATE SUBSCRIPTION sco_sub CONNECTION 'host=127.0.0.1 port=1 user=x password=sco_secret dbname=y' PUBLICATION sco_pub WITH (connect = false, slot_name = NONE);
+
+
+statement ok
+ALTER SUBSCRIPTION sco_sub OWNER TO sco_owner;
+
+
+statement error
+ALTER SUBSCRIPTION sco_sub CONNECTION 'host=127.0.0.1 port=1 user=x dbname=y';
+----
+db error: ERROR: password is required<slt:ignore>
+
+
+statement ok
+ALTER SUBSCRIPTION sco_sub CONNECTION 'host=127.0.0.1 port=1 user=x password=sco_other dbname=y';
+
+
+statement ok
+ALTER SUBSCRIPTION sco_sub OWNER TO postgres;
+
+
+statement ok
+ALTER SUBSCRIPTION sco_sub CONNECTION 'host=127.0.0.1 port=1 user=x dbname=y';
+
+
+statement ok
+DROP SUBSCRIPTION sco_sub;
+
+
+statement ok
+DROP ROLE sco_owner;

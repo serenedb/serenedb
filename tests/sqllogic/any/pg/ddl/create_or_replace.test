@@ -1300,11 +1300,20 @@ statement ok
 CREATE OR REPLACE FUNCTION corpg_acl() RETURNS TEXT AS $$ SELECT 'acl1' $$ LANGUAGE sql;
 
 
+onlyif postgres
 connection reader user=corpg_reader password=corpg_reader_pw
 statement error
 SELECT corpg_acl();
 ----
 db error: ERROR: permission denied for function corpg_acl
+
+
+skipif postgres
+connection reader user=corpg_reader password=corpg_reader_pw
+statement error
+SELECT corpg_acl();
+----
+db error: ERROR: Scalar Function with name corpg_acl does not exist!<slt:ignore>
 
 
 statement ok

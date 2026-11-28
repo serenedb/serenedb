@@ -44,9 +44,10 @@ SystemRows<InitPrivilege> LoadInitPrivileges(SystemScan&) {
       irs::StaticStrings::kPgCatalogSchema, [&](const StaticView& view) {
         privileges.emplace_back(view.oid, kPgClassTable, view.permissions);
       });
-    for (const auto oid : {kPgCatalogSchema, kPgPublicSchema}) {
-      privileges.emplace_back(oid, kPgNamespaceTable, SchemaPermissions());
-    }
+    privileges.emplace_back(kPgCatalogSchema, kPgNamespaceTable,
+                            SchemaPermissions());
+    privileges.emplace_back(kPgPublicSchema, kPgNamespaceTable,
+                            PublicSchemaPermissions());
     return privileges;
   }();
   return std::span{kPrivileges};

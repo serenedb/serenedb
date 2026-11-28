@@ -1,0 +1,132 @@
+statement ok
+DROP SCHEMA IF EXISTS egt_s CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS egt_handoff;
+
+
+statement ok
+DROP ROLE IF EXISTS egt_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS egt_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS egt_team;
+
+
+statement ok
+CREATE ROLE egt_vedernikoff LOGIN PASSWORD 'egt_pw';
+
+
+statement ok
+CREATE ROLE egt_reader;
+
+
+statement ok
+CREATE ROLE egt_team;
+
+
+statement ok
+GRANT egt_team TO egt_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA egt_s;
+
+
+statement ok
+GRANT CREATE ON SCHEMA egt_s TO egt_vedernikoff;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO egt_team;
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement ok
+CREATE TABLE egt_s.egt_t (a integer);
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement error
+GRANT SELECT ON egt_s.egt_t TO egt_reader;
+----
+db error: ERROR: permission denied for schema egt_s
+
+
+statement ok
+GRANT USAGE ON SCHEMA egt_s TO egt_vedernikoff;
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement ok
+GRANT SELECT ON egt_s.egt_t TO egt_reader;
+
+
+query
+SELECT has_table_privilege('egt_reader', 'egt_s.egt_t', 'SELECT') AS granted;
+----
+granted
+t
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement ok
+SET ROLE egt_team;
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement ok
+CREATE TABLE egt_handoff (a integer);
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement error
+ALTER TABLE egt_handoff OWNER TO SESSION_USER;
+----
+db error: ERROR: must be able to SET ROLE "egt_vedernikoff"
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement ok
+RESET ROLE;
+
+
+connection c_egt user=egt_vedernikoff password=egt_pw
+statement ok
+ALTER TABLE egt_handoff OWNER TO SESSION_USER;
+
+
+query
+SELECT tableowner FROM pg_tables WHERE tablename = 'egt_handoff';
+----
+tableowner
+egt_vedernikoff
+
+
+statement ok
+DROP TABLE egt_handoff;
+
+
+statement ok
+DROP SCHEMA egt_s CASCADE;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM egt_team;
+
+
+statement ok
+DROP ROLE egt_reader;
+
+
+statement ok
+DROP ROLE egt_vedernikoff;
+
+
+statement ok
+DROP ROLE egt_team;

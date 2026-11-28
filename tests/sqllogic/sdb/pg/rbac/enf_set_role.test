@@ -87,7 +87,7 @@ sr_grp	sr_grp	postgres	off
 statement error
 SELECT * FROM sr_secret;
 ----
-db error: ERROR: permission denied for table sr_secret<slt:ignore>
+db error: ERROR: Table with name sr_secret does not exist!<slt:ignore>
 
 
 # A table granted to sr_grp stays readable under the switched role.

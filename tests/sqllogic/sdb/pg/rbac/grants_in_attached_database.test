@@ -1,0 +1,73 @@
+control substitution on
+
+
+statement ok
+DROP ROLE IF EXISTS giad_r;
+
+
+statement ok
+CREATE ROLE giad_r;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO giad_r;
+
+
+query
+SELECT count(*) AS n FROM pg_default_acl WHERE defaclnamespace = 'public'::regnamespace;
+----
+n
+1
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM giad_r;
+
+
+query
+SELECT count(*) AS n FROM pg_default_acl WHERE defaclnamespace = 'public'::regnamespace;
+----
+n
+0
+
+
+statement ok
+ATTACH ':memory:' AS giad_mem_${__DATABASE__};
+
+
+statement ok
+USE giad_mem_${__DATABASE__};
+
+
+statement error
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO giad_r;
+----
+db error: ERROR: foreign-data wrapper "postgres_fdw" does not exist
+
+
+statement error
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement error
+ALTER DEFAULT PRIVILEGES IN SCHEMA main GRANT SELECT ON TABLES TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement ok
+DROP OWNED BY giad_r;
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DETACH giad_mem_${__DATABASE__};
+
+
+statement ok
+DROP ROLE giad_r;

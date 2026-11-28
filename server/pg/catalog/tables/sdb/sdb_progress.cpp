@@ -19,11 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/progress_registry.h"
@@ -34,6 +32,7 @@ namespace {
 constexpr SystemSqlColumn kSdbProgressColumns[] = {
   {"pid", kInt4, 0, false, false, 0, 0, SystemKey::None},
   {"datid", kOid, 0, false, false, 0, 0, SystemKey::None},
+  {"usesysid", kOid, 0, false, false, 0, 0, SystemKey::None},
   {"usename", kName, 0, false, false, kCCollation, 0, SystemKey::None},
   {"datname", kName, 0, false, false, kCCollation, 0, SystemKey::None},
   {"state", kText, 0, false, false, kCCollation, 0, SystemKey::None},
@@ -75,6 +74,7 @@ SystemRows<ProgressSnapshot> LoadSnapshots(SystemScan&) {
 
 constexpr std::tuple kProgressBase{Col<"pid">(&ProgressSnapshot::pid),
                                    Col<"datid">(&ProgressSnapshot::datid),
+                                   Col<"usesysid">(&ProgressSnapshot::role),
                                    Col<"usename">(&ProgressSnapshot::user),
                                    Col<"datname">(&ProgressSnapshot::database)};
 
@@ -159,12 +159,9 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
     kProgressBase, kProgressSession, kProgressActive, kProgressCommand);
 
   void Row(const ProgressSnapshot& s) {
-    if (!_closure->is_superuser) {
-      const auto* role = _roles->FindByName(s.user);
-      if (!role || !_closure->MemberOf(role->first)) {
-        Emit<kHidden>(s);
-        return;
-      }
+    if (!ShowsActivityOf(s.role)) {
+      Emit<kHidden>(s);
+      return;
     }
     if (s.status.state != BackendState::Active) {
       Emit<kIdle>(s);
@@ -175,12 +172,6 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
       Emit<kCommand>(s);
     }
   }
-
- private:
-  std::shared_ptr<const auth::RoleClosure> _closure =
-    auth::SessionClosure(Context());
-  std::shared_ptr<const auth::RoleGraph> _roles =
-    _closure->is_superuser ? nullptr : auth::RolesOf(&Context());
 };
 
 }  // namespace

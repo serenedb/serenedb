@@ -1268,7 +1268,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     auto definition = Definition();
     definition->permissions = permissions;
     info.Cast<duckdb::AlterPermissionsInfo>().ApplyTo(
-      definition->permissions, type, &definition->columns);
+      definition->permissions, type, definition->columns);
     return Altered(context, info, std::move(definition));
   }
   if (info.type == duckdb::AlterType::REPLACE_DEFINITION) {
@@ -1787,7 +1787,7 @@ void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,
   }
   SessionOf(context, catalog)
     .SearchTxn()
-    .VerifyUniqueKey(context, _storage, spec);
+    .VerifyUniqueKey(context, *this, _storage, spec);
 }
 
 void SearchTableEntry::ReplaceStoreColumnsAtCommit(

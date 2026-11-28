@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `GRANT` statement has two forms. The first grants privileges on an object (a table, sequence, function, database, schema, or type) to a role. The second grants membership in a role to another role, so the member inherits the role's privileges.
+The `GRANT` statement has two forms. The first grants privileges on an object (a table, sequence, function, database, schema, type, foreign server, or foreign-data wrapper) to a role. The second grants membership in a role to another role, so the member inherits the role's privileges.
 
 ## Examples
 
@@ -54,6 +54,12 @@ The second form grants role membership — `doc_staff` now inherits everything g
 
 Only the unquoted keyword means every role: a quoted `"PUBLIC"` names a role called `PUBLIC`.
 
+`WITH GRANT OPTION` can only be granted to roles: granting it to `PUBLIC`, with `GRANT` or `ALTER DEFAULT PRIVILEGES`, reports `grant options can only be granted to roles`.
+
+In `GRANT`, `REVOKE` and `ALTER DEFAULT PRIVILEGES`, a grantee may be written `GROUP name`, which means the same as `name`.
+
+Wherever a role is named, as a grantee, an owner or a member, after `GRANTED BY`, in the `IN ROLE`, `ROLE` and `ADMIN` lists of `CREATE ROLE`, and in `ALTER ROLE`, `ALTER GROUP`, `REASSIGN OWNED`, `DROP OWNED` and `ALTER DEFAULT PRIVILEGES FOR ROLE`, `CURRENT_USER` and `CURRENT_ROLE` stand for the role the session acts as and `SESSION_USER` for the role it logged in as (or set with `SET SESSION AUTHORIZATION`). Quoted, `"CURRENT_USER"` names a role called `CURRENT_USER`. None of the three keywords can name a new role or a role to drop: `CREATE ROLE current_user` reports `CURRENT_USER cannot be used as a role name here`, and `DROP ROLE current_user` reports `cannot use special role specifier in DROP ROLE`.
+
 Granting to a role that does not exist is an error:
 
 <SqlLogicTest id="sql/statements/grant/index/example_012" />
@@ -69,11 +75,17 @@ Granting to a role that does not exist is an error:
 | `SCHEMA` | `CREATE`, `USAGE` |
 | `TABLESPACE` | `CREATE` |
 | `TYPE` | `USAGE` |
+| `FOREIGN SERVER` | `USAGE` |
+| `FOREIGN DATA WRAPPER` | `USAGE` |
+| `PARAMETER` | `SET`, `ALTER SYSTEM` |
 
 ## Notes
 
-- Granting a privilege requires owning the object or holding the privilege `WITH GRANT OPTION`; granting membership requires `ADMIN OPTION` on the role, the `CREATEROLE` attribute, or superuser.
-- The object's owner always holds all privileges on it, and the owner of a granted role's privileges flow to members automatically.
+- Granting a privilege requires owning the object or holding the privilege `WITH GRANT OPTION`; granting membership requires `ADMIN OPTION` on the role, or superuser. A role that holds some privilege on the object but not the grant options for all it grants gets the warning `no privileges were granted for "t"` or `not all privileges were granted for "t"` and grants only what it can; a role that holds nothing on it is refused. A table-level grant counts only the table's privileges; a column grant counts the table's and that column's.
+- A role that is not the owner grants as the role holding the grant options: itself, or a role whose privileges it inherits, taking the first that holds every option the grant needs, or else the one holding the most. That role is recorded as the grantor, and each column of a column grant picks its own.
+- The object's owner holds all privileges on it unless it revokes some from itself, and may always grant them; a granted role's privileges flow to its members automatically.
+- A database, tablespace, foreign server, foreign-data wrapper or language is named without qualification: `GRANT CONNECT ON DATABASE other.db TO r` is a syntax error. A schema can be qualified with its database, and a nested schema is named by its path, as in `GRANT USAGE ON SCHEMA outer.inner TO r`.
+- Several objects, grantees, granted roles and members can be listed, separated by commas: `GRANT SELECT ON t1, t2 TO r1, r2` grants on every pair, and if any part fails, such as a missing table, nothing is granted. `ALTER DEFAULT PRIVILEGES FOR ROLE` and `IN SCHEMA` take lists the same way.
 - Unlike PostgreSQL, an unknown privilege keyword (e.g. `GRANT FLY ON t TO r`) is a syntax error rather than a semantic one.
 
 ## See also

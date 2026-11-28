@@ -89,14 +89,14 @@ connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 GRANT SELECT ON clickclack_vault TO vedernikoff_intern;
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: Table with name clickclack_vault does not exist!<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 REVOKE SELECT ON clickclack_vault FROM PUBLIC;
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: Table with name clickclack_vault does not exist!<slt:ignore>
 
 
 # ---- DML gates beyond plain SELECT/INSERT ----
@@ -105,21 +105,22 @@ connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 TRUNCATE clickclack_vault;
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: Table with name clickclack_vault does not exist!<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 MERGE INTO clickclack_vault USING (SELECT 1 AS id) s ON clickclack_vault.id = s.id WHEN MATCHED THEN DO NOTHING;
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: Table with name clickclack_vault does not exist!<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 COPY clickclack_vault TO '${__TEST_DIR__}/rbac_authorization_denied_never_written.csv';
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: permission denied to access "<slt:ignore>/rbac_authorization_denied_never_written.csv"
+DETAIL: Only roles with privileges of the "pg_write_server_files" role may write to server files and URLs.
 
 
 # ---- view-backed inverted index: an index defined ON a view is gated on the
@@ -131,7 +132,7 @@ connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault_v_idx;
 ----
-db error: ERROR: permission denied for view clickclack_vault_v
+db error: ERROR: Table with name clickclack_vault_v_idx does not exist<slt:ignore>
 
 
 # Positive control: with SELECT on the view granted, the same scan works.
@@ -157,7 +158,7 @@ connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault_v_idx;
 ----
-db error: ERROR: permission denied for view clickclack_vault_v
+db error: ERROR: Table with name clickclack_vault_v_idx does not exist<slt:ignore>
 
 
 # ---- the is_superuser GUC must reflect the session role ----
@@ -222,7 +223,7 @@ connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault;
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: Table with name clickclack_vault does not exist!<slt:ignore>
 
 
 # A recreated role with the same name has a new oid: neither the stale ACL
@@ -236,7 +237,7 @@ connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault;
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: Table with name clickclack_vault does not exist!<slt:ignore>
 
 
 # ---- pg_has_role real semantics (membership via the role graph) ----

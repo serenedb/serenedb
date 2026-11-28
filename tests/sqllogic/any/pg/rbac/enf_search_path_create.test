@@ -1,0 +1,169 @@
+statement ok
+DROP SCHEMA IF EXISTS espc_hidden CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS espc_notes;
+
+
+statement ok
+DROP TABLE IF EXISTS espc_both;
+
+
+statement ok
+DROP ROLE IF EXISTS espc_vedernikoff;
+
+
+statement ok
+CREATE ROLE espc_vedernikoff LOGIN PASSWORD 'espc_pw';
+
+
+statement ok
+CREATE SCHEMA espc_hidden;
+
+
+statement ok
+CREATE TABLE espc_hidden.espc_both (a integer);
+
+
+statement ok
+CREATE TABLE espc_both (a integer);
+
+
+statement ok
+GRANT SELECT ON espc_hidden.espc_both TO espc_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON espc_both TO espc_vedernikoff;
+
+
+statement ok
+GRANT CREATE ON SCHEMA espc_hidden TO espc_vedernikoff;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO espc_vedernikoff;
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement ok
+SET search_path = espc_hidden, public;
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+query
+SELECT current_schema() AS cur, current_schemas(false) AS cur_list;
+----
+cur	cur_list
+public	{public}
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement ok
+CREATE TABLE espc_notes (a integer);
+
+
+query
+SELECT table_schema FROM information_schema.tables WHERE table_name = 'espc_notes';
+----
+table_schema
+public
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement ok
+CREATE TABLE espc_hidden.espc_direct (a integer);
+
+
+query
+SELECT table_schema FROM information_schema.tables WHERE table_name = 'espc_direct';
+----
+table_schema
+espc_hidden
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+query
+SELECT 'espc_both'::regclass = 'public.espc_both'::regclass AS resolves_to_public;
+----
+resolves_to_public
+t
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+query
+SELECT n.nspname, c.oid::regclass::text AS name, pg_table_is_visible(c.oid) AS visible FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'espc_both' ORDER BY n.nspname;
+----
+nspname	name	visible
+espc_hidden	espc_hidden.espc_both	f
+public	espc_both	t
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement error
+SELECT 'espc_hidden.espc_both'::regclass;
+----
+db error: ERROR: permission denied for schema espc_hidden
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement error
+SELECT to_regclass('espc_hidden.espc_both');
+----
+db error: ERROR: permission denied for schema espc_hidden
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement error
+SELECT 'espc_hidden.espc_both'::regtype;
+----
+db error: ERROR: permission denied for schema espc_hidden
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+query
+SELECT 'espc_hidden'::regnamespace::text AS nsp;
+----
+nsp
+espc_hidden
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement ok
+SET search_path = espc_hidden;
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+query
+SELECT current_schema() IS NULL AS no_schema;
+----
+no_schema
+t
+
+
+connection c_espc user=espc_vedernikoff password=espc_pw
+statement error
+CREATE TABLE espc_lost (a integer);
+----
+db error: ERROR: no schema has been selected to create in
+
+
+statement ok
+DROP TABLE public.espc_notes;
+
+
+statement ok
+DROP TABLE public.espc_both;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM espc_vedernikoff;
+
+
+statement ok
+DROP SCHEMA espc_hidden CASCADE;
+
+
+statement ok
+DROP ROLE espc_vedernikoff;

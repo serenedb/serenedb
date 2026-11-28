@@ -34,7 +34,7 @@
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
@@ -112,10 +112,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   const auto holds_jobs = [](duckdb::AttachedDatabase& database) {
     return catalog::IsSereneDB(database.GetCatalog()) && !database.IsReadOnly();
   };
+  const duckdb::CatalogEntryRetriever retriever{
+    context, duckdb::Role(context, input.bound_role)};
   for (auto& schema :
-       duckdb::Catalog::GetAllSchemas(context, false, holds_jobs)) {
-    schema.get().Scan(
-      context, duckdb::CatalogType::JOB_ENTRY,
+       duckdb::Catalog::GetAllSchemas(retriever, false, holds_jobs)) {
+    duckdb::Catalog::ScanListedEntries(
+      retriever, schema.get(), duckdb::CatalogType::JOB_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
         result->entries.emplace_back(entry.Cast<catalog::JobCatalogEntry>());
       });
@@ -202,15 +204,33 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   if (!scheduler) {
     return result;
   }
-  irs::containers::FlatHashSet<duckdb::idx_t> databases;
+  irs::containers::FlatHashMap<duckdb::idx_t, catalog::SereneDBCatalog*>
+    databases;
+  const auto& role = duckdb::Role(context, input.bound_role);
+  const duckdb::CatalogEntryRetriever retriever{context, role};
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-    databases.insert(database->oid);
+    if (catalog::IsSereneDB(database->GetCatalog()) &&
+        retriever.Shows(*database)) {
+      databases.emplace(
+        database->oid,
+        &database->GetCatalog().Cast<catalog::SereneDBCatalog>());
+    }
   }
   for (auto& run : scheduler->GetHistory()) {
-    if (databases.contains(run.database_oid)) {
-      result->runs.emplace_back(std::move(run));
+    const auto database = databases.find(run.database_oid);
+    if (database == databases.end()) {
+      continue;
     }
+    if (!role.is_superuser) {
+      auto& catalog = *database->second;
+      auto job = catalog.FindIn<catalog::JobCatalogEntry>(
+        catalog.GetCatalogTransaction(context), run.job_oid);
+      if (!job || !retriever.Shows(*job)) {
+        continue;
+      }
+    }
+    result->runs.emplace_back(std::move(run));
   }
   return result;
 }
@@ -256,9 +276,9 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
     duckdb::StringValue::Get(input.inputs[0]),
     duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context)));
   auto entry = input.binder->EntryRetriever().GetEntry(
-    duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
+    duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name,
+                            duckdb::AclMode::Own},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);
-  duckdb::Binder::RegisterEntryRead(input.binder, context, *entry);
   return duckdb::make_uniq<ExecuteJobData>(
     entry->Cast<catalog::JobCatalogEntry>());
 }

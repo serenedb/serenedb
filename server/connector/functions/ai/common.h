@@ -107,6 +107,7 @@ struct EndpointRef {
   const Api* api = nullptr;
   std::optional<std::string> secret_name;
   std::optional<std::string> model;
+  bool superuser = false;
 
   bool operator==(const EndpointRef&) const = default;
 };

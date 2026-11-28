@@ -132,11 +132,20 @@ id
 
 
 # Control: direct base read is still refused.
+onlyif postgres
 connection c_base user=evi_vedernikoff password=evi_vedernikoff_pw
 statement error
 SELECT id FROM evi_iceberg;
 ----
 db error: ERROR: permission denied for table evi_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_base user=evi_vedernikoff password=evi_vedernikoff_pw
+statement error
+SELECT id FROM evi_iceberg;
+----
+db error: ERROR: Table with name evi_iceberg does not exist!<slt:ignore>
 
 
 statement ok

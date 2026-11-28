@@ -313,6 +313,20 @@ size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,
   return count();
 }
 
+size_t ProgressRegistry::SessionsOf(duckdb::idx_t role) const {
+  absl::MutexLock lock{&_mu};
+  return static_cast<size_t>(absl::c_count_if(_sources, [&](const auto& entry) {
+    return entry.second->client_backend && entry.second->role == role;
+  }));
+}
+
+size_t ProgressRegistry::SessionsIn(int64_t datid) const {
+  absl::MutexLock lock{&_mu};
+  return static_cast<size_t>(absl::c_count_if(_sources, [&](const auto& entry) {
+    return entry.second->client_backend && entry.second->datid == datid;
+  }));
+}
+
 std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
   std::vector<std::shared_ptr<ProgressSource>> sources;
   {
@@ -329,6 +343,7 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
     auto& s = result.emplace_back();
     s.pid = source->pid;
     s.datid = source->datid;
+    s.role = source->role;
     s.user = source->user;
     s.database = source->database;
     s.backend_start_us = source->backend_start_us;

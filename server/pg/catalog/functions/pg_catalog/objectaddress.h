@@ -31,4 +31,7 @@ std::string DescribeObject(duckdb::ClientContext& context,
                            const duckdb::CatalogEntry& entry,
                            int32_t column = 0);
 
+std::string DescribeObject(duckdb::ClientContext& context, uint64_t classid,
+                           uint64_t objid, int32_t objsubid);
+
 }  // namespace sdb::pg

@@ -30,6 +30,7 @@
 #include <array>
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -44,7 +45,6 @@
 #include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "catalog/cluster.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
@@ -234,8 +234,7 @@ inline duckdb::optional_ptr<duckdb::TableCatalogEntry> FindCopyTable(
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table;
   context.RunFunctionInTransaction(
     [&] {
-      auto entry = duckdb::Catalog::GetEntry(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
         duckdb::OnEntryNotFound::RETURN_NULL);
       if (entry && entry->type == duckdb::TableCatalogEntry::Type) {
@@ -430,28 +429,15 @@ bool PgWireSession<Kind>::SetupConnection() {
                      ERR_MSG("the database system is shutting down")));
     return false;
   }
-  duckdb::idx_t database_id = 0;
-  duckdb::Permissions permissions;
-  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
-        DatabaseName(), [&](const catalog::DatabaseCatalogEntry& database) {
-          database_id = database.oid;
-          permissions = database.permissions;
-        })) {
-    WriteFatalResponse(this->_send,
-                       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                                      ERR_MSG("database \"", DatabaseName(),
-                                              "\" is not accessible")));
-    return false;
-  }
-
   const std::string_view user = UserName();
-  auto login = sdb::pg::RequireLoginRole(user, DatabaseName(), permissions);
+  auto login = sdb::pg::RequireLoginRole(user, DatabaseName());
   if (!login.role) {
     WriteFatalResponse(this->_send, login.error);
     return false;
   }
+  SDB_PARK_ONCE_ON_FAILURE("pause_login_before_register");
   const auto role = login.role;
-  const bool superuser = login.superuser;
+  const auto database_id = login.database;
 
   _conn =
     MakeConnection(irs::DuckDBEngine::Instance().instance(),
@@ -469,6 +455,10 @@ bool PgWireSession<Kind>::SetupConnection() {
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = &ConnectionContext::Get(*_conn->context);
   _progress = sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
+  if (auto error = sdb::pg::ConnectionLimitError(login, DatabaseName())) {
+    WriteFatalResponse(this->_send, *error);
+    return false;
+  }
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -503,30 +493,13 @@ bool PgWireSession<Kind>::SetupConnection() {
       }
     };
 
-  const auto keep_as_default = [&](std::string_view name) {
-    duckdb::Identifier setting{name};
-    duckdb::Value value;
-    if (_conn->context->TryGetCurrentSetting(setting, value)) {
-      client_config.session_defaults.insert_or_assign(std::move(setting),
-                                                      std::move(value));
-    }
-  };
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
-  keep_as_default("session_authorization");
-  _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
+  _connection_ctx->KeepSettingAsDefault("session_authorization");
 
-  const auto set = [&](std::string_view name, std::string_view value) {
-    try {
-      _connection_ctx->SetSettingChecked(name, std::string{value}, false);
-    } catch (const duckdb::InternalException&) {
-      _connection_ctx->SetSetting(name, std::string{value}, false);
-    }
-    keep_as_default(name);
-  };
   const auto apply = [&](std::string_view name, std::string_view value) {
     try {
-      set(name, value);
+      _connection_ctx->SetSettingChecked(name, std::string{value});
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
@@ -538,6 +511,7 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
+    _connection_ctx->KeepSettingAsDefault(name);
     return true;
   };
   std::vector<StartupSetting> settings;
@@ -549,16 +523,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   }
   bool applied = true;
   _conn->context->RunFunctionInTransaction([&] {
-    for (const std::string_view setting : login.settings) {
-      const auto eq = setting.find('=');
-      try {
-        set(setting.substr(0, eq), setting.substr(eq + 1));
-      } catch (const std::exception& exception) {
-        auto notice = irs::pg::ToSqlError(exception);
-        notice.errcode = ERRCODE_WARNING;
-        _connection_ctx->AddNotice(std::move(notice));
-      }
-    }
+    _connection_ctx->ApplyRoleSettings();
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
         applied = false;
@@ -894,19 +859,6 @@ void PgWireSession<Kind>::WriteCommandTag(
   WriteCommandComplete(this->_send, prepared, rows);
 }
 
-// Capture the client's peer IP once, before auth. Unix sockets and capture
-// failures leave _peer_addr unspecified (no IP). A v4-mapped-v6 address is
-// normalized back to IPv4 so HBA family-strict matching stays PG-faithful and
-// is_loopback() sees the v4.
-template<SocketKind Kind>
-void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind != SocketKind::Unix && Kind != SocketKind::Client) {
-    if (const auto address = this->ClientAddress()) {
-      _peer_addr = *address;
-    }
-  }
-}
-
 template<SocketKind Kind>
 void PgWireSession<Kind>::WriteCommandTag(
   const sdb::pg::CommandTag& tag, duckdb::QueryResult& result,
@@ -926,13 +878,9 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   SDB_IF_FAILURE("authenticate_throw") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  CapturePeerAddress();
 
   const hba::Decision decision =
-    DecideLogin({.address = _peer_addr,
-                 .is_local = Kind == SocketKind::Unix,
-                 .is_ssl = this->_socket.IsTls()},
-                UserName(), DatabaseName());
+    DecideLogin(this->Peer(), UserName(), DatabaseName());
 
   using DKind = hba::Decision::Kind;
   hba::Method hba_method = hba::Method::ImplicitReject;
@@ -968,22 +916,12 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   const auto credential =
     _credentials ? _credentials->LookupCredential(UserName()) : std::nullopt;
 
-  // Method (from HBA) x stored form, matching PostgreSQL:
-  //  scram    : only a SCRAM secret works (md5 storage cannot do SCRAM).
-  //  md5      : an md5 secret drives an md5 exchange; a SCRAM secret falls back
-  //             to SCRAM (PG's md5-line-over-scram-password behavior); a
-  //             cleartext (flag) secret is hashed to the md5 form.
-  //  password : cleartext exchange verified against whatever is stored.
   bool ok = false;
   if (hba_method == hba::Method::Password) {
     ok =
       co_await AuthenticateCleartext(credential ? *credential : Credential{});
   } else if (hba_method == hba::Method::Md5 && credential && credential->md5) {
     ok = co_await AuthenticateMd5(*credential->md5);
-  } else if (hba_method == hba::Method::Md5 && credential &&
-             !credential->scram && credential->cleartext) {
-    ok = co_await AuthenticateMd5(
-      BuildMd5Verifier(UserName(), *credential->cleartext));
   } else if (credential && credential->scram) {
     SDB_ASSERT(hba_method == hba::Method::Scram ||
                hba_method == hba::Method::Md5);
@@ -2495,8 +2433,6 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
   // cursor survives across Flush (which does not commit) but not Sync, as in
   // postgres. A leading BEGIN/COMMIT/ROLLBACK is excluded: it must reach the
   // transaction operator itself, not run wrapped in our block.
-  _connection_ctx->SetInTransactionBlock(
-    !this->_conn->context->transaction.IsAutoCommit());
   if (prepared.GetStatementType() !=
       duckdb::StatementType::TRANSACTION_STATEMENT) {
     _txn_state->Arm();
@@ -2751,9 +2687,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_return false;
     }
 
-    // PostgreSQL requires a non-empty user name in the startup packet; the role
-    // itself is verified later (once RBAC lands) via the CredentialProvider
-    // seam.
     const auto user = _params.find("user");
     if (user == _params.end() || user->second.empty()) {
       WriteFatalResponse(
@@ -3039,6 +2972,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
     }
 
     _dispatch_consume = frame.recv_consume;
+    _connection_ctx->SetInTransactionBlock(
+      !this->_conn->context->transaction.IsAutoCommit());
     try {
       switch (type) {
         case PQ_MSG_QUERY:

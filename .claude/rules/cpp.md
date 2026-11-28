@@ -19,6 +19,7 @@ Three kinds of code, with these rules in common: our own (`server/`, `iresearch/
 - Generated files change only through their generator. A generator whose outputs are committed has a check mode, listed in `scripts/check_generated.py`, which pre-commit runs: never a hook of its own.
 - No forward declarations to avoid an include: include the header that defines the type.
 - A hook, virtual function, field, setting or mode arrives with the code that uses it; a setting nothing reads anymore is deleted.
+- A server file is checked where it is opened: every open asks `ClientContext::CheckFileAccess` for `pg_read_server_files` or `pg_write_server_files`. `check-server-file-checks` rejects testing membership in those roles by hand outside the places it lists, which name a file without opening it.
 - Test code isn't refactored unasked: what it covers matters, its style much less.
 
 ## Performance

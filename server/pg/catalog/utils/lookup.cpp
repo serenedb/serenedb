@@ -24,7 +24,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -38,7 +37,6 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <vector>
 
-#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
@@ -49,38 +47,24 @@
 
 namespace sdb::pg {
 
-duckdb::idx_t CatalogClassOid(duckdb::CatalogType type) {
-  using enum duckdb::CatalogType;
-  switch (type) {
-    case TABLE_ENTRY:
-    case VIEW_ENTRY:
-    case INDEX_ENTRY:
-    case SEQUENCE_ENTRY:
-      return kPgClassTable;
-    case MACRO_ENTRY:
-    case TABLE_MACRO_ENTRY:
-      return kPgProcTable;
-    case TYPE_ENTRY:
-      return kPgTypeTable;
-    case SCHEMA_ENTRY:
-      return kPgNamespaceTable;
-    case DATABASE_ENTRY:
-      return kPgDatabaseTable;
-    case ROLE_ENTRY:
-      return kPgAuthidTable;
-    case FOREIGN_SERVER_ENTRY:
-      return kPgForeignServerTable;
-    case TOKENIZER_ENTRY:
-      return kPgTsDictTable;
-    case SUBSCRIPTION_ENTRY:
-      return kPgSubscriptionTable;
-    default:
-      return kInvalidOid;
+bool Shown(const Session& session, duckdb::CatalogEntry& entry) {
+  if (!session.context) {
+    return true;
   }
+  const duckdb::CatalogEntryRetriever retriever{*session.context, session.role};
+  const auto schema = entry.ParentSchemaOid();
+  if (!schema || entry.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+    return retriever.Shows(entry);
+  }
+  const auto [view, added] = session.schema_views.try_emplace(schema);
+  if (added) {
+    view->second = retriever.View(entry.ParentSchema(*session.context));
+  }
+  return retriever.Shows(entry, view->second);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
-                                                      uint64_t oid) {
+duckdb::optional_ptr<duckdb::CatalogEntry> InternalEntryByOid(
+  const Session& session, uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
@@ -89,6 +73,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
     return nullptr;
   }
   return entry;
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
+                                                      uint64_t oid) {
+  auto entry = InternalEntryByOid(session, oid);
+  return entry && Shown(session, *entry) ? entry : nullptr;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
@@ -113,7 +103,8 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
     return nullptr;
   }
   auto entry = session.database->LookupOid(*session.transaction, oid);
-  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
+  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY ||
+      !Shown(session, *entry)) {
     return nullptr;
   }
   return entry->Cast<duckdb::SchemaCatalogEntry>();
@@ -135,7 +126,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> OwnerByOid(const Session& session,
 duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   const Session& session, uint64_t oid) {
   auto owner = OwnerByOid(session, oid);
-  if (!owner || owner->type != duckdb::CatalogType::TABLE_ENTRY) {
+  if (!owner || owner->type != duckdb::CatalogType::TABLE_ENTRY ||
+      !Shown(session, *owner)) {
     return nullptr;
   }
   return owner->Cast<duckdb::TableCatalogEntry>();
@@ -156,9 +148,10 @@ uint64_t RuleRelation(const Session& session, uint64_t rule) {
   if (const auto relation = SystemRuleRelation(rule)) {
     return relation;
   }
-  const auto owner = OwnerByOid(session, rule);
+  auto owner = OwnerByOid(session, rule);
   return owner && owner->type == duckdb::CatalogType::VIEW_ENTRY &&
-             owner->Cast<duckdb::ViewCatalogEntry>().rule_oid == rule
+             owner->Cast<duckdb::ViewCatalogEntry>().rule_oid == rule &&
+             Shown(session, *owner)
            ? owner->oid
            : kInvalidOid;
 }
@@ -192,8 +185,14 @@ std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
 }
 
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
-  if (const auto entry = EntryByOid(session, oid)) {
-    if (CatalogClassOid(entry->type) != kPgClassTable &&
+  return FindRelation(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<Relation> FindRelation(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  if (entry) {
+    if (duckdb::ObjectKindOf(entry->type).pg_class != kPgClassTable &&
         (entry->type != duckdb::CatalogType::TYPE_ENTRY ||
          !duckdb::StructType::IsStruct(
            entry->Cast<duckdb::TypeCatalogEntry>().user_type))) {
@@ -211,15 +210,15 @@ std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
     return Relation{key.table, key.constraint, nullptr, nullptr};
   }
   if (const auto entry = TemporaryEntryByOid(session, oid);
-      entry && CatalogClassOid(entry->type) == kPgClassTable) {
+      entry && duckdb::ObjectKindOf(entry->type).pg_class == kPgClassTable) {
     return Relation{entry, nullptr, nullptr, nullptr};
   }
   return std::nullopt;
 }
 
 std::optional<Relation> RowTypeOwner(const Session& session, uint64_t oid) {
-  const auto owner = OwnerByOid(session, oid);
-  if (!owner || RowTypeOid(*owner) != oid) {
+  auto owner = OwnerByOid(session, oid);
+  if (!owner || RowTypeOid(*owner) != oid || !Shown(session, *owner)) {
     return std::nullopt;
   }
   return Relation{owner, nullptr, nullptr, nullptr};
@@ -260,7 +259,13 @@ const duckdb::ColumnList* TableColumns(const Relation& relation) {
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid) {
-  auto relation = FindRelation(session, oid);
+  return RelationByOid(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<RelationAccess> RelationByOid(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  auto relation = FindRelation(session, oid, entry);
   if (!relation) {
     return std::nullopt;
   }
@@ -284,24 +289,9 @@ std::optional<RelationAccess> RelationByOid(const Session& session,
       return std::nullopt;
     }
     relation->entry = entry;
-    return RelationAccess{{*relation}, &PrivilegePermissions(*entry)};
+    return RelationAccess{{*relation}, &duckdb::PermissionsOf(*entry)};
   }
-  if (relation->entry->type == duckdb::CatalogType::INDEX_ENTRY) {
-    const auto table_oid =
-      relation->entry->Cast<duckdb::IndexCatalogEntry>().table_oid;
-    const auto owner = IsTemporary(*relation)
-                         ? TemporaryEntryByOid(session, table_oid)
-                         : EntryByOid(session, table_oid);
-    return RelationAccess{
-      {*relation}, &PrivilegePermissions(owner ? *owner : *relation->entry)};
-  }
-  return RelationAccess{{*relation}, &PrivilegePermissions(*relation->entry)};
-}
-
-const duckdb::Permissions& PrivilegePermissions(
-  const duckdb::CatalogEntry& entry) {
-  static const duckdb::Permissions kUnowned{.owner = kInvalidOid};
-  return auth::Unowned(entry) ? kUnowned : entry.permissions;
+  return RelationAccess{{*relation}, &duckdb::PermissionsOf(*relation->entry)};
 }
 
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,
@@ -402,7 +392,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ArrayElementEntry(
 }
 
 uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
-  return ArrayElementEntry(session, oid) ? TypeElementOid(oid) : kInvalidOid;
+  const auto element = TypeElementOid(oid);
+  if (const auto entry = InternalEntryByOid(session, element);
+      entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
+    return element;
+  }
+  const auto owner = OwnerByOid(session, element);
+  return owner && RowTypeOid(*owner) == element ? element : kInvalidOid;
 }
 
 std::vector<ReplicationOrigin> ReplicationOrigins(

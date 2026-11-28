@@ -85,7 +85,8 @@ connection default
 statement error
 REVOKE SELECT ON dgrc_clickclack FROM dgrc_alice RESTRICT;
 ----
-db error: ERROR: dependent privileges exist<slt:ignore>
+db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 # The refused revoke changed nothing: both rows survive.
@@ -125,11 +126,20 @@ f	f
 
 # bob's read is now denied. serenedb appends a DETAIL line PG does not, so the
 # expected block ends with an ignore marker that matches both engines.
+onlyif postgres
 connection c_bob2 user=dgrc_bob password=dgrc_bob_pw
 statement error
 SELECT count(*) FROM dgrc_clickclack;
 ----
 db error: ERROR: permission denied for table dgrc_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c_bob2 user=dgrc_bob password=dgrc_bob_pw
+statement error
+SELECT count(*) FROM dgrc_clickclack;
+----
+db error: ERROR: Table with name dgrc_clickclack does not exist!<slt:ignore>
 
 
 # Cleanup.

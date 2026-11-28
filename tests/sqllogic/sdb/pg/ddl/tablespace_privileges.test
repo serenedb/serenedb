@@ -64,6 +64,12 @@ statement ok
 RESET ROLE;
 
 statement ok
+CALL es_create_index('priv_warm', '{}');
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA es TO priv_other_${__DATABASE__};
+
+statement ok
 SET ROLE priv_other_${__DATABASE__};
 
 statement error
@@ -74,6 +80,27 @@ db error: ERROR: permission denied for tablespace <slt:ignore>
 
 statement ok
 CREATE TABLE other_docs (id INT);
+
+statement ok
+SET default_tablespace = priv_ts_${__DATABASE__};
+
+statement error
+CREATE TABLE other_default (id INT);
+----
+db error: ERROR: permission denied for tablespace <slt:ignore>
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS other_docs (id INT);
+
+statement error
+CALL es_create_index('priv_es', '{}');
+----
+db error: ERROR: permission denied for tablespace <slt:ignore>
+
+
+statement ok
+RESET default_tablespace;
 
 statement ok
 RESET ROLE;
@@ -108,12 +135,14 @@ statement error
 REVOKE GRANT OPTION FOR CREATE ON TABLESPACE priv_ts_${__DATABASE__} FROM priv_other_${__DATABASE__};
 ----
 db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 statement error
 REVOKE CREATE ON TABLESPACE priv_ts_${__DATABASE__} FROM priv_other_${__DATABASE__};
 ----
 db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 statement ok
@@ -237,6 +266,12 @@ DROP TABLE other_docs;
 
 statement ok
 REVOKE ALL ON SCHEMA public FROM priv_other_${__DATABASE__};
+
+statement ok
+REVOKE ALL ON SCHEMA es FROM priv_other_${__DATABASE__};
+
+statement ok
+CALL es_drop_index('priv_warm');
 
 statement error
 DROP ROLE priv_other_${__DATABASE__};

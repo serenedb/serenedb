@@ -51,8 +51,8 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/job.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -186,7 +186,7 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
                    " exceeded. Use \"SET sdb_job_max_depth TO x\" to "
                    "increase the maximum job depth.")};
   }
-  const auto roles = auth::RolesOf(nullptr);
+  const auto roles = catalog::RolesOf(nullptr);
   const auto user = roles->NameOf(job.owner);
   if (user.empty()) {
     return duckdb::ErrorData{
@@ -417,6 +417,7 @@ duckdb::ErrorData JobScheduler::RunBody(
   duckdb::optional_ptr<duckdb::ClientContext> caller, uint64_t timer) {
   JobRunRecord run{
     .database_oid = job.database_oid,
+    .job_oid = job.oid,
     .catalog = job.catalog,
     .schema = job.schema->Name(),
     .name = job.name,

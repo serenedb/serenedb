@@ -1,0 +1,41 @@
+control substitution on
+
+statement ok
+CREATE ROLE clr_user LOGIN PASSWORD 'clr_pw' CONNECTION LIMIT 1;
+
+
+system ok
+for p in $(pgrep -x serened); do if tr '\0' ' ' < /proc/$p/cmdline | grep -q -- "$SDB_DATADIR"; then echo $p; fi; done | head -1 > $__TEST_DIR__/serened_pid; test -s $__TEST_DIR__/serened_pid
+
+
+statement ok
+SET sdb_faults = 'pause_login_before_register';
+
+
+system async ok
+pid=$(cat $__TEST_DIR__/serened_pid); port=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -o 'postgres://[^,?/]*' | head -1 | sed 's/.*://'); PGPASSWORD=clr_pw psql -h 127.0.0.1 -p "$port" -U clr_user -d $__DATABASE__ -XAtq -c 'SELECT 1' > $__TEST_DIR__/clr_first.out 2>&1; true
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_login_before_register:parked';
+
+
+connection c_second user=clr_user password=clr_pw
+query
+SELECT 1 AS one;
+----
+one
+1
+
+
+statement ok
+SET sdb_faults = 'pause_login_before_register:release';
+
+
+wait
+
+
+system ok
+grep -c 'too many connections for role "clr_user"' $__TEST_DIR__/clr_first.out
+----
+1

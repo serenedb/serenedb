@@ -1,4 +1,8 @@
 statement ok
+DROP VIEW IF EXISTS jr_kostya_run;
+
+
+statement ok
 DROP JOB IF EXISTS jr_kostya_job;
 
 
@@ -84,14 +88,16 @@ CREATE JOB jr_kostya_steal AFTER 1 HOUR AS INSERT INTO jr_kostya_log SELECT 2, a
 statement error
 EXECUTE JOB jr_kostya_steal;
 ----
-db error: ERROR: permission denied for table jr_secrets<slt:ignore>
+db error: ERROR: Table with name jr_secrets does not exist!<slt:ignore>
 
 
 query
-SELECT last_status, last_error FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jr_kostya_steal';
+SELECT last_status, starts_with(last_error, 'Table with name jr_secrets does not exist!') AS missing
+FROM sdb_jobs()
+WHERE database_name = current_database() AND job_name = 'jr_kostya_steal';
 ----
-last_status	last_error
-failed	permission denied for table jr_secrets
+last_status	missing
+failed	t
 
 
 query
@@ -99,6 +105,14 @@ SELECT count(*) FROM jr_kostya_log;
 ----
 count
 1
+
+
+statement ok
+CREATE VIEW jr_kostya_run WITH (security_invoker=true) AS SELECT * FROM execute_job('jr_kostya_job');
+
+
+statement ok
+GRANT SELECT ON jr_kostya_run TO jr_clickclack;
 
 
 statement ok
@@ -112,25 +126,25 @@ SET ROLE jr_clickclack;
 statement error
 EXECUTE JOB jr_kostya_job;
 ----
-db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+db error: ERROR: Job with name jr_kostya_job does not exist!<slt:ignore>
 
 
 statement error
 ALTER JOB jr_kostya_job SUSPEND;
 ----
-db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+db error: ERROR: Job with name jr_kostya_job does not exist!<slt:ignore>
 
 
 statement error
 ALTER JOB jr_kostya_job SET SCHEDULE EVERY 1 SECOND;
 ----
-db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+db error: ERROR: Job with name jr_kostya_job does not exist!<slt:ignore>
 
 
 statement error
 ALTER JOB jr_kostya_job RENAME TO jr_clickclack_job;
 ----
-db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+db error: ERROR: Job with name jr_kostya_job does not exist!<slt:ignore>
 
 
 statement error
@@ -142,17 +156,27 @@ db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
 statement error
 DROP JOB jr_kostya_job;
 ----
-db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+db error: ERROR: Job with name jr_kostya_job does not exist!<slt:ignore>
 
 
 statement error
 ALTER JOB jr_kostya_job OWNER TO jr_clickclack;
+----
+db error: ERROR: Job with name jr_kostya_job does not exist!<slt:ignore>
+
+
+statement error
+SELECT * FROM jr_kostya_run;
 ----
 db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
 
 
 statement ok
 RESET ROLE;
+
+
+statement ok
+DROP VIEW jr_kostya_run;
 
 
 query
@@ -192,7 +216,7 @@ ALTER JOB jr_kostya_job OWNER TO jr_clickclack;
 statement error
 EXECUTE JOB jr_kostya_job;
 ----
-db error: ERROR: permission denied for table jr_kostya_log<slt:ignore>
+db error: ERROR: Table with name jr_kostya_log does not exist!<slt:ignore>
 
 
 statement ok

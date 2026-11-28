@@ -249,6 +249,7 @@ db error: ERROR: permission denied for table evl_iceberg<slt:ignore>
 # requires SELECT under the same rule: a top-level view is checked against the
 # caller (babsky), who lacks it -> permission denied for view <name>, for both
 # the non-super-owned and the postgres-owned definer view.
+onlyif postgres
 connection c_bys1 user=evl_babsky password=evl_babsky_pw
 statement error
 SELECT id, av FROM evl_owner_view ORDER BY id;
@@ -256,11 +257,28 @@ SELECT id, av FROM evl_owner_view ORDER BY id;
 db error: ERROR: permission denied for view evl_owner_view<slt:ignore>
 
 
+skipif postgres
+connection c_bys1 user=evl_babsky password=evl_babsky_pw
+statement error
+SELECT id, av FROM evl_owner_view ORDER BY id;
+----
+db error: ERROR: Table with name evl_owner_view does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_bys2 user=evl_babsky password=evl_babsky_pw
 statement error
 SELECT id, av FROM evl_flip ORDER BY id;
 ----
 db error: ERROR: permission denied for view evl_flip<slt:ignore>
+
+
+skipif postgres
+connection c_bys2 user=evl_babsky password=evl_babsky_pw
+statement error
+SELECT id, av FROM evl_flip ORDER BY id;
+----
+db error: ERROR: Table with name evl_flip does not exist!<slt:ignore>
 
 
 # === Part 6: invoker view, caller has BASE but NOT the view. ===
@@ -307,11 +325,20 @@ f
 
 
 # Has the base, lacks the view relation -> denied at the view.
+onlyif postgres
 connection c_inv_nogrant user=evl_vedernikoff password=evl_vedernikoff_pw
 statement error
 SELECT id, av FROM evl_inv ORDER BY id;
 ----
 db error: ERROR: permission denied for view evl_inv<slt:ignore>
+
+
+skipif postgres
+connection c_inv_nogrant user=evl_vedernikoff password=evl_vedernikoff_pw
+statement error
+SELECT id, av FROM evl_inv ORDER BY id;
+----
+db error: ERROR: Table with name evl_inv does not exist!<slt:ignore>
 
 
 statement ok

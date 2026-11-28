@@ -92,7 +92,7 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
     catalog::Attach(context, info, "duckdb",
                     read_only ? duckdb::AccessMode::READ_ONLY
                               : duckdb::AccessMode::READ_WRITE,
-                    duckdb::AttachVisibility::SHOWN);
+                    duckdb::AttachVisibility::SHOWN, duckdb::optional_idx{});
   });
   manager.SetDefaultDatabase(info.name);
   gShellFile = info.name;

@@ -1,0 +1,214 @@
+statement ok
+DROP SCHEMA IF EXISTS elu_private CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS elu_reader;
+
+
+statement ok
+CREATE ROLE elu_reader LOGIN PASSWORD 'elu_pw';
+
+
+statement ok
+CREATE SCHEMA elu_private;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY elu_private.elu_kw AS keyword();
+
+
+query
+SELECT ts_lexize('elu_private.elu_kw', 'Word') AS lexemes;
+----
+lexemes
+{Word}
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+SELECT ts_lexize('elu_private.elu_kw', 'Word');
+----
+db error: ERROR: text search dictionary "elu_private.elu_kw" does not exist<slt:ignore>
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+SELECT ts_lexize(d, 'Word') FROM (VALUES ('elu_private.elu_kw')) AS t(d);
+----
+db error: ERROR: text search dictionary "elu_private.elu_kw" does not exist<slt:ignore>
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+SET search_path = elu_private, public;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+SELECT ts_lexize('elu_kw', 'Word');
+----
+db error: ERROR: text search dictionary "elu_kw" does not exist
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+SELECT ts_lexize(d, 'Word') FROM (VALUES ('elu_kw')) AS t(d);
+----
+db error: ERROR: text search dictionary "elu_kw" does not exist
+
+
+statement ok
+GRANT USAGE ON SCHEMA elu_private TO elu_reader;
+
+
+connection c_elu user=elu_reader password=elu_pw
+query
+SELECT ts_lexize('elu_private.elu_kw', 'Word') AS lexemes;
+----
+lexemes
+{Word}
+
+
+connection c_elu user=elu_reader password=elu_pw
+query
+SELECT ts_lexize('elu_kw', 'Word') AS lexemes;
+----
+lexemes
+{Word}
+
+
+connection c_elu user=elu_reader password=elu_pw
+query
+SELECT ts_lexize(d, 'Word') AS lexemes FROM (VALUES ('elu_private.elu_kw')) AS t(d);
+----
+lexemes
+{Word}
+
+
+query
+CALL es_create_index('elu_secret', '{"mappings":{"properties":{"ssn":{"type":"keyword"}}}}');
+----
+acknowledged
+t
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+CALL es_mapping('elu_secret');
+----
+db error: ERROR: no such index [elu_secret]
+
+
+statement ok
+GRANT USAGE ON SCHEMA es TO elu_reader;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+CALL es_mapping('elu_secret');
+----
+db error: ERROR: no such index [elu_secret]
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+SELECT * FROM es_doc('elu_secret', '1', '{"ssn":"1"}');
+----
+db error: ERROR: no such index [elu_secret]
+
+
+statement ok
+GRANT SELECT ON es.elu_secret TO elu_reader;
+
+
+connection c_elu user=elu_reader password=elu_pw
+query
+CALL es_mapping('elu_secret');
+----
+mappings
+{"properties":{"ssn":{"type":"keyword"}}}
+
+
+query
+CALL es_drop_index('elu_secret');
+----
+acknowledged
+t
+
+
+statement ok
+REVOKE USAGE ON SCHEMA es FROM elu_reader;
+
+
+statement ok
+CREATE SCHEMA elu_unusable;
+
+
+statement ok
+CREATE TABLE elu_unusable.elu_victim (a INTEGER);
+
+
+statement ok
+CREATE FUNCTION elu_unusable.elu_victim_fn() RETURNS INTEGER LANGUAGE SQL AS 'SELECT 1';
+
+
+statement ok
+GRANT CREATE ON SCHEMA elu_unusable TO elu_reader;
+
+
+statement ok
+GRANT SELECT ON elu_unusable.elu_victim TO elu_reader;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+SET search_path = elu_unusable, public;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+DROP TABLE IF EXISTS elu_victim;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+ALTER TABLE IF EXISTS elu_victim RENAME TO elu_renamed;
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement ok
+DROP FUNCTION IF EXISTS elu_victim_fn;
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'elu_unusable'::regnamespace;
+----
+relname
+elu_victim
+
+
+query
+SELECT proname FROM pg_proc WHERE pronamespace = 'elu_unusable'::regnamespace;
+----
+proname
+elu_victim_fn
+
+
+connection c_elu user=elu_reader password=elu_pw
+statement error
+DROP TABLE elu_victim;
+----
+db error: ERROR: Table with name elu_victim does not exist!<slt:ignore>
+
+
+statement ok
+DROP SCHEMA elu_unusable CASCADE;
+
+
+statement ok
+DROP SCHEMA elu_private CASCADE;
+
+
+statement ok
+DROP ROLE elu_reader;

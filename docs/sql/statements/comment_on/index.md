@@ -29,8 +29,6 @@ To unset a comment, set it to `NULL`, e.g.:
 <SqlLogicTest id="sql/statements/comment_on/index/example_009" />
 
 
-Commenting on other catalog objects — views, indexes, sequences, types and macros — is not yet supported and currently returns an error.
-
 Commenting on a `VIEW`:
 
 <SqlLogicTest id="sql/statements/comment_on/index/example_003" />
@@ -60,6 +58,22 @@ Commenting on a `MACRO TABLE`:
 
 <SqlLogicTest id="sql/statements/comment_on/index/example_008" />
 
+## Functions and procedures
+
+`COMMENT ON FUNCTION`, `COMMENT ON PROCEDURE` and `COMMENT ON ROUTINE` comment on the overload the argument list after the name names, or on the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. Each overload keeps its own comment, which `obj_description(oid, 'pg_proc')` reads back:
+
+<SqlLogicTest id="sql/statements/comment_on/index/example_019" />
+
+Commenting on an overload takes its owner.
+
+
+## Databases and roles
+
+`COMMENT ON DATABASE` and `COMMENT ON ROLE` comment on the objects every database shares. `shobj_description(oid, 'pg_database')` and `shobj_description(oid, 'pg_authid')` read the comments back, and `pg_shdescription` lists them:
+
+<SqlLogicTest id="sql/statements/comment_on/index/example_018" />
+
+Commenting on a database takes its owner, or a member of the owning role. Commenting on a role takes the `CREATEROLE` attribute and the `ADMIN` option on the role, and a superuser for a superuser role; anyone else gets `permission denied`. A database that does not exist only produces a warning.
 
 ## Reading Comments
 
@@ -107,11 +121,7 @@ List comments on `MACRO TABLE`s:
 
 ## Limitations
 
-The `COMMENT ON` statement currently has the following limitations:
-
--   Comments are only supported on tables and columns. Comments on views, indexes, sequences, types and macros are not yet supported.
--   It is not possible to comment on schemas or databases.
--   It is not possible to comment on things that have a dependency (e.g., a table with an index).
+It is not possible to comment on schemas.
 
 ## Syntax
 

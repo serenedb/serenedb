@@ -21,14 +21,15 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_replication_origin_info.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "catalog/base_catalog.h"
 #include "catalog/boot.h"
 #include "catalog/entry/database.h"
@@ -44,8 +45,8 @@ class ClusterCatalog final : public BaseCatalog {
   ClusterCatalog(duckdb::AttachedDatabase& db, DataDirectory layout)
     : BaseCatalog{db, false},
       _layout{std::move(layout)},
-      _roles{true, _oids},
-      _databases{true, _oids, 0, /*members=*/true},
+      _roles{true, _oids, 0, true},
+      _databases{true, _oids, 0, true},
       _origins{true, _oids},
       _tablespaces{true, _oids},
       _temporary_secrets{true, _oids},
@@ -67,17 +68,24 @@ class ClusterCatalog final : public BaseCatalog {
 
   const DataDirectory& Layout() const noexcept { return _layout; }
 
-  EntrySet& Set(duckdb::CatalogType type) final;
+  EntrySet* FindSet(duckdb::CatalogType type) final;
 
   void Bootstrap(duckdb::ClientContext& context, bool default_database);
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
+  void ScanOwned(
+    duckdb::CatalogTransaction transaction,
+    const std::function<void(duckdb::CatalogEntry&)>& callback) final;
+  void ReassignOwned(duckdb::CatalogTransaction transaction,
+                     const duckdb::AlterOwnedInfo& info);
+  void DropOwned(duckdb::CatalogTransaction transaction,
+                 const duckdb::AlterOwnedInfo& info);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) final;
   void DropRole(duckdb::CatalogTransaction transaction,
-                duckdb::DropInfo& info) final;
+                const duckdb::DropInfo& info) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateDatabase(
     duckdb::CatalogTransaction transaction,
@@ -111,8 +119,8 @@ class ClusterCatalog final : public BaseCatalog {
                   duckdb::CatalogEntry& entry) final;
 
   void OnCommit() final;
+  void PublishSecurity();
 
-  auth::RoleCache& Roles() noexcept { return _role_cache; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
   EntrySet& Secrets(bool persistent) noexcept {
     return persistent ? _persistent_secrets : _temporary_secrets;
@@ -121,6 +129,14 @@ class ClusterCatalog final : public BaseCatalog {
  private:
   std::shared_ptr<DatabaseDirectory> DatabaseDirectoryOf(
     duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace);
+  void ApplyAlter(duckdb::CatalogTransaction transaction,
+                  duckdb::AlterInfo& info);
+  void AlterRole(duckdb::CatalogTransaction transaction,
+                 duckdb::AlterRoleInfo& info);
+  void AlterTablespace(duckdb::CatalogTransaction transaction,
+                       duckdb::AlterInfo& info);
+  void RevokeMembership(duckdb::CatalogTransaction transaction,
+                        duckdb::AlterRoleInfo& alter);
 
   DataDirectory _layout;
   EntrySet _roles;
@@ -129,13 +145,17 @@ class ClusterCatalog final : public BaseCatalog {
   EntrySet _tablespaces;
   EntrySet _temporary_secrets;
   EntrySet _persistent_secrets;
-  auth::RoleCache _role_cache;
   CatalogSnapshots _snapshots{*this};
 };
+
+inline constexpr std::string_view kRootRole = "postgres";
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
+
+duckdb::shared_ptr<const duckdb::SecuritySnapshot> RolesOf(
+  duckdb::ClientContext* context);
 
 template<typename Entry>
 bool ReadEntry(std::string_view name, const auto& read) {

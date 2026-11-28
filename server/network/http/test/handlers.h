@@ -34,6 +34,7 @@ enum class Endpoint : uint8_t {
   Fuzz,
   Status,
   SessionUser,
+  IsSuperuser,
   Copy,
 };
 

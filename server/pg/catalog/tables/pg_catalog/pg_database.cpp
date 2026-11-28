@@ -52,14 +52,13 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
         [](const auto& database) { return database.permissions.owner; }),
       Col<"encoding">([](const auto&) { return kUtf8Encoding; }),
       Col<"datlocprovider">([](const auto&) { return 'c'; }),
-      Col<"datallowconn">([](const auto&) { return true; }),
-      Col<"datconnlimit">([](const auto&) { return -1; }),
+      Col<"datallowconn">(&catalog::DatabaseCatalogEntry::AllowConnections),
+      Col<"datconnlimit">(&catalog::DatabaseCatalogEntry::ConnLimit),
       Col<"dattablespace">(
         [](const auto& database) { return database.Tablespace(); }),
       Col<"datcollate">(kLocale), Col<"datctype">(kLocale),
-      Col<"datacl">([](const auto& database) -> const auto& {
-        return database.permissions.acl;
-      }));
+      Col<"datacl">(
+        [](const auto& database) { return AclOf(database.permissions); }));
 
   void Row(const catalog::DatabaseCatalogEntry& database) {
     Emit<kDatabase>(database);

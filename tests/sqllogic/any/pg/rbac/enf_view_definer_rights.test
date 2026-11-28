@@ -82,11 +82,20 @@ n
 
 # === Control (byte-identical on PG and SereneDB): the view grant does NOT leak
 # the base table -- reading vdr_iceberg directly is still refused. ===
+onlyif postgres
 connection c_ved3 user=vdr_vedernikoff password=vdr_vedernikoff_pw
 statement error
 SELECT id FROM vdr_iceberg;
 ----
 db error: ERROR: permission denied for table vdr_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_ved3 user=vdr_vedernikoff password=vdr_vedernikoff_pw
+statement error
+SELECT id FROM vdr_iceberg;
+----
+db error: ERROR: Table with name vdr_iceberg does not exist!<slt:ignore>
 
 
 statement ok

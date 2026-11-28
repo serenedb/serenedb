@@ -26,6 +26,7 @@
 #include <atomic>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
@@ -74,13 +75,20 @@ class CopyInBatches;
 
 struct LoginCheck {
   duckdb::idx_t role;
+  duckdb::idx_t database = 0;
   bool superuser = false;
-  duckdb::vector<std::string> settings;
+  int32_t role_conn_limit = -1;
+  int32_t database_conn_limit = -1;
+  std::string role_name;
   irs::pg::SqlErrorData error;
 };
 
-LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::Permissions& perm);
+LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname);
+
+std::optional<irs::pg::SqlErrorData> ConnectionLimitError(
+  const LoginCheck& login, std::string_view dbname);
+
+bool IsHbaMember(std::string_view user, std::string_view group);
 
 }  // namespace sdb::pg
 namespace sdb::network {
@@ -123,29 +131,35 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   const std::string& user() const { return _user; }
   const std::string& SystemUser() const { return _system_user; }
-  const std::string& GetDatabase() const { return _database_name; }
+  const std::string& GetDatabase() const {
+    return client_data->default_database.GetIdentifierName();
+  }
   duckdb::idx_t GetDatabaseId() const { return _database_id; }
   int32_t GetBackendPid() const { return _backend_pid; }
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
-  duckdb::idx_t GetRoleId() const { return _effective_role_id; }
+  duckdb::idx_t GetRoleId() const { return security.current_role_id; }
   duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
-  duckdb::idx_t GetSessionRoleId() const { return _session_role_id; }
+  duckdb::idx_t GetSessionRoleId() const { return security.session_role; }
 
   std::string EffectiveUserName();
   std::string SessionUserName();
 
   void SetEffectiveRole(duckdb::idx_t role) {
-    if (std::exchange(_effective_role_id, role) != role) {
-      BumpBindingGeneration();
-    }
+    security.SetCurrentRole(*this, role);
+    session_user = EffectiveUserName();
+    PublishSuperuser();
   }
   void SetSessionRole(duckdb::idx_t role) {
-    _session_role_id = role;
+    security.session_role = role;
     SetEffectiveRole(role);
   }
-  void ResetIdentity() { SetSessionRole(_login_role_id); }
+  void ResetIdentity() {
+    security.session_role = _login_role_id;
+    SetEffectiveRole(_login_role_id);
+  }
+  void ApplyRoleSettings();
 
   auto* GetSendBuffer() const { return _send_buffer; }
   auto* GetSendGate() const { return _send_gate; }
@@ -160,10 +174,10 @@ class ConnectionContext final : public duckdb::ClientContext {
     return _side_channel.Get<T>();
   }
 
-  bool InTransactionBlock() const noexcept { return _in_transaction_block; }
   void SetInTransactionBlock(bool value) noexcept {
     _in_transaction_block = value;
   }
+  void PreventInTransactionBlock(std::string_view statement) const;
 
   void AddNotice(irs::pg::SqlErrorData notice) {
     auto* node = new NoticeNode{std::move(notice), nullptr};
@@ -209,8 +223,8 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::optional<std::string> Get(std::string_view key);
 
   void SetSetting(std::string_view key, std::string value, bool);
-  void SetSettingChecked(std::string_view key, std::string value,
-                         bool is_local);
+  void SetSettingChecked(std::string_view key, std::string value);
+  void KeepSettingAsDefault(std::string_view key);
 
   uint64_t SettingsVersion() const noexcept { return _settings_version; }
   void MarkSettingsChanged() noexcept { ++_settings_version; }
@@ -253,8 +267,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::unique_ptr<replication::OriginSession> replication_origin;
 
   void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;
-  bool EmitWarning(const char* message) final;
-  bool IsSettingVisible(const std::string& name) final;
+  bool EmitWarning(const char* message, std::string_view subtype) final;
   void OnSettingChange(const std::string& name, duckdb::SetScope scope,
                        const duckdb::Value& previous) final;
   void OnQueryBegin() final;
@@ -278,6 +291,11 @@ class ConnectionContext final : public duckdb::ClientContext {
     NoticeNode* next;
   };
 
+  void PublishSuperuser() {
+    SetSetting("is_superuser", duckdb::Role(*this).is_superuser ? "on" : "off",
+               false);
+  }
+
   struct TxnVariable {
     duckdb::Value rollback_restore;
     std::optional<duckdb::Value> commit_restore;
@@ -293,15 +311,12 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   const std::string _user;
   const std::string _system_user;
-  const std::string _database_name;
   const duckdb::idx_t _database_id;
   const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
   network::SendGate* const _send_gate;
   const duckdb::idx_t _login_role_id;
-  duckdb::idx_t _session_role_id;
-  duckdb::idx_t _effective_role_id;
   SideChannel _side_channel;
   const bool _owns_temporary_objects;
   bool _in_transaction_block = false;

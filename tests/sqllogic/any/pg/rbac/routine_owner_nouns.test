@@ -1,0 +1,162 @@
+statement ok
+DROP SCHEMA IF EXISTS ron_s CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS ron_t CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS ron_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS ron_other;
+
+
+statement ok
+CREATE ROLE ron_owner;
+
+
+statement ok
+CREATE ROLE ron_other LOGIN PASSWORD 'ron_pw';
+
+
+statement ok
+CREATE SCHEMA ron_s AUTHORIZATION ron_owner;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA ron_s TO ron_other;
+
+
+statement ok
+CREATE SCHEMA ron_t;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA ron_t TO ron_other;
+
+
+statement ok
+SET ROLE ron_owner;
+
+
+statement ok
+CREATE PROCEDURE ron_s.ron_p() LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION ron_s.ron_f() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+RESET ROLE;
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+ALTER PROCEDURE ron_s.ron_p() RENAME TO ron_q;
+----
+db error: ERROR: must be owner of function ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+ALTER PROCEDURE ron_s.ron_p() SET SCHEMA ron_t;
+----
+db error: ERROR: must be owner of function ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+DROP PROCEDURE ron_s.ron_p();
+----
+db error: ERROR: must be owner of procedure ron_s.ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+DROP ROUTINE ron_s.ron_p();
+----
+db error: ERROR: must be owner of routine ron_s.ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+DROP ROUTINE ron_s.ron_f();
+----
+db error: ERROR: must be owner of routine ron_s.ron_f
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+COMMENT ON ROUTINE ron_s.ron_p() IS 'x';
+----
+db error: ERROR: must be owner of routine ron_s.ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+COMMENT ON PROCEDURE ron_s.ron_p() IS 'x';
+----
+db error: ERROR: must be owner of procedure ron_s.ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+ALTER ROUTINE ron_s.ron_p() SECURITY DEFINER;
+----
+db error: ERROR: must be owner of routine ron_s.ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+ALTER PROCEDURE ron_s.ron_p() SECURITY DEFINER;
+----
+db error: ERROR: must be owner of procedure ron_s.ron_p
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+ALTER ROUTINE ron_s.ron_f() RENAME TO ron_g;
+----
+db error: ERROR: must be owner of function ron_f
+
+
+connection c_other user=ron_other password=ron_pw
+statement error
+ALTER PROCEDURE ron_s.ron_p() OWNER TO ron_other;
+----
+db error: ERROR: must be owner of function ron_p
+
+
+statement ok
+DROP ROUTINE ron_s.ron_p();
+
+
+statement ok
+DROP ROUTINE ron_s.ron_f();
+
+
+query
+SELECT count(*) AS routines FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'ron_s';
+----
+routines
+0
+
+
+statement ok
+DROP SCHEMA ron_s CASCADE;
+
+
+statement ok
+DROP SCHEMA ron_t CASCADE;
+
+
+statement ok
+DROP ROLE ron_other;
+
+
+statement ok
+DROP ROLE ron_owner;

@@ -186,12 +186,17 @@ statement ok
 CREATE SUBSCRIPTION cs_stream_on CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, slot_name = NONE, streaming = true);
 
 
+statement ok
+CREATE SUBSCRIPTION cs_stream_parallel CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, slot_name = NONE, streaming = parallel);
+
+
 query
 SELECT subname, substream FROM pg_subscription WHERE subname LIKE 'cs_stream%' ORDER BY subname;
 ----
 subname	substream
 cs_stream_off	f
 cs_stream_on	t
+cs_stream_parallel	p
 
 
 statement ok
@@ -200,6 +205,10 @@ DROP SUBSCRIPTION cs_stream_off;
 
 statement ok
 DROP SUBSCRIPTION cs_stream_on;
+
+
+statement ok
+DROP SUBSCRIPTION cs_stream_parallel;
 
 
 query

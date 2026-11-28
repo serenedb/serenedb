@@ -1,0 +1,152 @@
+statement ok
+DROP ROLE IF EXISTS lsps_a, lsps_b, lsps_g1, lsps_g2;
+
+
+statement ok
+CREATE ROLE lsps_a;
+
+
+statement ok
+CREATE ROLE lsps_b;
+
+
+statement ok
+CREATE ROLE lsps_g1;
+
+
+statement ok
+CREATE ROLE lsps_g2;
+
+
+statement ok
+CREATE TABLE lsps_t1 (x INT);
+
+
+statement ok
+CREATE TABLE lsps_t2 (x INT);
+
+
+statement ok
+CREATE FUNCTION lsps_scalar(x INT) RETURNS INT LANGUAGE SQL BEGIN ATOMIC SELECT x; END;
+
+
+statement ok
+CREATE FUNCTION lsps_rows() RETURNS TABLE(x INT) LANGUAGE SQL BEGIN ATOMIC SELECT 1; END;
+
+
+statement ok
+SET SESSION debug_verify_serializer = true;
+
+
+statement ok
+GRANT SELECT ON lsps_t1, lsps_t2 TO lsps_a, lsps_b;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION lsps_scalar(INT), lsps_rows() TO lsps_a, lsps_b;
+
+
+statement ok
+GRANT lsps_g1, lsps_g2 TO lsps_a, lsps_b;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE lsps_a, lsps_b GRANT SELECT ON TABLES TO lsps_g1, lsps_g2;
+
+
+statement ok
+ALTER TABLE lsps_t1 OWNER TO lsps_a;
+
+
+statement ok
+RESET SESSION debug_verify_serializer;
+
+
+query
+SELECT r.rolname, c.relname, has_table_privilege(r.rolname, c.relname, 'SELECT') AS can_select
+FROM pg_roles r, pg_class c
+WHERE r.rolname IN ('lsps_a', 'lsps_b') AND c.relname IN ('lsps_t1', 'lsps_t2')
+ORDER BY 1, 2;
+----
+rolname	relname	can_select
+lsps_a	lsps_t1	t
+lsps_a	lsps_t2	t
+lsps_b	lsps_t1	t
+lsps_b	lsps_t2	t
+
+
+query
+SELECT proname, array_length(proacl, 1) AS entries FROM pg_proc WHERE proname IN ('lsps_scalar', 'lsps_rows') ORDER BY 1;
+----
+proname	entries
+lsps_rows	4
+lsps_scalar	4
+
+
+query
+SELECT g.rolname AS granted, m.rolname AS member
+FROM pg_auth_members a JOIN pg_roles g ON g.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
+WHERE g.rolname IN ('lsps_g1', 'lsps_g2')
+ORDER BY 1, 2;
+----
+granted	member
+lsps_g1	lsps_a
+lsps_g1	lsps_b
+lsps_g2	lsps_a
+lsps_g2	lsps_b
+
+
+query
+SELECT r.rolname, d.defaclobjtype, array_length(d.defaclacl, 1) AS entries
+FROM pg_default_acl d JOIN pg_roles r ON r.oid = d.defaclrole
+WHERE r.rolname IN ('lsps_a', 'lsps_b')
+ORDER BY 1;
+----
+rolname	defaclobjtype	entries
+lsps_a	r	3
+lsps_b	r	3
+
+
+query
+SELECT tableowner FROM pg_tables WHERE tablename = 'lsps_t1';
+----
+tableowner
+lsps_a
+
+
+statement ok
+SET SESSION debug_verify_serializer = true;
+
+
+statement ok
+DROP FUNCTION lsps_scalar(INT), lsps_rows();
+
+
+statement ok
+DROP TABLE lsps_t1, lsps_t2;
+
+
+statement ok
+RESET SESSION debug_verify_serializer;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('lsps_t1', 'lsps_t2');
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname IN ('lsps_scalar', 'lsps_rows');
+----
+n
+0
+
+
+statement ok
+DROP OWNED BY lsps_a, lsps_b;
+
+
+statement ok
+DROP ROLE lsps_a, lsps_b, lsps_g1, lsps_g2;

@@ -1,0 +1,120 @@
+control substitution on
+
+statement ok
+DROP TABLE IF EXISTS rien_items;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rien_hidden CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS rien_vedernikoff;
+
+
+statement ok
+CREATE ROLE rien_vedernikoff LOGIN;
+
+
+statement ok
+CREATE SCHEMA rien_hidden;
+
+
+statement ok
+CREATE FUNCTION rien_hidden.rien_double(x integer) RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE TABLE rien_items (a integer);
+
+
+statement ok
+CREATE UNIQUE INDEX rien_items_double ON rien_items (rien_hidden.rien_double(a));
+
+
+statement ok
+GRANT SELECT, INSERT ON rien_items TO rien_vedernikoff;
+
+
+statement ok
+CREATE TABLE rien_hidden.rien_secret (b integer);
+
+
+statement ok
+INSERT INTO rien_hidden.rien_secret VALUES (7);
+
+
+statement ok
+CREATE VIEW rien_window AS SELECT b FROM rien_hidden.rien_secret;
+
+
+statement ok
+GRANT SELECT ON rien_window TO rien_vedernikoff;
+
+
+statement ok
+INSERT INTO rien_items VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+statement ok
+SET ROLE rien_vedernikoff;
+
+
+connection after_crash
+query
+SELECT attname FROM pg_attribute WHERE attrelid = 'rien_window'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname
+b
+
+
+connection after_crash
+query
+SELECT b FROM rien_window;
+----
+b
+7
+
+
+connection after_crash
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'rien_window' ORDER BY ordinal_position;
+----
+column_name
+b
+
+
+connection after_crash
+query
+SELECT name FROM pragma_table_info('rien_window');
+----
+name
+b
+
+
+connection after_crash
+statement ok
+INSERT INTO rien_items VALUES (2);
+
+
+connection after_crash
+query
+SELECT a FROM rien_items ORDER BY a;
+----
+a
+1
+2

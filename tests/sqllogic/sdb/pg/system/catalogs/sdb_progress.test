@@ -12,7 +12,7 @@ FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relname = 'sdb_progress';
 ----
 relkind	nspname	relnatts
-r	pg_catalog	28
+r	pg_catalog	29
 
 
 query
@@ -24,6 +24,7 @@ ORDER BY attnum;
 attname	type	attnotnull
 pid	integer	f
 datid	oid	f
+usesysid	oid	f
 usename	name	f
 datname	name	f
 state	text	f

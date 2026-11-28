@@ -201,8 +201,8 @@ class OptionsParser {
         }
         return v.DefaultCastAs(duckdb::LogicalType::BOOLEAN).GetValue<bool>();
       } else if constexpr (std::is_same_v<T, int>) {
-        return static_cast<int>(
-          v.DefaultCastAs(duckdb::LogicalType::BIGINT).GetValue<int64_t>());
+        return v.DefaultCastAs(duckdb::LogicalType::INTEGER)
+          .GetValue<int32_t>();
       } else if constexpr (std::is_same_v<T, double>) {
         return v.DefaultCastAs(duckdb::LogicalType::DOUBLE).GetValue<double>();
       } else if constexpr (std::is_same_v<T, char>) {

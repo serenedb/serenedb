@@ -106,6 +106,10 @@ Inside a query of the body, a column of that query, or of a query of the body ar
 
 A parameter takes a default after `DEFAULT` or `=`, as well as after `:=`. `IMMUTABLE`, `STABLE` and `VOLATILE`, volatile by default, are shown in `pg_proc.provolatile` and in the function's definition; what a call evaluates follows its body.
 
+A function runs with the privileges of the role that calls it, also when a view calls it: the tables its body reads and the functions it calls are checked for that role, and `current_user` returns it. `SECURITY DEFINER` runs the body with the privileges of the function's owner instead, and `current_user` in the body returns the owner, while the arguments are still evaluated with the caller's privileges. The names the body looks up while it runs, such as `'myschema.t'::regclass`, `to_regclass('myschema.t')` or the object of `has_table_privilege('myschema.t', 'SELECT')`, are looked up as the owner too. The body of a `SECURITY DEFINER` function cannot change the session's role: `set_config('role', ...)` and `set_config('session_authorization', ...)` there fail with `cannot set parameter "role" within security-definer function`. `SECURITY INVOKER` is the default, and `pg_proc.prosecdef` shows which one a function uses. `SECURITY DEFINER` does not make a call slower: either way the body is optimized together with the query that calls it. A `SECURITY DEFINER` function cannot be called as a window function. Creating a function checks no privileges on the tables its body reads or writes and the functions it calls: the role the body runs as needs them when it runs. It does need `USAGE` on the function's language, `sql`, which every role has until it is [revoked from `PUBLIC`](../../../security/privileges.md#available-privileges).
+
+The body resolves the names it does not qualify through the `search_path` of the session that calls it. `SET search_path = schema, ...` (or `TO`) gives the function a path of its own, which the body uses instead, also when the function is created and when a view calls it; `SET search_path FROM CURRENT` takes the creating session's path. In the body, `current_setting('search_path')`, `current_schema()` and `current_schemas()` report the function's path, and the last two list only the schemas the role the body runs as may use: the function's owner for a `SECURITY DEFINER` function. A `SECURITY DEFINER` function should set one, so that a caller cannot put objects of its own in the way of the names the body uses. `pg_proc.proconfig` shows the setting and `pg_get_functiondef` prints it. A function can set only `search_path`: `SET` of any other parameter fails with `SET of parameter "..." on a function is not supported`. A function that sets `search_path` cannot be called as a window function.
+
 A function that `RETURNS void` runs its body to the end, every row of a query body included, and returns `NULL`. A function whose body modifies data cannot be called for each row of a query:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_047" />
@@ -124,15 +128,27 @@ An `OUT` parameter is a column of the result and an `INOUT` parameter is both an
 
 ### Moving to Another Schema
 
-`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER MACRO ... SET SCHEMA` moves a function, procedure or macro, scalar or table, to another schema, with all its overloads:
+`ALTER FUNCTION`, `ALTER PROCEDURE`, `ALTER ROUTINE` or `ALTER MACRO ... SET SCHEMA` moves a function, procedure or macro, scalar or table, to another schema:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_048" />
 
-The move needs the `CREATE` privilege on the target schema, which must not already hold a function or macro of that name. Moving a function into the schema it is already in changes nothing. A function that another object depends on can't be moved.
+An argument list after the name moves that overload alone, and the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. The move needs ownership of the overload and the `CREATE` privilege on the target schema, which must not already hold a function or procedure with the same name and arguments. Moving a function into the schema it is already in changes nothing. A function that another object depends on can't be moved.
 
 ## Overloading
 
 It is possible to overload a macro based on the types or the number of its parameters; this works for both scalar and table macros.
+
+Functions and procedures share one set of signatures: `CREATE`, `RENAME TO` and `SET SCHEMA` refuse to give a function the name and arguments of a procedure in the same schema, and the other way round.
+
+`DROP`, `ALTER`, `COMMENT ON`, `GRANT` and `REVOKE` name the kind of routine they act on: the `PROCEDURE` forms refuse a function with `name(...) is not a procedure`, the `FUNCTION` forms refuse a procedure with `name(...) is not a function`, and the `ROUTINE` forms take either. A routine that doesn't exist is reported as `function name(...) does not exist`, or `could not find a function named "..."` when the statement gives no argument list, with `procedure` for the `PROCEDURE` forms.
+
+`ALTER FUNCTION`, `ALTER PROCEDURE` and `ALTER ROUTINE` rename a function with `RENAME TO` and change its owner with `OWNER TO`, for the overload the argument list after the name names, or for the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. A renamed overload joins the overloads of its new name, and `RENAME TO` fails with `function name(...) already exists in schema "..."` when the new name has an overload with the same arguments. The only overload of a name renamed to an unused name keeps its `oid`; an overload renamed away from other overloads of its name, or to a name that has overloads, gets a new `oid`.
+
+They also change `SECURITY DEFINER` or `SECURITY INVOKER`, `IMMUTABLE`, `STABLE` or `VOLATILE`, and `SET search_path` (`RESET search_path` or `RESET ALL` removes it), for the overload the argument list names, or for the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. Only the function's owner or a superuser may do it. `COST`, `ROWS`, `PARALLEL` and `LEAKPROOF` are accepted and ignored, and `STRICT` or `CALLED ON NULL INPUT` may only restate what the function already is.
+
+```sql
+ALTER FUNCTION add_tax(numeric) SECURITY DEFINER STABLE;
+```
 
 By providing overloads we can have both `add_x(a, b)` and `add_x(a, b, c)` with different function bodies.
 
@@ -182,11 +198,11 @@ The order of named parameters does not matter:
 
 When macros are used, they are expanded (i.e., replaced with the original expression), and the parameters within the expanded expression are replaced with the supplied arguments. Step by step:
 
-The `add` macro we defined above is used in a query:
+The `add_pair` macro we defined above is used in a query:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_028" />
 
-Internally, `add` is replaced with its definition of `a + b`:
+Internally, `add_pair` is replaced with its definition of `a + b`:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_029" />
 

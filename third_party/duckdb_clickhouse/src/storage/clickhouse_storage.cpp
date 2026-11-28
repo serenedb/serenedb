@@ -244,6 +244,9 @@ ClickHouseCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_in
 ClickHouseStorageExtension::ClickHouseStorageExtension() {
 	attach = ClickHouseAttach;
 	create_transaction_manager = ClickHouseCreateTransactionManager;
+	user_options = {"host",     "hostname", "port", "user",   "username", "password",   "passwd",
+	                "database", "dbname",   "db",   "secure", "ssl",      "compression"};
+	password_options = {"password", "passwd"};
 }
 
 } // namespace duckdb

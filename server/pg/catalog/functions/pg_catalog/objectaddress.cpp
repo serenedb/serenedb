@@ -33,6 +33,7 @@
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -42,7 +43,6 @@
 #include <string_view>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "pg/catalog/builtin/builtin.h"
@@ -50,6 +50,7 @@
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/oids.h"
+#include "pg/catalog/utils/acl.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
@@ -76,14 +77,6 @@ struct ObjectAddress {
 
 ObjectIdentity Missing(std::string type) {
   return ObjectIdentity{.type = std::move(type)};
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> ObjectEntry(const Session& session,
-                                                       uint64_t oid) {
-  if (!session.database || oid == kInvalidOid) {
-    return nullptr;
-  }
-  return session.database->LookupOid(*session.transaction, oid);
 }
 
 std::string_view RelationKind(const RelationAccess& relation) {
@@ -205,12 +198,12 @@ ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
     kind = builtin->kind;
     schema = FindSystemObject(kSystemNamespaces, builtin->nsp)->name;
   } else {
-    const auto* macro = FindMacro(session, oid);
-    if (!macro) {
+    const auto found = FindMacro(session, oid);
+    if (!found.entry) {
       return Missing("routine");
     }
-    kind = macro->macros.front()->is_procedure ? 'p' : 'f';
-    schema = NameOf(*session.transaction, *macro).schema;
+    kind = found.macro->is_procedure ? 'p' : 'f';
+    schema = NameOf(*session.transaction, *found.entry).schema;
   }
   std::string_view type = "function";
   if (kind == 'a') {
@@ -247,7 +240,7 @@ ObjectIdentity IdentifyType(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifySchema(const Session& session, uint64_t oid) {
-  const auto entry = SchemaByOid(session, oid);
+  auto entry = SchemaByOid(session, oid);
   if (!entry) {
     return Missing("schema");
   }
@@ -259,7 +252,7 @@ ObjectIdentity IdentifySchema(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyRole(const Session& session, uint64_t oid) {
-  const auto roles = auth::RolesOf(session.context);
+  const auto roles = catalog::RolesOf(session.context);
   const std::string name{roles->NameOf(oid)};
   if (name.empty()) {
     return Missing("role");
@@ -271,7 +264,7 @@ ObjectIdentity IdentifyRole(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyConstraint(const Session& session, uint64_t oid) {
-  const auto table = OwnerTable(session, oid);
+  auto table = OwnerTable(session, oid);
   if (!table) {
     return Missing("constraint");
   }
@@ -295,7 +288,7 @@ ObjectIdentity IdentifyConstraint(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {
-  const auto table = OwnerTable(session, oid);
+  auto table = OwnerTable(session, oid);
   if (!table) {
     return Missing("default value");
   }
@@ -381,8 +374,8 @@ ObjectIdentity IdentifyNamed(std::string_view type, const auto& objects,
 }
 
 ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {
-  const auto database = FindDatabaseById(*session.context, oid);
-  return database
+  auto database = FindDatabaseById(*session.context, oid);
+  return database && Shown(session, *database)
            ? IdentifyNamed("database", database->name.GetIdentifierName())
            : Missing("database");
 }
@@ -394,6 +387,58 @@ ObjectIdentity IdentifyTablespace(const Session& session, uint64_t oid) {
   return tablespace
            ? IdentifyNamed("tablespace", tablespace->name.GetIdentifierName())
            : Missing("tablespace");
+}
+
+std::string_view DefaultAclTargets(duckdb::CatalogType type) {
+  using enum duckdb::CatalogType;
+  switch (type) {
+    case SEQUENCE_ENTRY:
+      return "sequences";
+    case MACRO_ENTRY:
+      return "functions";
+    case TYPE_ENTRY:
+      return "types";
+    case SCHEMA_ENTRY:
+      return "schemas";
+    default:
+      return "tables";
+  }
+}
+
+ObjectIdentity IdentifyDefaultAcl(const Session& session, uint64_t oid) {
+  auto& context = *session.context;
+  auto& cluster = catalog::ClusterOf(context);
+  const auto database =
+    cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+      .Get(cluster.GetCatalogTransaction(context),
+           duckdb::DatabaseManager::GetDefaultDatabase(context));
+  auto identity = Missing("default acl");
+  if (!database) {
+    return identity;
+  }
+  VisitDefaultAcls(context, *database, [&](const duckdb::DefaultAcl& row) {
+    if (row.oid != oid) {
+      return;
+    }
+    const auto schema =
+      row.scope == kInvalidOid ? nullptr : SchemaByOid(session, row.scope);
+    if (row.scope != kInvalidOid && !schema) {
+      return;
+    }
+    const std::string_view schema_name =
+      schema ? std::string_view{schema->name.GetIdentifierName()}
+             : std::string_view{};
+    auto target = absl::StrCat(
+      "for role ",
+      QuoteIdentifier(catalog::RolesOf(&context)->NameOf(row.role)));
+    if (schema) {
+      absl::StrAppend(&target, " in schema ", QuoteIdentifier(schema_name));
+    }
+    absl::StrAppend(&target, " on ", DefaultAclTargets(row.objtype));
+    identity.description = DescribeDefaultAcl(context, row, schema_name);
+    identity.identity = std::move(target);
+  });
+  return identity;
 }
 
 std::optional<ObjectIdentity> IdentifyObject(const Session& session,
@@ -439,44 +484,17 @@ std::optional<ObjectIdentity> IdentifyObject(const Session& session,
   if (classid == kPgLanguageTable) {
     return IdentifyNamed("language", kSystemLanguages, objid);
   }
+  if (classid == kPgForeignDataWrapperTable) {
+    return IdentifyNamed("foreign-data wrapper", kForeignDataWrappers, objid);
+  }
   if (classid == kPgAmTable) {
     return IdentifyNamed("access method", kSystemAccessMethods, objid);
   }
   if (classid == kPgTablespaceTable) {
     return IdentifyTablespace(session, objid);
   }
-  return std::nullopt;
-}
-
-std::optional<std::span<const duckdb::AclItem>> ObjectAcl(
-  const Session& session, const ObjectAddress& address) {
-  using enum duckdb::CatalogType;
-  const auto [classid, objid, objsubid] = address;
-  if (!absl::c_linear_search(kAclClasses, classid)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("unrecognized class ID: ", classid));
-  }
-  if (classid == kPgClassTable) {
-    const auto relation = RelationByOid(session, objid);
-    if (!relation || relation->key ||
-        (relation->entry && (relation->entry->type == INDEX_ENTRY ||
-                             relation->entry->type == TYPE_ENTRY))) {
-      return std::nullopt;
-    }
-    if (objsubid == 0) {
-      return relation->permissions->acl;
-    }
-    if (const auto* column = TableColumn(*relation, objsubid)) {
-      return column->Acl();
-    }
-    return std::nullopt;
-  }
-  if (classid == kPgProcTable || classid == kPgTypeTable ||
-      classid == kPgNamespaceTable) {
-    if (const auto entry = ObjectEntry(session, objid);
-        entry && CatalogClassOid(entry->type) == classid) {
-      return entry->permissions.acl;
-    }
+  if (classid == kPgDefaultAclTable) {
+    return IdentifyDefaultAcl(session, objid);
   }
   return std::nullopt;
 }
@@ -551,24 +569,6 @@ void PgIdentifyObjectFunction(duckdb::DataChunk& args,
   });
 }
 
-void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                      duckdb::Vector& result) {
-  const auto& session = SessionOf(state);
-  const auto roles = auth::RolesOf(&state.GetContext());
-  auto writer =
-    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(
-      result, args.size());
-  std::string text;
-  ForEachObject(args, [&](const std::optional<ObjectAddress>& object) {
-    const auto acl = object ? ObjectAcl(session, *object) : std::nullopt;
-    if (!acl || acl->empty()) {
-      writer.WriteNull();
-      return;
-    }
-    WriteAclTexts(writer, *acl, *roles, text);
-  });
-}
-
 }  // namespace
 
 std::string DescribeObject(duckdb::ClientContext& context,
@@ -600,6 +600,9 @@ std::string DescribeObject(duckdb::ClientContext& context,
       break;
     case FOREIGN_SERVER_ENTRY:
       return absl::StrCat("server ", entry.name.GetIdentifierName());
+    case FOREIGN_DATA_WRAPPER_ENTRY:
+      classid = kPgForeignDataWrapperTable;
+      break;
     default:
       return absl::StrCat(
         absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)), " ",
@@ -626,6 +629,15 @@ std::string DescribeObject(duckdb::ClientContext& context,
   return described;
 }
 
+std::string DescribeObject(duckdb::ClientContext& context, uint64_t classid,
+                           uint64_t objid, int32_t objsubid) {
+  auto identity =
+    IdentifyObject(MakeSession(&context),
+                   {.classid = classid, .objid = objid, .objsubid = objsubid});
+  return identity && identity->description ? std::move(*identity->description)
+                                           : std::string{};
+}
+
 void RegisterObjectAddressFunctions(duckdb::ExtensionLoader& loader) {
   using enum duckdb::FunctionStability;
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
@@ -644,11 +656,6 @@ void RegisterObjectAddressFunctions(duckdb::ExtensionLoader& loader) {
   identify_object.GetSignature().SetRecordResult();
   RegisterScalar(loader, pg_catalog, "pg_identify_object",
                  CONSISTENT_WITHIN_QUERY, InitSession, {identify_object});
-  RegisterScalar(loader, pg_catalog, "pg_get_acl", CONSISTENT_WITHIN_QUERY,
-                 InitSession,
-                 {duckdb::ScalarFunction{{oid, oid, int4},
-                                         duckdb::LogicalType::LIST(ACLITEM()),
-                                         PgGetAclFunction}});
 }
 
 }  // namespace sdb::pg

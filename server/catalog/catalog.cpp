@@ -23,9 +23,12 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/execution/expression_executor.hpp>
@@ -53,15 +56,16 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/database_size.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <utility>
 #include <vector>
 
-#include "auth/enforce.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
+#include "catalog/entry/foreign_data_wrapper.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
@@ -88,6 +92,34 @@
 
 namespace sdb::catalog {
 namespace {
+
+class BuiltinWrappers final : public duckdb::DefaultGenerator {
+ public:
+  explicit BuiltinWrappers(duckdb::Catalog& catalog)
+    : duckdb::DefaultGenerator{catalog} {}
+
+  duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
+    duckdb::CatalogTransaction, const duckdb::Identifier& name) final {
+    const auto* wrapper =
+      pg::FindSystemObject(pg::kForeignDataWrappers, name.GetIdentifierName());
+    if (!wrapper) {
+      return nullptr;
+    }
+    duckdb::CreateForeignDataWrapperInfo info;
+    info.SetName(name);
+    info.oid = wrapper->oid;
+    info.permissions.owner = pg::kRootUser;
+    return duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(catalog, info);
+  }
+
+  duckdb::vector<duckdb::Identifier> GetDefaultEntries() final {
+    duckdb::vector<duckdb::Identifier> names;
+    for (const auto& wrapper : pg::kForeignDataWrappers) {
+      names.emplace_back(wrapper.name);
+    }
+    return names;
+  }
+};
 
 const SearchTableEntry& SearchTable(const duckdb::TableCatalogEntry& table) {
   if (!IsSearchTable(table)) {
@@ -221,21 +253,29 @@ std::string SereneDBCatalog::StoragePath(duckdb::CatalogTransaction transaction,
     cluster.GetCatalogTransaction(context), tablespace));
 }
 
-void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
-                            duckdb::CreateInfo& info,
-                            std::string_view refusal) {
-  const auto requested = std::exchange(info.tablespace, duckdb::Identifier{});
-  if (info.oid != 0 || !transaction.HasContext()) {
-    return;
+void SereneDBCatalog::Place(
+  duckdb::CatalogTransaction transaction, duckdb::CreateInfo& info,
+  duckdb::optional_ptr<const duckdb::CatalogEntry> indexed) {
+  if (info.oid == 0 && transaction.HasContext()) {
+    auto tablespace =
+      PlacementTablespace(transaction.GetContext(), info, indexed);
+    info.tablespace_oid = tablespace ? tablespace->oid : 0;
+    if (tablespace) {
+      info.dependencies.AddDependency(*tablespace);
+    }
   }
-  info.tablespace_oid = 0;
-  auto& context = transaction.GetContext();
+  info.tablespace = {};
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::PlacementTablespace(
+  duckdb::ClientContext& context, const duckdb::CreateInfo& info,
+  duckdb::optional_ptr<const duckdb::CatalogEntry> indexed) {
   auto& cluster = ClusterOf(context);
   const auto at = cluster.GetCatalogTransaction(context);
-  const bool named = !requested.empty();
+  const bool named = !info.tablespace.empty();
   duckdb::optional_ptr<duckdb::CatalogEntry> tablespace;
   if (named) {
-    tablespace = &cluster.Tablespace(at, requested);
+    tablespace = &cluster.Tablespace(at, info.tablespace);
   } else if (const auto name = ConnectionContext::Get(context)
                                  .Get(kDefaultTablespaceSetting)
                                  .value_or("");
@@ -244,14 +284,20 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
                    .Get(at, duckdb::Identifier{name});
   }
   if (!tablespace) {
-    return;
+    return nullptr;
+  }
+  std::string_view refusal;
+  if (indexed && indexed->type == duckdb::CatalogType::TABLE_ENTRY) {
+    refusal =
+      "an index on a table is stored with the table and cannot be placed in a "
+      "tablespace";
   }
   if (InMemory()) {
     refusal = "temporary objects cannot be placed in a tablespace";
   }
   if (!refusal.empty()) {
     if (!named) {
-      return;
+      return nullptr;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
   }
@@ -265,11 +311,9 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
     own = database->Cast<DatabaseCatalogEntry>().Tablespace();
   }
   if (tablespace->oid == own) {
-    return;
+    return nullptr;
   }
-  auth::RequireTablespaceCreate(context, *tablespace);
-  info.dependencies.AddDependency(*tablespace);
-  info.tablespace_oid = tablespace->oid;
+  return tablespace;
 }
 
 void SereneDBCatalog::LogSequenceValue(const duckdb::SequenceValue& value) {
@@ -279,12 +323,15 @@ void SereneDBCatalog::LogSequenceValue(const duckdb::SequenceValue& value) {
 }
 
 void SereneDBCatalog::Initialize(bool) {
+  _wrappers.SetDefaults(duckdb::make_uniq<BuiltinWrappers>(*this));
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
   duckdb::CreateSchemaInfo info;
   info.SetQualifiedName(
     duckdb::QualifiedName({*GetDefaultSchema()}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  info.permissions = pg::SchemaPermissions();
+  info.permissions = GetAttached().IsTemporary()
+                       ? pg::SchemaPermissions()
+                       : pg::PublicSchemaPermissions();
   info.oid = GetAttached().IsTemporary()
                ? duckdb::DatabaseManager::Get(GetDatabase()).NextOid()
                : pg::kPgPublicSchema;
@@ -317,15 +364,30 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   BaseCatalog::OnDetach(context);
 }
 
-EntrySet& SereneDBCatalog::Set(duckdb::CatalogType type) {
+EntrySet* SereneDBCatalog::FindSet(duckdb::CatalogType type) {
   switch (type) {
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
-      return _servers;
+      return &_servers;
     case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
-      return _subscriptions;
+      return &_subscriptions;
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+      return &_wrappers;
     default:
-      return BaseCatalog::Set(type);
+      return BaseCatalog::FindSet(type);
   }
+}
+
+void SereneDBCatalog::ScanEntries(
+  duckdb::CatalogTransaction transaction,
+  absl::FunctionRef<void(duckdb::CatalogEntry&)> callback) {
+  Set(duckdb::CatalogType::SCHEMA_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& schema) {
+      callback(schema);
+      schema.Cast<Schema>().ScanTree(transaction, callback);
+    });
+  _servers.Scan(transaction, callback);
+  _subscriptions.Scan(transaction, callback);
+  _wrappers.Scan(transaction, callback);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
@@ -346,20 +408,6 @@ void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
            info);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
-  duckdb::CatalogTransaction transaction,
-  duckdb::CreateSubscriptionInfo& info) {
-  return AddTo(_subscriptions, transaction,
-               duckdb::make_uniq<SubscriptionCatalogEntry>(*this, info),
-               info.on_conflict);
-}
-
-void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
-                                       duckdb::DropInfo& info) {
-  DropFrom(_subscriptions, transaction, duckdb::CatalogType::SUBSCRIPTION_ENTRY,
-           info);
-}
-
 void SereneDBCatalog::ReplayCreate(
   duckdb::ClientContext& context, duckdb::unique_ptr<duckdb::CreateInfo> info) {
   switch (info->type) {
@@ -370,8 +418,16 @@ void SereneDBCatalog::ReplayCreate(
             info->on_conflict);
       return;
     case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
-      CreateSubscription(GetCatalogTransaction(context),
-                         info->Cast<duckdb::CreateSubscriptionInfo>());
+      AddTo(_subscriptions, GetCatalogTransaction(context),
+            duckdb::make_uniq<SubscriptionCatalogEntry>(
+              *this, info->Cast<duckdb::CreateSubscriptionInfo>()),
+            info->on_conflict);
+      return;
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+      AddTo(_wrappers, GetCatalogTransaction(context),
+            duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(
+              *this, info->Cast<duckdb::CreateForeignDataWrapperInfo>()),
+            info->on_conflict);
       return;
     default:
       BaseCatalog::ReplayCreate(context, std::move(info));
@@ -392,6 +448,43 @@ void SereneDBCatalog::ReplayDrop(duckdb::ClientContext& context,
   Set(type).Drop(transaction, entry.name);
 }
 
+void SereneDBCatalog::DropSchemaEntry(
+  duckdb::CatalogTransaction transaction,
+  const duckdb::SchemaCatalogEntry& schema) {
+  BaseCatalog::DropSchemaEntry(transaction, schema);
+  auto& context = transaction.GetContext();
+  auto& cluster = ClusterOf(context);
+  const auto cluster_transaction = cluster.GetCatalogTransaction(context);
+  const auto database = cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+                          .Get(cluster_transaction, GetName());
+  if (!database) {
+    return;
+  }
+  std::vector<duckdb::unique_ptr<duckdb::AlterPermissionsInfo>> revokes;
+  for (const auto& row : database->Cast<DatabaseCatalogEntry>().DefaultAcls()) {
+    if (row.scope != schema.oid) {
+      continue;
+    }
+    for (const auto& item : row.acl) {
+      auto& revoke =
+        *revokes.emplace_back(duckdb::make_uniq<duckdb::AlterPermissionsInfo>(
+          duckdb::CatalogType::DATABASE_ENTRY,
+          duckdb::QualifiedName{cluster.GetName(), duckdb::Identifier{},
+                                database->name}));
+      revoke.default_objtype = row.objtype;
+      revoke.target_role = row.role;
+      revoke.default_scope = row.scope;
+      revoke.grantee_id = item.grantee;
+      revoke.privileges = duckdb::ObjectKindOf(row.objtype).privileges;
+      revoke.revoke = true;
+      revoke.cascade = true;
+    }
+  }
+  for (auto& revoke : revokes) {
+    cluster.Alter(cluster_transaction, *revoke);
+  }
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
   if (!info.internal && IsReservedSchemaName(info.SchemaName())) {
@@ -405,38 +498,215 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
+  switch (info.type) {
+    case duckdb::AlterType::ALTER_OWNED: {
+      const auto& owned = info.Cast<duckdb::AlterOwnedInfo>();
+      if (owned.new_owner.empty()) {
+        DropOwned(transaction, owned);
+      } else {
+        ReassignOwned(transaction, owned);
+      }
+      return;
+    }
+    case duckdb::AlterType::ALTER_TABLE:
+    case duckdb::AlterType::ALTER_INDEX:
+      if (transaction.HasContext()) {
+        RefuseUnsupportedAlter(transaction.GetContext(), info);
+      }
+      break;
+    default:
+      break;
+  }
   if (const auto new_name = info.GetNewName();
       new_name && info.GetCatalogType() == duckdb::CatalogType::SCHEMA_ENTRY &&
       IsReservedSchemaName(*new_name)) {
     ThrowReservedSchemaName(*new_name);
   }
-  if (const auto type = info.GetCatalogType();
-      type == duckdb::CatalogType::FOREIGN_SERVER_ENTRY ||
-      type == duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-    DeclareModified(transaction, *this,
-                    duckdb::DatabaseModificationType::ALTER_TABLE);
-    const auto& name = info.GetQualifiedName().Name();
-    auto& set = Set(type);
-    auto entry = set.Get(transaction, name);
-    if (!entry) {
-      if (info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
+  switch (info.GetCatalogType()) {
+    case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
+      AlterSubscription(transaction, info);
+      return;
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+      AlterIn(_wrappers, transaction, info);
+      return;
+    case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
+      AlterForeignServer(transaction, info);
+      return;
+    default:
+      BaseCatalog::Alter(transaction, info);
+  }
+}
+
+void SereneDBCatalog::AlterForeignServer(duckdb::CatalogTransaction transaction,
+                                         duckdb::AlterInfo& info) {
+  const auto [server, altered] = AlterIn(_servers, transaction, info);
+  if (altered && transaction.HasContext() &&
+      info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
+    altered->Cast<ForeignServerCatalogEntry>().FollowOwner(
+      transaction.GetContext(), server->permissions.owner);
+  }
+}
+
+void SereneDBCatalog::ScanOwned(
+  duckdb::CatalogTransaction transaction,
+  const std::function<void(duckdb::CatalogEntry&)>& callback) {
+  ScanEntries(transaction, [&](duckdb::CatalogEntry& entry) {
+    const auto container = duckdb::ObjectKindOf(entry.type).container;
+    if (entry.internal ||
+        (container != duckdb::ObjectContainer::DATABASE &&
+         container != duckdb::ObjectContainer::SCHEMA) ||
+        (entry.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
+         OwnerOf(transaction, entry))) {
+      return;
+    }
+    callback(entry);
+  });
+}
+
+void SereneDBCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
+                                    const duckdb::AlterOwnedInfo& info) {
+  for (const auto& object : info.objects) {
+    if (duckdb::ObjectKindOf(object.type).container ==
+        duckdb::ObjectContainer::CLUSTER) {
+      continue;
+    }
+    duckdb::AlterPermissionsInfo alter{
+      object.type == duckdb::CatalogType::VIEW_ENTRY
+        ? duckdb::CatalogType::TABLE_ENTRY
+        : object.type,
+      object.name};
+    alter.new_owner = info.new_owner;
+    alter.new_owner_id = info.new_owner_id;
+    alter.overload_oid = object.overload_oid;
+    Alter(transaction, alter);
+  }
+  auto& cluster = ClusterOf(transaction.GetContext());
+  cluster.ReassignOwned(cluster.GetCatalogTransaction(transaction.GetContext()),
+                        info);
+}
+
+void SereneDBCatalog::DropOwned(duckdb::CatalogTransaction transaction,
+                                const duckdb::AlterOwnedInfo& info) {
+  auto& context = transaction.GetContext();
+  const auto dropped = [&](duckdb::idx_t owner) {
+    return absl::c_linear_search(info.role_ids, owner);
+  };
+  std::vector<duckdb::unique_ptr<duckdb::AlterPermissionsInfo>> revokes;
+  duckdb::catalog_entry_vector_t entries;
+  std::vector<duckdb::DropInfo> overload_drops;
+  ScanOwned(transaction, [&](duckdb::CatalogEntry& entry) {
+    const auto name = [&] {
+      return duckdb::QualifiedName::FromCatalogSchema(
+        GetName(), duckdb::DependencyManager::GetSchemaPath(transaction, entry),
+        entry.name);
+    };
+    const auto revoke = [&](duckdb::idx_t role, duckdb::idx_t overload) {
+      auto& alter =
+        *revokes.emplace_back(duckdb::make_uniq<duckdb::AlterPermissionsInfo>(
+          entry.type == duckdb::CatalogType::VIEW_ENTRY
+            ? duckdb::CatalogType::TABLE_ENTRY
+            : entry.type,
+          name()));
+      alter.privileges =
+        duckdb::ObjectKindOf(duckdb::ObjectKindOf(entry.type).acl_class)
+          .privileges;
+      alter.revoke = true;
+      alter.cascade = true;
+      alter.grantee_id = role;
+      alter.grantors = info.grantors;
+      alter.best_grantor = true;
+      alter.overload_oid = overload;
+    };
+    if (entry.type != duckdb::CatalogType::MACRO_ENTRY &&
+        entry.type != duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+      if (dropped(entry.permissions.owner)) {
+        if (!duckdb::ObjectKindOf(entry.type).shared) {
+          entries.push_back(entry);
+        }
         return;
       }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG(type == duckdb::CatalogType::SUBSCRIPTION_ENTRY
-                                ? "subscription \""
-                                : "server \"",
-                              name.GetIdentifierName(), "\" does not exist"));
+      for (const auto role : info.role_ids) {
+        if (ReferencesRole(entry, role)) {
+          revoke(role, 0);
+        }
+      }
+      return;
     }
-    catalog::AlterEntry(transaction, set, *entry, info);
-    return;
+    const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
+    if (absl::c_all_of(macro.macros, [&](const auto& overload) {
+          return dropped(macro.OverloadPermissions(*overload).owner);
+        })) {
+      entries.push_back(entry);
+      return;
+    }
+    for (const auto& overload : macro.macros) {
+      const auto& permissions = macro.OverloadPermissions(*overload);
+      if (!dropped(permissions.owner)) {
+        for (const auto role : info.role_ids) {
+          if (absl::c_any_of(permissions.acl, [&](const duckdb::AclItem& item) {
+                return item.grantee == role;
+              })) {
+            revoke(role, macro.OverloadOid(*overload));
+          }
+        }
+        continue;
+      }
+      auto& drop = overload_drops.emplace_back();
+      drop.type = entry.type;
+      drop.SetQualifiedName(name());
+      drop.func_parameters = overload->ParameterTypes();
+      drop.has_func_args = true;
+      drop.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
+    }
+  });
+  for (auto& revoke : revokes) {
+    Alter(transaction, *revoke);
   }
-  if (transaction.HasContext() &&
-      (info.type == duckdb::AlterType::ALTER_TABLE ||
-       info.type == duckdb::AlterType::ALTER_INDEX)) {
-    RefuseUnsupportedAlter(transaction.GetContext(), info);
+  auto& cluster = ClusterOf(context);
+  const auto cluster_transaction = cluster.GetCatalogTransaction(context);
+  if (const auto database = cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+                              .Get(cluster_transaction, GetName());
+      database && !database->internal) {
+    for (const auto role : info.role_ids) {
+      if (absl::c_none_of(database->Cast<DatabaseCatalogEntry>().DefaultAcls(),
+                          [&](const duckdb::DefaultAcl& row) {
+                            return row.role == role ||
+                                   absl::c_any_of(
+                                     row.acl, [&](const duckdb::AclItem& item) {
+                                       return item.grantee == role;
+                                     });
+                          })) {
+        continue;
+      }
+      duckdb::AlterPermissionsInfo alter{
+        duckdb::CatalogType::DATABASE_ENTRY,
+        duckdb::QualifiedName{cluster.GetName(), duckdb::Identifier{},
+                              database->name}};
+      alter.drop_owned_role_id = role;
+      cluster.Alter(cluster_transaction, alter);
+    }
   }
-  BaseCatalog::Alter(transaction, info);
+  cluster.DropOwned(cluster_transaction, info);
+  if (!info.cascade) {
+    RefuseDroppingTogether(transaction, entries);
+  }
+  std::vector<duckdb::DropInfo> drops;
+  for (auto& entry : DropOrder(transaction, entries)) {
+    auto& drop = drops.emplace_back();
+    drop.type = entry.get().type;
+    drop.SetQualifiedName(duckdb::QualifiedName::FromCatalogSchema(
+      GetName(),
+      duckdb::DependencyManager::GetSchemaPath(transaction, entry.get()),
+      entry.get().name));
+    drop.cascade = true;
+    drop.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
+  }
+  for (auto& drop : drops) {
+    DropEntry(context, drop);
+  }
+  for (auto& drop : overload_drops) {
+    DropEntry(context, drop);
+  }
 }
 
 void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
@@ -469,7 +739,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeTable(
   SDB_IF_FAILURE("unable_to_create") {
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
-  Place(transaction, info.Base(), {});
+  Place(transaction, info.Base(), nullptr);
   auto entry =
     duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
   if (info.Base().oid == 0) {
@@ -490,10 +760,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeIndex(
   if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
     table = &relation.Cast<duckdb::TableCatalogEntry>();
   }
-  Place(transaction, info,
-        table ? "an index on a table is stored with the table and cannot be "
-                "placed in a tablespace"
-              : std::string_view{});
+  Place(transaction, info, relation);
   auto entry =
     duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, table);
   if (info.oid == 0) {

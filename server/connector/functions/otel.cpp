@@ -29,6 +29,7 @@
 #include <compare>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -66,21 +67,24 @@ void BindTarget(duckdb::ClientContext& context,
                 TargetColumns& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::Identifier>& names) {
-  auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    context,
+  const duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::TABLE_ENTRY,
     duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
                           duckdb::Identifier{schema_name},
-                          duckdb::Identifier{table_name}},
-    duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!table) {
+                          duckdb::Identifier{table_name}}};
+  auto table = binder ? binder->EntryRetriever().GetEntry(
+                          lookup, duckdb::OnEntryNotFound::RETURN_NULL)
+                      : duckdb::CatalogEntryRetriever{context}.GetEntry(
+                          lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!table || table->type != duckdb::CatalogType::TABLE_ENTRY) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", schema_name, ".", table_name,
                             "\" does not exist; create the OpenTelemetry "
                             "schema first"));
   }
-  duckdb::Binder::RegisterEntryRead(binder, context, *table);
   size_t index = 0;
-  for (const auto& column : table->GetColumns().Logical()) {
+  for (const auto& column :
+       table->Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
     return_types.push_back(column.Type());
     names.emplace_back(column.Name().GetIdentifierName());
     data.columns.emplace(column.Name().GetIdentifierName(), index);

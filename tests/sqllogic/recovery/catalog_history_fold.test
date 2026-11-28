@@ -65,7 +65,7 @@ ALTER ROLE chf_role RESET ALL;
 
 
 statement ok
-ALTER ROLE chf_role RESET work_mem;
+ALTER ROLE chf_role RESET application_name;
 
 
 statement ok
@@ -121,7 +121,7 @@ ALTER ROLE chf_role NOLOGIN;
 
 
 statement ok
-ALTER ROLE chf_role SET work_mem = '1000kB';
+ALTER ROLE chf_role SET application_name = 'chf1000';
 
 
 statement ok
@@ -193,7 +193,7 @@ ALTER ROLE chf_role LOGIN;
 
 
 statement ok
-ALTER ROLE chf_role SET work_mem = '1001kB';
+ALTER ROLE chf_role SET application_name = 'chf1001';
 
 
 statement ok
@@ -257,7 +257,7 @@ ALTER ROLE chf_role NOLOGIN;
 
 
 statement ok
-ALTER ROLE chf_role SET work_mem = '1002kB';
+ALTER ROLE chf_role SET application_name = 'chf1002';
 
 
 statement ok
@@ -321,7 +321,7 @@ ALTER ROLE chf_role LOGIN;
 
 
 statement ok
-ALTER ROLE chf_role SET work_mem = '1003kB';
+ALTER ROLE chf_role SET application_name = 'chf1003';
 
 
 statement ok
@@ -385,7 +385,7 @@ ALTER ROLE chf_role NOLOGIN;
 
 
 statement ok
-ALTER ROLE chf_role SET work_mem = '1004kB';
+ALTER ROLE chf_role SET application_name = 'chf1004';
 
 
 statement ok

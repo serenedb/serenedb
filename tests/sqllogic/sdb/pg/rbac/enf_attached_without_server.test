@@ -1,0 +1,45 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS eaw_reader;
+
+
+statement ok
+CREATE ROLE eaw_reader LOGIN PASSWORD 'eaw_pw';
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/eaw_side.duckdb' AS eaw_side_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE eaw_side_${__DATABASE__}.main.eaw_t AS SELECT 1 AS a;
+
+
+query
+SELECT a FROM eaw_side_${__DATABASE__}.main.eaw_t;
+----
+a
+1
+
+
+connection c_eaw user=eaw_reader password=eaw_pw
+statement error
+SELECT a FROM eaw_side_${__DATABASE__}.main.eaw_t;
+----
+db error: ERROR: Table with name "eaw_side_<slt:ignore>.main.eaw_t" does not exist because schema "eaw_side_<slt:ignore>.main" does not exist.
+
+
+connection c_eaw user=eaw_reader password=eaw_pw
+statement error
+INSERT INTO eaw_side_${__DATABASE__}.main.eaw_t VALUES (2);
+----
+db error: ERROR: Table with name "eaw_side_<slt:ignore>.main.eaw_t" does not exist because schema "eaw_side_<slt:ignore>.main" does not exist.
+
+
+statement ok
+DETACH eaw_side_${__DATABASE__};
+
+
+statement ok
+DROP ROLE eaw_reader;

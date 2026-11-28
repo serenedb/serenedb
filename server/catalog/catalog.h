@@ -26,6 +26,7 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
@@ -84,18 +85,30 @@ class SereneDBCatalog final : public BaseCatalog {
                           const duckdb::CatalogEntry& entry,
                           duckdb::idx_t tablespace);
   void Place(duckdb::CatalogTransaction transaction, duckdb::CreateInfo& info,
-             std::string_view refusal);
+             duckdb::optional_ptr<const duckdb::CatalogEntry> indexed);
+  duckdb::optional_ptr<duckdb::CatalogEntry> PlacementTablespace(
+    duckdb::ClientContext& context, const duckdb::CreateInfo& info,
+    duckdb::optional_ptr<const duckdb::CatalogEntry> indexed) final;
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
   EntrySet& Servers() noexcept { return _servers; }
   EntrySet& Subscriptions() noexcept { return _subscriptions; }
+  void ScanEntries(duckdb::CatalogTransaction transaction,
+                   absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
 
+  void RequireSubscription(duckdb::ClientContext& context,
+                           const duckdb::RoleAccess& role,
+                           const duckdb::CreateSubscriptionInfo& info) final;
+  void RequireSubscription(
+    duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+    duckdb::CatalogEntry& subscription,
+    duckdb::optional_ptr<const duckdb::AlterSubscriptionInfo> alter) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateSubscriptionInfo& info);
+    duckdb::CreateSubscriptionInfo& info) final;
   void DropSubscription(duckdb::CatalogTransaction transaction,
-                        duckdb::DropInfo& info);
+                        duckdb::DropInfo& info) final;
 
-  EntrySet& Set(duckdb::CatalogType type) final;
+  EntrySet* FindSet(duckdb::CatalogType type) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
     duckdb::CatalogTransaction transaction,
@@ -107,6 +120,8 @@ class SereneDBCatalog final : public BaseCatalog {
                     duckdb::unique_ptr<duckdb::CreateInfo> info) final;
   void ReplayDrop(duckdb::ClientContext& context,
                   duckdb::CatalogEntry& entry) final;
+  void DropSchemaEntry(duckdb::CatalogTransaction transaction,
+                       const duckdb::SchemaCatalogEntry& schema) final;
 
   std::string GetCatalogType() final { return kStorageType; }
   duckdb::DatabaseSize GetDatabaseSize(duckdb::ClientContext& context) final;
@@ -210,11 +225,25 @@ class SereneDBCatalog final : public BaseCatalog {
     const duckdb::CreateTableInfo& info, const duckdb::ColumnDefinition& column,
     const duckdb::LogicalType& type) const final;
 
+  void ScanOwned(
+    duckdb::CatalogTransaction transaction,
+    const std::function<void(duckdb::CatalogEntry&)>& callback) final;
+
  private:
+  void AlterSubscription(duckdb::CatalogTransaction transaction,
+                         duckdb::AlterInfo& info);
+  void AlterForeignServer(duckdb::CatalogTransaction transaction,
+                          duckdb::AlterInfo& info);
+  void ReassignOwned(duckdb::CatalogTransaction transaction,
+                     const duckdb::AlterOwnedInfo& info);
+  void DropOwned(duckdb::CatalogTransaction transaction,
+                 const duckdb::AlterOwnedInfo& info);
+
   std::shared_ptr<DatabaseDirectory> _directory;
   CatalogSnapshots _snapshots{*this};
-  EntrySet _servers{true, _oids};
-  EntrySet _subscriptions{true, _oids};
+  EntrySet _servers{true, _oids, 0, true};
+  EntrySet _subscriptions{true, _oids, 0, true};
+  EntrySet _wrappers{true, _oids};
   bool _durable;
   std::unique_ptr<ForeignLog> _foreign;
   std::atomic_bool _detached{false};

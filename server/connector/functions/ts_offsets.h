@@ -24,6 +24,7 @@
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <memory>
@@ -37,7 +38,8 @@ namespace sdb::connector {
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
-  ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer);
+  ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer,
+  duckdb::optional_ptr<duckdb::Binder> binder);
 
 struct OffsetsBindData final : duckdb::FunctionData {
   std::shared_ptr<const catalog::InvertedIndexConfig> config;

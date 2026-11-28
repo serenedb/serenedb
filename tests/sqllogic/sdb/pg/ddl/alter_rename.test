@@ -199,8 +199,7 @@ db error: ERROR: Index with name nonexistent does not exist!
 statement error
 ALTER FUNCTION nonexistent RENAME TO something;
 ----
-db error: ERROR: Macro Function with name nonexistent does not exist!
-<slt:ignore>
+db error: ERROR: could not find a function named "nonexistent"
 
 
 statement error
@@ -236,14 +235,13 @@ db error: ERROR: relation "pudge_view" already exists
 statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
 ----
-db error: ERROR: function "clickclack" already exists
+db error: ERROR: function clickclack() already exists in schema "public"
 
 
 statement error
 ALTER FUNCTION pudge RENAME TO something;
 ----
-db error: ERROR: Macro Function with name pudge does not exist!
-<slt:ignore>
+db error: ERROR: could not find a function named "pudge"
 
 
 # pudge_view, clickclack and deadinside depend on pudge and follow the column

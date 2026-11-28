@@ -1,0 +1,89 @@
+statement ok
+DROP ROLE IF EXISTS repro_exec_user;
+
+
+statement ok
+CREATE SEQUENCE repro_exec_seq;
+
+
+statement ok
+CREATE FUNCTION repro_exec_fn() RETURNS int LANGUAGE sql AS 'SELECT 42';
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION repro_exec_fn() FROM PUBLIC;
+
+
+statement ok
+CREATE ROLE repro_exec_user;
+
+
+statement ok
+SET ROLE repro_exec_user;
+
+
+statement ok
+PREPARE repro_exec_p(bigint) AS SELECT $1 AS v;
+
+
+statement error
+SELECT setval('repro_exec_seq', 5000);
+----
+db error: ERROR: Sequence with name repro_exec_seq does not exist!<slt:ignore>
+
+
+statement error
+EXECUTE repro_exec_p(setval('repro_exec_seq', 5000));
+----
+db error: ERROR: Sequence with name repro_exec_seq does not exist!<slt:ignore>
+
+
+statement error
+EXECUTE repro_exec_p(nextval('repro_exec_seq'));
+----
+db error: ERROR: Sequence with name repro_exec_seq does not exist!<slt:ignore>
+
+
+statement error
+EXECUTE repro_exec_p(repro_exec_fn());
+----
+db error: ERROR: Scalar Function with name repro_exec_fn does not exist!<slt:ignore>
+
+
+statement error
+SELECT count(*) FROM range(setval('repro_exec_seq', 8000));
+----
+db error: ERROR: Sequence with name repro_exec_seq does not exist!<slt:ignore>
+
+
+statement error
+SELECT count(*) FROM generate_series(1, nextval('repro_exec_seq'));
+----
+db error: ERROR: Sequence with name repro_exec_seq does not exist!<slt:ignore>
+
+
+statement ok
+DEALLOCATE repro_exec_p;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT last_value FROM pg_sequences WHERE sequencename = 'repro_exec_seq';
+----
+last_value
+NULL
+
+
+statement ok
+DROP FUNCTION repro_exec_fn;
+
+
+statement ok
+DROP SEQUENCE repro_exec_seq;
+
+
+statement ok
+DROP ROLE repro_exec_user;

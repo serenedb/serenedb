@@ -77,11 +77,20 @@ t	f	f
 
 
 # Real query path agrees: SELECT is now denied.
+onlyif postgres
 connection c_mop2 user=xmb_dem_mop password=xmb_dem_mop_pw
 statement error
 SELECT * FROM xmb_dem_clickclack;
 ----
 db error: ERROR: permission denied for table xmb_dem_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c_mop2 user=xmb_dem_mop password=xmb_dem_mop_pw
+statement error
+SELECT * FROM xmb_dem_clickclack;
+----
+db error: ERROR: Table with name xmb_dem_clickclack does not exist!<slt:ignore>
 
 
 # ---- WITH INHERIT TRUE: privilege flows again ----

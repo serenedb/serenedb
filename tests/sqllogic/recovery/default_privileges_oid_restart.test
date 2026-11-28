@@ -1,0 +1,81 @@
+control substitution on
+
+statement ok
+CREATE ROLE dpo_kostya;
+
+
+statement ok
+CREATE ROLE dpo_vova;
+
+
+statement ok
+CREATE SCHEMA dpo_mop;
+
+
+statement ok
+CREATE TABLE dpo_kept (objtype text, kept bigint);
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpo_kostya IN SCHEMA dpo_mop GRANT SELECT ON TABLES TO dpo_vova;
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE ROLE dpo_compaction;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpo_kostya GRANT USAGE ON TYPES TO dpo_vova;
+
+
+statement ok
+INSERT INTO dpo_kept
+SELECT defaclobjtype::text, oid::bigint FROM pg_default_acl
+WHERE defaclrole = 'dpo_kostya'::regrole;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT d.defaclobjtype::text AS objtype, d.oid::bigint = k.kept AS same_oid
+FROM pg_default_acl d JOIN dpo_kept k ON k.objtype = d.defaclobjtype::text
+WHERE d.defaclrole = 'dpo_kostya'::regrole
+ORDER BY d.oid;
+----
+objtype	same_oid
+r	t
+T	t
+
+
+connection after_crash
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpo_kostya GRANT USAGE ON SEQUENCES TO dpo_vova;
+
+
+connection after_crash
+query
+SELECT count(DISTINCT oid) AS oids, count(*) AS defaults
+FROM pg_default_acl WHERE defaclrole = 'dpo_kostya'::regrole;
+----
+oids	defaults
+3	3

@@ -61,11 +61,20 @@ f
 
 
 # The non-owner call is now denied.
+onlyif postgres
 connection c_fnx2 user=enf_fnx_vedernikoff password=enf_fnx_vedernikoff_pw
 statement error
 SELECT enf_fnx_secret(41) AS result;
 ----
 db error: ERROR: permission denied for function enf_fnx_secret<slt:ignore>
+
+
+skipif postgres
+connection c_fnx2 user=enf_fnx_vedernikoff password=enf_fnx_vedernikoff_pw
+statement error
+SELECT enf_fnx_secret(41) AS result;
+----
+db error: ERROR: Scalar Function with name enf_fnx_secret does not exist!<slt:ignore>
 
 
 # ---- cleanup ----

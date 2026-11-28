@@ -1,0 +1,94 @@
+statement ok
+DROP SCHEMA IF EXISTS hcag_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS hcag_writer;
+
+
+statement ok
+DROP ROLE IF EXISTS hcag_maint;
+
+
+statement ok
+DROP ROLE IF EXISTS hcag_user;
+
+
+statement ok
+CREATE ROLE hcag_writer;
+
+
+statement ok
+CREATE ROLE hcag_maint;
+
+
+statement ok
+CREATE ROLE hcag_user;
+
+
+statement ok
+GRANT pg_write_all_data TO hcag_writer;
+
+
+statement ok
+GRANT pg_maintain TO hcag_maint;
+
+
+statement ok
+CREATE SCHEMA hcag_s;
+
+
+statement ok
+CREATE SEQUENCE hcag_s.seq;
+
+
+statement ok
+GRANT USAGE ON SCHEMA hcag_s TO hcag_user;
+
+
+query
+SELECT has_table_privilege('hcag_writer', 'hcag_s.seq', 'INSERT') AS writer_insert,
+       has_table_privilege('hcag_writer', 'hcag_s.seq', 'DELETE') AS writer_delete,
+       has_table_privilege('hcag_maint', 'hcag_s.seq', 'MAINTAIN') AS maint_maintain,
+       has_table_privilege('hcag_user', 'hcag_s.seq', 'INSERT') AS user_insert;
+----
+writer_insert	writer_delete	maint_maintain	user_insert
+t	t	t	f
+
+
+query
+SELECT has_schema_privilege('hcag_user', 'hcag_s', 'USAGE, CREATE') AS usage_or_create,
+       has_schema_privilege('hcag_user', 'hcag_s', 'CREATE') AS create_only,
+       has_schema_privilege('hcag_user', 'hcag_s', 'USAGE WITH GRANT OPTION') AS usage_grant,
+       has_schema_privilege(current_user, 'hcag_s', 'CREATE WITH GRANT OPTION') AS owner_create_grant;
+----
+usage_or_create	create_only	usage_grant	owner_create_grant
+t	f	f	t
+
+
+statement ok
+GRANT CREATE ON SCHEMA hcag_s TO hcag_user;
+
+
+query
+SELECT has_schema_privilege('hcag_user', 'hcag_s', 'CREATE WITH GRANT OPTION') AS create_grant,
+       has_schema_privilege('hcag_user', 'hcag_s', 'CREATE, USAGE WITH GRANT OPTION') AS create_or_usage_grant;
+----
+create_grant	create_or_usage_grant
+f	t
+
+
+statement ok
+DROP SCHEMA hcag_s CASCADE;
+
+
+statement ok
+DROP ROLE hcag_writer;
+
+
+statement ok
+DROP ROLE hcag_maint;
+
+
+statement ok
+DROP ROLE hcag_user;

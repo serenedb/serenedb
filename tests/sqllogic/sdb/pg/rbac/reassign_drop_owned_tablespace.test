@@ -1,0 +1,85 @@
+control substitution on
+
+statement ok
+DROP TABLESPACE IF EXISTS rdt_ts;
+
+
+statement ok
+DROP ROLE IF EXISTS rdt_alice, rdt_bob, rdt_carol;
+
+
+statement ok
+CREATE ROLE rdt_alice;
+
+
+statement ok
+CREATE ROLE rdt_bob;
+
+
+statement ok
+CREATE ROLE rdt_carol;
+
+
+statement ok
+CREATE TABLESPACE rdt_ts LOCATION '${__TEST_DIR__}/rdt/ts';
+
+
+statement ok
+ALTER TABLESPACE rdt_ts OWNER TO rdt_alice;
+
+
+statement ok
+GRANT CREATE ON TABLESPACE rdt_ts TO rdt_carol;
+
+
+statement ok
+REASSIGN OWNED BY rdt_alice TO rdt_bob;
+
+
+query
+SELECT spcowner::regrole::text AS owner, spcacl AS acl FROM pg_tablespace WHERE spcname = 'rdt_ts';
+----
+owner	acl
+rdt_bob	{rdt_bob=C/rdt_bob,rdt_carol=C/rdt_bob}
+
+
+statement ok
+DROP OWNED BY rdt_carol;
+
+
+query
+SELECT has_tablespace_privilege('rdt_carol', 'rdt_ts', 'CREATE') AS carol,
+       has_tablespace_privilege('rdt_bob', 'rdt_ts', 'CREATE') AS bob
+----
+carol	bob
+f	t
+
+
+statement ok
+DROP ROLE rdt_alice, rdt_carol;
+
+
+statement ok
+DROP OWNED BY rdt_bob;
+
+
+query
+SELECT count(*) AS n FROM pg_tablespace WHERE spcname = 'rdt_ts';
+----
+n
+1
+
+
+statement error
+DROP ROLE rdt_bob;
+----
+db error: ERROR: role "rdt_bob" cannot be dropped because some objects depend on it
+DETAIL: owner of tablespace rdt_ts
+
+
+statement ok
+DROP TABLESPACE rdt_ts;
+
+
+statement ok
+DROP ROLE rdt_bob;

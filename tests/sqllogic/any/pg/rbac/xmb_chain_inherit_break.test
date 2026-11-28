@@ -116,11 +116,20 @@ member_leaf	usage_leaf	usage_kostya
 t	f	t
 
 
+onlyif postgres
 connection c_babsky2 user=xmb_cib_babsky password=xmb_cib_babsky_pw
 statement error
 SELECT * FROM xmb_cib_makak;
 ----
 db error: ERROR: permission denied for table xmb_cib_makak<slt:ignore>
+
+
+skipif postgres
+connection c_babsky2 user=xmb_cib_babsky password=xmb_cib_babsky_pw
+statement error
+SELECT * FROM xmb_cib_makak;
+----
+db error: ERROR: Table with name xmb_cib_makak does not exist!<slt:ignore>
 
 
 # ---- Restore the edge inherit: full chain flows again ----

@@ -75,11 +75,20 @@ f	t
 
 
 # Real query path: NOINHERIT member denied, INHERIT member allowed.
+onlyif postgres
 connection c_ved user=xmb_nre_vedernikoff password=xmb_nre_vedernikoff_pw
 statement error
 SELECT * FROM xmb_nre_mop;
 ----
 db error: ERROR: permission denied for table xmb_nre_mop<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=xmb_nre_vedernikoff password=xmb_nre_vedernikoff_pw
+statement error
+SELECT * FROM xmb_nre_mop;
+----
+db error: ERROR: Table with name xmb_nre_mop does not exist!<slt:ignore>
 
 
 connection c_click user=xmb_nre_clickclack password=xmb_nre_clickclack_pw
@@ -126,11 +135,20 @@ click_usage	click_sel
 f	f
 
 
+onlyif postgres
 connection c_click2 user=xmb_nre_clickclack password=xmb_nre_clickclack_pw
 statement error
 SELECT * FROM xmb_nre_mop;
 ----
 db error: ERROR: permission denied for table xmb_nre_mop<slt:ignore>
+
+
+skipif postgres
+connection c_click2 user=xmb_nre_clickclack password=xmb_nre_clickclack_pw
+statement error
+SELECT * FROM xmb_nre_mop;
+----
+db error: ERROR: Table with name xmb_nre_mop does not exist!<slt:ignore>
 
 
 # ---- Cleanup ----

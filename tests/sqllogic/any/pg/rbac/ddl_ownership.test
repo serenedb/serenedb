@@ -27,6 +27,7 @@ CREATE ROLE ddlo_vedernikoff LOGIN PASSWORD 'ddlo_vedernikoff_pw';
 
 # ---- non-owner DDL must be refused (PG: "must be owner of table/...") ----
 
+onlyif postgres
 connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
 statement error
 DROP TABLE ddlo_kostya;
@@ -34,6 +35,15 @@ DROP TABLE ddlo_kostya;
 db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
 
 
+skipif postgres
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
+statement error
+DROP TABLE ddlo_kostya;
+----
+db error: ERROR: Table with name ddlo_kostya does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
 statement error
 ALTER TABLE ddlo_kostya ADD COLUMN sneaky int;
@@ -41,11 +51,28 @@ ALTER TABLE ddlo_kostya ADD COLUMN sneaky int;
 db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
 
 
+skipif postgres
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
+statement error
+ALTER TABLE ddlo_kostya ADD COLUMN sneaky int;
+----
+db error: ERROR: Table with name ddlo_kostya does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
 statement error
 ALTER TABLE ddlo_kostya RENAME TO ddlo_pwned;
 ----
 db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
+statement error
+ALTER TABLE ddlo_kostya RENAME TO ddlo_pwned;
+----
+db error: ERROR: Table with name ddlo_kostya does not exist!<slt:ignore>
 
 
 # Note: CREATE INDEX by a non-owner is also refused, but on serenedb the

@@ -1,0 +1,72 @@
+statement ok
+DROP VIEW IF EXISTS omd_v;
+
+
+statement ok
+DROP FUNCTION IF EXISTS omd_f(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS omd_f(text);
+
+
+statement ok
+DROP FUNCTION IF EXISTS omd_g(text);
+
+
+statement ok
+CREATE FUNCTION omd_f(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 100';
+
+
+statement ok
+CREATE FUNCTION omd_f(text) RETURNS int LANGUAGE sql AS 'SELECT length($1)';
+
+
+statement ok
+CREATE VIEW omd_v AS SELECT omd_f('abcd') AS r;
+
+
+statement error
+ALTER FUNCTION omd_f(text) RENAME TO omd_g;
+----
+db error: ERROR: Cannot alter entry "omd_f" because there are entries that depend on it.
+<slt:ignore>
+Drop the dependent entries first and recreate them after the change.
+
+
+statement error
+ALTER FUNCTION omd_f(int) RENAME TO omd_g;
+----
+db error: ERROR: Cannot alter entry "omd_f" because there are entries that depend on it.
+<slt:ignore>
+Drop the dependent entries first and recreate them after the change.
+
+
+query
+SELECT r FROM omd_v;
+----
+r
+4
+
+
+statement ok
+DROP VIEW omd_v;
+
+
+statement ok
+ALTER FUNCTION omd_f(text) RENAME TO omd_g;
+
+
+query
+SELECT omd_g('abcd') AS g, omd_f(1) AS f;
+----
+g	f
+4	101
+
+
+statement ok
+DROP FUNCTION omd_g(text);
+
+
+statement ok
+DROP FUNCTION omd_f(int);

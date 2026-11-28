@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/database_entry.hpp>
 #include <duckdb/parser/parsed_data/create_database_info.hpp>
 #include <memory>
 #include <string>
@@ -29,18 +29,16 @@
 
 namespace sdb::catalog {
 
-class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
+class DatabaseCatalogEntry final : public duckdb::DatabaseEntry {
  public:
-  static constexpr duckdb::CatalogType Type =
-    duckdb::CatalogType::DATABASE_ENTRY;
-  static constexpr const char* Name = "database";
-
   DatabaseCatalogEntry(duckdb::Catalog& catalog,
                        duckdb::CreateDatabaseInfo& info,
                        std::shared_ptr<DatabaseDirectory> directory);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
@@ -49,6 +47,8 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   const duckdb::case_insensitive_map_t<duckdb::Value>& Options() const {
     return _options;
   }
+  int32_t ConnLimit() const { return _conn_limit; }
+  bool AllowConnections() const { return _allow_connections; }
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
@@ -57,6 +57,8 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;
   duckdb::idx_t _tablespace;
+  int32_t _conn_limit;
+  bool _allow_connections;
   std::shared_ptr<DatabaseDirectory> _directory;
 };
 

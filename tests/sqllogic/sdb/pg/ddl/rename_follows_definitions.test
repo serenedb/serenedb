@@ -242,3 +242,171 @@ SELECT currval('rfd_regclass2') AS a;
 ----
 a
 1
+
+
+statement ok
+CREATE SCHEMA rfd_bound;
+
+
+statement ok
+CREATE TABLE rfd_src (a INTEGER);
+
+
+statement ok
+INSERT INTO rfd_src VALUES (1);
+
+
+statement ok
+CREATE TABLE rfd_bound.rfd_dst (a INTEGER);
+
+
+statement ok
+INSERT INTO rfd_bound.rfd_dst VALUES (2);
+
+
+statement ok
+CREATE VIEW rfd_bound.reads_src AS SELECT a FROM rfd_src;
+
+
+statement ok
+ALTER TABLE rfd_src RENAME TO rfd_dst;
+
+
+query
+SELECT definition FROM pg_views WHERE schemaname = 'rfd_bound' AND viewname = 'reads_src';
+----
+definition
+SELECT a FROM public.rfd_dst AS rfd_src;
+
+
+query
+SELECT a FROM rfd_bound.reads_src;
+----
+a
+1
+
+
+statement ok
+CREATE FUNCTION rfd_f(x INTEGER) RETURNS INTEGER LANGUAGE SQL RETURN x + 1;
+
+
+statement ok
+CREATE VIEW rfd_bound.calls_f AS SELECT rfd_f(1) AS r;
+
+
+statement ok
+ALTER FUNCTION rfd_f RENAME TO rfd_g;
+
+
+query
+SELECT definition FROM pg_views WHERE schemaname = 'rfd_bound' AND viewname = 'calls_f';
+----
+definition
+SELECT rfd_g(1) AS r;
+
+
+query
+SELECT r FROM rfd_bound.calls_f;
+----
+r
+2
+
+
+statement ok
+CREATE TABLE rfd_path (a INTEGER);
+
+
+statement ok
+INSERT INTO rfd_path VALUES (3);
+
+
+statement ok
+CREATE VIEW rfd_bound.reads_path AS SELECT a FROM rfd_path;
+
+
+statement ok
+SET search_path = rfd_s;
+
+
+statement ok
+ALTER TABLE public.rfd_path RENAME TO rfd_path2;
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT a FROM rfd_bound.reads_path;
+----
+a
+3
+
+
+statement ok
+CREATE TABLE rfd_pair_a (a INTEGER);
+
+
+statement ok
+INSERT INTO rfd_pair_a VALUES (4);
+
+
+statement ok
+CREATE TABLE rfd_pair_b (b INTEGER);
+
+
+statement ok
+INSERT INTO rfd_pair_b VALUES (5);
+
+
+statement ok
+CREATE VIEW rfd_bound.reads_pair AS SELECT a, b FROM rfd_pair_a, rfd_pair_b;
+
+
+statement ok
+ALTER TABLE rfd_pair_a RENAME TO rfd_pair_c;
+
+
+query
+SELECT a, b FROM rfd_bound.reads_pair;
+----
+a	b
+4	5
+
+
+statement ok
+CREATE TABLE rfd_same (a INTEGER);
+
+
+statement ok
+INSERT INTO rfd_same VALUES (6);
+
+
+statement ok
+CREATE TABLE rfd_s.rfd_same (z INTEGER);
+
+
+statement ok
+INSERT INTO rfd_s.rfd_same VALUES (7);
+
+
+statement ok
+CREATE VIEW rfd_bound.reads_same AS SELECT p.a, q.z FROM rfd_same p, rfd_s.rfd_same q;
+
+
+statement ok
+ALTER TABLE rfd_s.rfd_same RENAME TO rfd_same2;
+
+
+query
+SELECT definition FROM pg_views WHERE schemaname = 'rfd_bound' AND viewname = 'reads_same';
+----
+definition
+SELECT p.a, q.z FROM rfd_same AS p , rfd_s.rfd_same2 AS q;
+
+
+query
+SELECT a, z FROM rfd_bound.reads_same;
+----
+a	z
+6	7

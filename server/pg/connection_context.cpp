@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
@@ -35,20 +36,25 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/parser/parsed_data/extra_drop_info.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/planner/operator/logical_attach.hpp>
+#include <duckdb/planner/operator/logical_create.hpp>
+#include <duckdb/planner/operator/logical_drop.hpp>
+#include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
-#include "auth/enforce.h"
-#include "auth/role_closure.h"
 #include "backup/backup_session.h"
 #include "backup/commit_gate.h"
 #include "catalog/catalog.h"
@@ -56,28 +62,31 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_copy_filesystem.h"
+#include "connector/duckdb_storage_extension.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "network/send_gate.h"
 #include "pg/catalog/oids.h"
+#include "pg/progress_registry.h"
 
 namespace sdb::pg {
 
-LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::Permissions& perm) {
+LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
   struct {
     duckdb::idx_t oid = 0;
     bool can_login = false;
     bool superuser = false;
-    duckdb::vector<std::string> settings;
+    int32_t conn_limit = -1;
+    std::string name;
   } role;
   if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
         user, [&](const catalog::RoleCatalogEntry& entry) {
           role.oid = entry.oid;
           role.can_login = entry.CanLogin();
           role.superuser = entry.IsSuperuser();
-          role.settings = entry.Config();
+          role.conn_limit = entry.ConnLimit();
+          role.name = entry.name.GetIdentifierName();
         })) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
@@ -88,17 +97,80 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
   }
-  if (!auth::ClosureFor(nullptr, role.oid)
-         ->Can(duckdb::CatalogType::DATABASE_ENTRY, perm,
-               duckdb::AclMode::Connect)) {
+  const auto roles = catalog::RolesOf(nullptr);
+  const auto principal = roles->Access(role.oid);
+  struct {
+    duckdb::idx_t oid = 0;
+    bool connect = false;
+    bool allow_connections = true;
+    int32_t conn_limit = -1;
+  } database;
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+        dbname,
+        [&](const catalog::DatabaseCatalogEntry& entry) {
+          database.oid = entry.oid;
+          database.connect =
+            principal &&
+            duckdb::Check<duckdb::AclMode::Connect>(*principal, entry);
+          database.allow_connections = entry.AllowConnections();
+          database.conn_limit = entry.ConnLimit();
+        }) ||
+      !database.connect) {
     return {.error = SQL_ERROR_DATA(
-              ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-              ERR_MSG("permission denied for database \"", dbname, "\""),
-              ERR_DETAIL("User does not have CONNECT privilege."))};
+              ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
+              ERR_MSG("database \"", dbname, "\" does not exist"))};
+  }
+  if (!database.allow_connections) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+              ERR_MSG("database \"", dbname,
+                      "\" is not currently accepting connections"))};
   }
   return {.role = role.oid,
+          .database = database.oid,
           .superuser = role.superuser,
-          .settings = std::move(role.settings)};
+          .role_conn_limit = role.conn_limit,
+          .database_conn_limit = database.conn_limit,
+          .role_name = std::move(role.name)};
+}
+
+std::optional<irs::pg::SqlErrorData> ConnectionLimitError(
+  const LoginCheck& login, std::string_view dbname) {
+  if (login.superuser) {
+    return std::nullopt;
+  }
+  auto& registry = ProgressRegistry::Instance();
+  if (login.role_conn_limit >= 0 &&
+      registry.SessionsOf(login.role) >
+        static_cast<size_t>(login.role_conn_limit)) {
+    return SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
+      ERR_MSG("too many connections for role \"", login.role_name, "\""));
+  }
+  if (login.database_conn_limit >= 0 &&
+      registry.SessionsIn(login.database) >
+        static_cast<size_t>(login.database_conn_limit)) {
+    return SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
+      ERR_MSG("too many connections for database \"", dbname, "\""));
+  }
+  return std::nullopt;
+}
+
+bool IsHbaMember(std::string_view user, std::string_view group) {
+  duckdb::idx_t user_oid = 0;
+  duckdb::idx_t group_oid = 0;
+  if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
+        user,
+        [&](const catalog::RoleCatalogEntry& role) { user_oid = role.oid; }) ||
+      !catalog::ReadEntry<catalog::RoleCatalogEntry>(
+        group,
+        [&](const catalog::RoleCatalogEntry& role) { group_oid = role.oid; })) {
+    return false;
+  }
+  const auto roles = catalog::RolesOf(nullptr);
+  const auto user_access = roles->Access(user_oid);
+  return user_access && user_access->BelongsTo(group_oid);
 }
 
 }  // namespace sdb::pg
@@ -112,7 +184,7 @@ T GetEnumValue(std::string_view value) noexcept {
   return *r;
 }
 
-std::string RoleName(const auth::RoleGraph& roles, duckdb::idx_t role,
+std::string RoleName(const duckdb::SecuritySnapshot& roles, duckdb::idx_t role,
                      std::string_view fallback) {
   auto name = roles.NameOf(role);
   return std::string{name.empty() ? fallback : name};
@@ -133,31 +205,32 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   : duckdb::ClientContext{db.shared_from_this(), identity.temporary},
     _user{identity.user},
     _system_user{identity.system_user},
-    _database_name{identity.database},
     _database_id{identity.database_id},
     _backend_pid{identity.backend_pid},
     _cancel_registry{identity.cancel_registry},
     _send_buffer{identity.send_buffer},
     _send_gate{identity.send_gate},
     _login_role_id{identity.role},
-    _session_role_id{identity.role},
-    _effective_role_id{identity.role},
     _owns_temporary_objects{!identity.temporary},
     _progress{std::make_shared<pg::ProgressSource>()},
     _slot{catalog::Transactions::Get().Join()} {
   session_user = _user;
+  security.session_role = identity.role;
+  security.SetCurrentRole(*this, identity.role);
+  PublishSuperuser();
   _progress->pid = _backend_pid;
   _progress->datid = static_cast<int64_t>(_database_id);
   _progress->user = _user;
-  _progress->database = _database_name;
+  _progress->database = identity.database;
   _progress->client_backend = identity.client_backend;
+  _progress->role = identity.role;
   _progress->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   _progress->status.Write({.state_change_us = _progress->backend_start_us});
   _progress->ctx = this;
-  if (_database_name.empty()) {
+  if (identity.database.empty()) {
     return;
   }
-  const duckdb::Identifier name{_database_name};
+  const duckdb::Identifier name{identity.database};
   std::vector<duckdb::CatalogSearchEntry> paths;
   if (auto attached = db.GetDatabaseManager().GetDatabase(name);
       attached && !catalog::IsSereneDB(attached->GetCatalog())) {
@@ -194,11 +267,54 @@ ConnectionContext::~ConnectionContext() {
 }
 
 std::string ConnectionContext::EffectiveUserName() {
-  return RoleName(*auth::RolesOf(this), _effective_role_id, _user);
+  return RoleName(*catalog::RolesOf(this), GetRoleId(), _user);
 }
 
 std::string ConnectionContext::SessionUserName() {
-  return RoleName(*auth::RolesOf(this), _session_role_id, _user);
+  return RoleName(*catalog::RolesOf(this), GetSessionRoleId(), _user);
+}
+
+void ConnectionContext::ApplyRoleSettings() {
+  duckdb::vector<std::string> database_config;
+  duckdb::vector<std::string> database_role_config;
+  catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+    GetDatabase(), [&](const catalog::DatabaseCatalogEntry& database) {
+      if (const auto config = database.SettingsOf(0)) {
+        database_config = *config;
+      }
+      if (const auto config = database.SettingsOf(_login_role_id)) {
+        database_role_config = *config;
+      }
+    });
+  duckdb::vector<std::string> role_config;
+  catalog::ReadEntry<catalog::RoleCatalogEntry>(
+    _user, [&](const catalog::RoleCatalogEntry& role) {
+      role_config = role.Config();
+    });
+  for (const auto* config :
+       {&database_config, &role_config, &database_role_config}) {
+    for (const std::string_view entry : *config) {
+      const auto key = duckdb::Settings::ConfigKey(entry);
+      try {
+        SetSettingChecked(key,
+                          std::string{duckdb::Settings::ConfigValue(entry)});
+        KeepSettingAsDefault(key);
+      } catch (const std::exception& exception) {
+        auto notice = irs::pg::ToSqlError(exception);
+        notice.errcode = ERRCODE_WARNING;
+        AddNotice(std::move(notice));
+      }
+    }
+  }
+}
+
+void ConnectionContext::PreventInTransactionBlock(
+  std::string_view statement) const {
+  if (_in_transaction_block) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG(statement, " cannot run inside a transaction block"));
+  }
 }
 
 int8_t ConnectionContext::GetExtraFloatDigits() const {
@@ -248,11 +364,19 @@ void ConnectionContext::SetSetting(std::string_view key, std::string value,
 }
 
 void ConnectionContext::SetSettingChecked(std::string_view key,
-                                          std::string value, bool is_local) {
-  duckdb::PhysicalSet::SetVariable(
-    *this, duckdb::Identifier{key},
-    is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::SESSION,
-    duckdb::Value{std::move(value)});
+                                          std::string value) {
+  duckdb::PhysicalSet::SetVariable(*this, duckdb::Identifier{key},
+                                   duckdb::SetScope::SESSION,
+                                   duckdb::Value{std::move(value)});
+}
+
+void ConnectionContext::KeepSettingAsDefault(std::string_view key) {
+  duckdb::Identifier setting{key};
+  duckdb::Value value;
+  if (TryGetCurrentSetting(setting, value)) {
+    duckdb::ClientConfig::GetConfig(*this).session_defaults.insert_or_assign(
+      std::move(setting), std::move(value));
+  }
 }
 
 void ConnectionContext::RefreshCatalogEpoch() noexcept {
@@ -353,6 +477,10 @@ void ConnectionContext::RestoreValue(std::string_view key,
     }
     duckdb::ExtensionOption ext;
     if (!db_config.TryGetExtensionOption(setting, ext)) {
+      if (duckdb::Settings::IsValidCustomName(key)) {
+        config.custom_settings[key] =
+          is_reset ? duckdb::Value{std::string{}} : std::move(value);
+      }
       return;
     }
     if (is_reset) {
@@ -425,68 +553,30 @@ void ConnectionContext::ValidateIsolationLevel(
   }
 }
 
-bool ConnectionContext::EmitWarning(const char* message) {
-  if (absl::StrContains(message, "no transaction is active")) {
-    AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
-                             ERR_MSG("there is no transaction in progress")));
-    return true;
+bool ConnectionContext::EmitWarning(const char* message,
+                                    std::string_view subtype) {
+  auto code = ERRCODE_WARNING;
+  if (subtype == "NO_ACTIVE_SQL_TRANSACTION") {
+    code = ERRCODE_NO_ACTIVE_SQL_TRANSACTION;
+  } else if (subtype == "ACTIVE_SQL_TRANSACTION") {
+    code = ERRCODE_ACTIVE_SQL_TRANSACTION;
+  } else if (subtype == "PRIVILEGE_NOT_GRANTED") {
+    code = ERRCODE_WARNING_PRIVILEGE_NOT_GRANTED;
+  } else if (subtype == "PRIVILEGE_NOT_REVOKED") {
+    code = ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED;
   }
-  AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
+  AddNotice(SQL_ERROR_DATA(ERR_CODE(code), ERR_MSG(message)));
   return true;
-}
-
-bool ConnectionContext::IsSettingVisible(const std::string& name) {
-  static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-    "sdb_faults",
-    "debug_verification",
-    "duckdb_api",
-    "is_superuser",
-    "session_authorization",
-    "role",
-    "allow_community_extensions",
-    "allow_extension_repositories",
-    "allow_extensions_metadata_mismatch",
-    "allow_unsigned_extensions",
-    "autoinstall_extension_repository",
-    "autoinstall_known_extensions",
-    "autoload_known_extensions",
-    "custom_extension_repository",
-    "extension_directories",
-    "extension_directory",
-    "extension_repository_directory",
-  };
-  return !kHidden.contains(name);
 }
 
 void ConnectionContext::OnSettingChange(const std::string& name,
                                         duckdb::SetScope scope,
                                         const duckdb::Value& previous) {
-  if (IsUnchangeableSetting(name)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
-                    ERR_MSG("parameter \"", name, "\" cannot be changed"));
-  }
-  if (scope == duckdb::SetScope::AUTOMATIC) {
-    auto& db_config = duckdb::DBConfig::GetConfig(*this);
-    const duckdb::Identifier setting{name};
-    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    if (db_config.TryGetSettingIndex(setting, option).IsValid() && option) {
-      scope = (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
-               option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
-                ? duckdb::SetScope::GLOBAL
-                : duckdb::SetScope::SESSION;
-    } else {
-      duckdb::ExtensionOption ext;
-      if (db_config.TryGetExtensionOption(setting, ext)) {
-        scope = ext.default_scope;
-      }
-    }
-  }
   if (scope == duckdb::SetScope::GLOBAL) {
-    RequireSuperuserToSetGlobal(*this, name);
     return;
   }
   MarkSettingsChanged();
-  if (!IsExplicitTransaction() || IsNonTransactionalSetting(name)) {
+  if (IsNonTransactionalSetting(name)) {
     return;
   }
   OnSet(name, scope == duckdb::SetScope::LOCAL, previous);
@@ -614,7 +704,52 @@ void ConnectionContext::OnTransactionRollback(duckdb::MetaTransaction&) {
 void ConnectionContext::OnBoundPlan(duckdb::Binder& binder,
                                     duckdb::LogicalOperator& plan) {
   connector::FilterPartialIndexScans(*this, plan);
-  auth::EnforcePlan(*this, *this, binder, plan);
+  const auto discard_all = [](const duckdb::DropInfo& info) {
+    return info.type == duckdb::CatalogType::PREPARED_STATEMENT &&
+           info.extra_drop_info &&
+           info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
+             duckdb::DiscardTarget::ALL;
+  };
+  auto* root = &plan;
+  if ((plan.type == duckdb::LogicalOperatorType::LOGICAL_PREPARE ||
+       plan.type == duckdb::LogicalOperatorType::LOGICAL_EXECUTE) &&
+      !plan.children.empty()) {
+    root = plan.children[0].get();
+  }
+  switch (root->type) {
+    case duckdb::LogicalOperatorType::LOGICAL_ATTACH:
+      connector::RequireDatabaseNotBeingCreated(
+        *this, root->Cast<duckdb::LogicalAttach>().info->name);
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_CREATE_DATABASE:
+      connector::RequireDatabaseNotBeingCreated(
+        *this,
+        root->Cast<duckdb::LogicalCreate>().info->GetQualifiedName().Name());
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_DROP:
+      if (discard_all(*root->Cast<duckdb::LogicalDrop>().info)) {
+        PreventInTransactionBlock("DISCARD ALL");
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_CREATE_VIEW:
+      SDB_IF_FAILURE("view_without_name_bindings") {
+        root->Cast<duckdb::LogicalCreate>()
+          .info->Cast<duckdb::CreateViewInfo>()
+          .name_bindings.clear();
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_EXECUTE: {
+      const auto& unbound =
+        root->Cast<duckdb::LogicalExecute>().prepared->unbound_statement;
+      if (unbound && unbound->type == duckdb::StatementType::DROP_STATEMENT &&
+          discard_all(*unbound->Cast<duckdb::DropStatement>().info)) {
+        PreventInTransactionBlock("DISCARD ALL");
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 duckdb::optional_ptr<duckdb::CopyOutputGate>

@@ -1,0 +1,208 @@
+statement ok
+DROP SCHEMA IF EXISTS dbso_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dbso_member;
+
+
+statement ok
+DROP ROLE IF EXISTS dbso_other;
+
+
+statement ok
+DROP ROLE IF EXISTS dbso_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dbso_vedernikoff;
+
+
+statement ok
+CREATE ROLE dbso_vedernikoff;
+
+
+statement ok
+CREATE ROLE dbso_clickclack;
+
+
+statement ok
+CREATE ROLE dbso_other;
+
+
+statement ok
+CREATE ROLE dbso_member;
+
+
+statement ok
+GRANT dbso_vedernikoff TO dbso_member;
+
+
+statement ok
+CREATE SCHEMA dbso_s AUTHORIZATION dbso_vedernikoff;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA dbso_s TO dbso_clickclack;
+
+
+statement ok
+GRANT USAGE ON SCHEMA dbso_s TO dbso_other;
+
+
+statement ok
+SET ROLE dbso_clickclack;
+
+
+statement ok
+CREATE TABLE dbso_s.t (a INTEGER);
+
+
+statement ok
+CREATE INDEX dbso_i ON dbso_s.t (a);
+
+
+statement ok
+CREATE VIEW dbso_s.v AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE dbso_s.q;
+
+
+statement ok
+CREATE FUNCTION dbso_s.f(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE FUNCTION dbso_s.f(x TEXT) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE TYPE dbso_s.e AS ENUM ('a');
+
+
+statement ok
+CREATE TABLE dbso_s.kept (a INTEGER);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE dbso_other;
+
+
+onlyif postgres
+statement error
+DROP TABLE dbso_s.t;
+----
+db error: ERROR: must be owner of table t
+
+
+skipif postgres
+statement error
+DROP TABLE dbso_s.t;
+----
+db error: ERROR: Table with name t does not exist!<slt:ignore>
+
+
+statement error
+DROP FUNCTION dbso_s.f(INTEGER);
+----
+db error: ERROR: must be owner of function dbso_s.f
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE dbso_vedernikoff;
+
+
+statement ok
+DROP INDEX dbso_s.dbso_i;
+
+
+statement ok
+DROP VIEW dbso_s.v;
+
+
+statement ok
+DROP SEQUENCE dbso_s.q;
+
+
+statement ok
+DROP FUNCTION dbso_s.f(INTEGER);
+
+
+statement ok
+DROP TYPE dbso_s.e;
+
+
+statement error
+ALTER TABLE dbso_s.kept ADD COLUMN b INTEGER;
+----
+db error: ERROR: must be owner of table kept
+
+
+statement error
+COMMENT ON TABLE dbso_s.kept IS 'kept';
+----
+db error: ERROR: must be owner of table kept
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE dbso_member;
+
+
+statement ok
+DROP TABLE dbso_s.t;
+
+
+statement ok
+DROP FUNCTION dbso_s.f(TEXT);
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'dbso_s'::regnamespace ORDER BY relname;
+----
+relname
+kept
+
+
+query
+SELECT count(*) AS functions FROM pg_proc WHERE pronamespace = 'dbso_s'::regnamespace;
+----
+functions
+0
+
+
+statement ok
+DROP SCHEMA dbso_s CASCADE;
+
+
+statement ok
+DROP ROLE dbso_member;
+
+
+statement ok
+DROP ROLE dbso_other;
+
+
+statement ok
+DROP ROLE dbso_clickclack;
+
+
+statement ok
+DROP ROLE dbso_vedernikoff;

@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
@@ -153,12 +154,29 @@ const duckdb::Vector& ConstraintKeyEncoder::Encode(
   return keys;
 }
 
-std::string ConstraintKeyText(
-  duckdb::ClientContext& context, std::string_view key,
-  std::span<const std::string> names,
-  const duckdb::vector<duckdb::LogicalType>& types) {
-  const auto values = DecodeKey(key, types);
-  std::string out = absl::StrCat("(", absl::StrJoin(names, ", "), ")=(");
+std::optional<std::string> ConstraintKeyText(
+  duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+  const duckdb::TableCatalogEntry& table, const search::KeySpec& spec,
+  std::string_view key) {
+  if (!duckdb::Check<duckdb::AclMode::Select>(context, role, table)) {
+    std::vector<duckdb::LogicalIndex> columns;
+    if (spec.key.expressions.empty()) {
+      for (const auto id : spec.key.columns) {
+        for (const auto& column : table.GetColumns().Logical()) {
+          if (TableColumnId(column) == id) {
+            columns.push_back(column.Logical());
+          }
+        }
+      }
+    }
+    if (columns.empty() ||
+        !duckdb::Check<duckdb::AclMode::Select>(
+          context, role, duckdb::PrivilegeTarget::Columns(table, columns))) {
+      return std::nullopt;
+    }
+  }
+  const auto values = DecodeKey(key, spec.types);
+  std::string out = absl::StrCat("(", absl::StrJoin(spec.names, ", "), ")=(");
   for (size_t i = 0; i != values.size(); ++i) {
     if (i != 0) {
       out += ", ";

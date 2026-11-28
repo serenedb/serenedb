@@ -188,10 +188,12 @@ std::string DataDirectory::StoreDir() const { return StoreDirOf(engine); }
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AccessMode access_mode,
-            duckdb::AttachVisibility visibility) {
+            duckdb::AttachVisibility visibility,
+            duckdb::optional_idx foreign_server) {
   duckdb::AttachOptions options{info.options, access_mode};
   options.db_type.assign(type);
   options.visibility = visibility;
+  options.foreign_server = foreign_server;
   duckdb::DatabaseManager::Get(context).AttachDatabase(context, info, options);
 }
 
@@ -260,7 +262,7 @@ void InitCatalog(bool default_database, bool initialized) {
   }
   context.RunFunctionInTransaction(
     [&] { cluster.Bootstrap(context, default_database); });
-  auth::PublishRoles(cluster);
+  cluster.PublishSecurity();
   if (layout.InMemory()) {
     return;
   }
@@ -297,6 +299,7 @@ void InitCatalog(bool default_database, bool initialized) {
         servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());
       });
   }
+  context.security.Refresh(context);
   for (auto& server : servers) {
     try {
       context.RunFunctionInTransaction([&] { server.get().Attach(context); });

@@ -3,19 +3,19 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE MACRO add(a, b) AS a + b;
+CREATE MACRO add_pair(a, b) AS a + b;
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE OR REPLACE MACRO add(a, b) AS a + b;
+CREATE OR REPLACE MACRO add_pair(a, b) AS a + b;
 
 # DOCS_TEST: example_003
 
 statement ok
-DROP MACRO IF EXISTS add;
+DROP MACRO IF EXISTS add_pair;
 
 # DOCS_TEST_BODY
 
@@ -190,7 +190,7 @@ t	f
 # DOCS_TEST_BODY
 
 statement error
-CREATE MACRO add(a) AS a + b;
+CREATE MACRO add_pair(a) AS a + b;
 ----
 db error: ERROR: Referenced column "b" was not found because the FROM clause is missing
 
@@ -198,19 +198,19 @@ db error: ERROR: Referenced column "b" was not found because the FROM clause is 
 # DOCS_TEST: example_021
 
 statement ok
-DROP MACRO IF EXISTS add;
+DROP MACRO IF EXISTS add_pair;
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE MACRO add(a, b) AS a + b;
+CREATE MACRO add_pair(a, b) AS a + b;
 
 # DOCS_TEST: example_022
 
 # DOCS_TEST_BODY
 
 query
-SELECT add(1, 2) AS x;
+SELECT add_pair(1, 2) AS x;
 ----
 x
 3
@@ -220,7 +220,7 @@ x
 # DOCS_TEST_BODY
 
 query error
-SELECT add('hello', 3);
+SELECT add_pair('hello', 3);
 ----
 db error: ERROR: Could not convert string 'hello' to INT32
 
@@ -267,7 +267,7 @@ x
 # DOCS_TEST_BODY
 
 query
-SELECT add(40, 2) AS x;
+SELECT add_pair(40, 2) AS x;
 ----
 x
 42

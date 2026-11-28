@@ -748,11 +748,10 @@ sven_cls_knight	SELECT
 
 connection c_sven user=sven_cls_knight password=sven_cls_pw
 query
-SELECT relname, relkind, relowner::regrole::text AS owner FROM pg_class WHERE oid IN ('pudge_cls_hook'::regclass, 'pudge_cls_seq'::regclass) ORDER BY relname;
+SELECT relname, relkind, relowner::regrole::text AS owner FROM pg_class WHERE relname IN ('pudge_cls_hook', 'pudge_cls_seq') ORDER BY relname;
 ----
 relname	relkind	owner
 pudge_cls_hook	r	postgres
-pudge_cls_seq	S	postgres
 
 
 connection default

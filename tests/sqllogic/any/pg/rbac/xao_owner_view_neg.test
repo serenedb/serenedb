@@ -67,11 +67,20 @@ xao_ovn_mop
 
 
 # (a) non-owner cannot transfer
+onlyif postgres
 connection cveder user=xao_ovn_vedernikoff password=xao_ovn_vedernikoff_pw
 statement error
 ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_vedernikoff;
 ----
 db error: ERROR: must be owner of view xao_ovn_iceberg<slt:ignore>
+
+
+skipif postgres
+connection cveder user=xao_ovn_vedernikoff password=xao_ovn_vedernikoff_pw
+statement error
+ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_vedernikoff;
+----
+db error: ERROR: View with name xao_ovn_iceberg does not exist!<slt:ignore>
 
 
 # (b) owner cannot transfer to a role it cannot SET ROLE to

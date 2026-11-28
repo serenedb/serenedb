@@ -1,0 +1,46 @@
+statement ok
+DROP ROLE IF EXISTS eras_user;
+
+
+statement ok
+CREATE ROLE eras_user LOGIN PASSWORD 'eras_pw' VALID UNTIL '2100-01-01';
+
+
+connection c_eras user=eras_user password=eras_pw
+statement ok
+ALTER ROLE eras_user PASSWORD 'eras_pw';
+
+
+connection c_eras user=eras_user password=eras_pw
+statement error
+ALTER ROLE eras_user VALID UNTIL 'infinity';
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "eras_user" may alter this role.
+
+
+connection c_eras user=eras_user password=eras_pw
+statement error
+ALTER ROLE eras_user CREATEDB;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "eras_user" may alter this role.
+
+
+connection c_eras user=eras_user password=eras_pw
+statement error
+ALTER ROLE eras_user CONNECTION LIMIT 5;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "eras_user" may alter this role.
+
+
+query
+SELECT rolvaliduntil::date AS until, rolcreatedb AS createdb, rolconnlimit AS connlimit FROM pg_roles WHERE rolname = 'eras_user';
+----
+until	createdb	connlimit
+2100-01-01	f	-1
+
+
+statement ok
+DROP ROLE eras_user;

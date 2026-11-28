@@ -183,7 +183,6 @@ WHERE nspname LIKE 'rubick\_nsp\_%' ORDER BY nspname;
 ----
 nspname	owner
 rubick_nsp_steal	rubick_nsp_grand_magus
-rubick_nsp_telekinesis	rubick_nsp_grand_magus
 
 
 connection default
@@ -243,3 +242,37 @@ DROP ROLE rubick_nsp_apprentice;
 
 statement ok
 DROP ROLE rubick_nsp_grand_magus;
+
+
+statement ok
+CREATE SCHEMA rubick_nsp_outer;
+
+
+statement ok
+CREATE SCHEMA rubick_nsp_outer.rubick_nsp_inner;
+
+
+query
+SELECT nspname FROM pg_namespace WHERE nspname = 'rubick_nsp_inner';
+----
+nspname
+rubick_nsp_inner
+
+
+query
+SELECT nspname FROM pg_namespace WHERE nspname IN ('rubick_nsp_inner', 'rubick_nsp_outer') ORDER BY nspname;
+----
+nspname
+rubick_nsp_inner
+rubick_nsp_outer
+
+
+query
+SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'rubick_nsp_inner';
+----
+schema_name
+rubick_nsp_inner
+
+
+statement ok
+DROP SCHEMA rubick_nsp_outer CASCADE;

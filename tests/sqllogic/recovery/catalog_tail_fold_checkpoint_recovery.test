@@ -46,6 +46,11 @@ SET sdb_faults = '-pause_after_log_tail_fold:parked';
 
 connection creator
 statement ok
+CREATE TABLE ctfc_while_folding (id INT);
+
+
+connection creator
+statement ok
 SET sdb_faults = 'pause_after_log_tail_fold:release';
 
 
@@ -79,6 +84,7 @@ SELECT relname FROM pg_class WHERE relname LIKE 'ctfc_%' ORDER BY relname;
 relname
 ctfc_before
 ctfc_during
+ctfc_while_folding
 
 
 connection after_crash

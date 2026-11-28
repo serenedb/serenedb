@@ -498,6 +498,22 @@ TEST_F(LogTest, AFoldedTailReachesTheNextSnapshot) {
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B'), Payload('C')}));
 }
 
+TEST_F(LogTest, AFoldAfterASnapshotTookTheTailCompactsNothing) {
+  auto log = Open();
+  const auto end = log->Append(Bytes(Payload('A')));
+  Snapshot(*log, end);
+  size_t compactions = 0;
+  const auto compact = [&](std::span<const std::span<uint8_t>> parts) {
+    ++compactions;
+    return Keep(parts);
+  };
+  log->FoldTail(
+    end, [](std::span<uint8_t> payload) { return payload; }, compact);
+  EXPECT_EQ(compactions, 0);
+  EXPECT_EQ(log->TailBytes(), 0);
+  EXPECT_EQ(log->HistoryBytes(), kPayload);
+}
+
 TEST_F(LogTest, ARecordWithoutACatalogPartIsNotKept) {
   auto log = Open();
   const auto payload = Payload('A');

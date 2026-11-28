@@ -133,9 +133,8 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
     const auto& index = _walk.Index();
     detail::DocSpan spans[Base::kHintBlocks];
     for (size_t i = 0; i != blocks.size(); ++i) {
-      const auto b = blocks[i];
-      spans[i] = {.first = b == 0 ? doc_limits::min() : index.Last(b - 1) + 1,
-                  .last = index.Last(b)};
+      spans[i] = {.first = index.First(blocks[i]),
+                  .last = index.Last(blocks[i])};
     }
     _excludes.HintSpans({spans, blocks.size()});
   }

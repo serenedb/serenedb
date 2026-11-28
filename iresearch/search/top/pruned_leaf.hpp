@@ -72,6 +72,20 @@ IRS_FORCE_INLINE uint32_t FirstCompetitive(const BlockIndex& index, uint32_t b,
   return b;
 }
 
+template<typename RunScore, typename BlockScore>
+uint32_t CompetitiveBlocks(const BlockIndex& index, uint32_t b,
+                           score_t threshold, RunScore&& run_score,
+                           BlockScore&& block_score,
+                           std::span<uint32_t, detail::kMostSpans> blocks) {
+  const auto n = index.Size();
+  uint32_t count = 0;
+  for (auto k = b; k != n && count != blocks.size();
+       k = FirstCompetitive(index, k + 1, threshold, run_score, block_score)) {
+    blocks[count++] = k;
+  }
+  return count;
+}
+
 inline constexpr detail::LeafShape kPrunedShape{
   .scored = true,
   .defer = true,
@@ -304,7 +318,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     }
   }
 
-  uint32_t HintCompetitive(uint32_t* blocks) {
+  uint32_t HintCompetitive(std::span<uint32_t, kHintBlocks> blocks) {
     static_assert(Standalone);
     const auto& index = _walk.Index();
     const auto n = index.Size();
@@ -312,32 +326,23 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     if (b == n || b < _hint_at || (_hint_at == 0 && this->InMemory(b))) {
       return 0;
     }
-    blocks[0] = b;
-    uint32_t count = 1;
-    for (auto k = b + 1; count != kHintBlocks; ++k) {
-      k = FirstCompetitive(
-        index, k, _threshold, [&](uint32_t r) { return RunScore(r); },
-        [&](uint32_t c) { return BlockScore(c); });
-      if (k == n) {
-        break;
-      }
-      blocks[count++] = k;
-    }
+    const auto count = CompetitiveBlocks(
+      index, b, _threshold, [&](uint32_t r) { return RunScore(r); },
+      [&](uint32_t c) { return BlockScore(c); }, blocks);
     if (this->InMemory(blocks[count - 1])) {
       _hint_at = 0;
       return 0;
     }
     _hint_at = count == kHintBlocks ? blocks[count / 2] : n;
-    this->HintBlocks({blocks, count});
-    HintNorms(index, {blocks, count});
+    this->HintBlocks(blocks.first(count));
+    HintNorms(index, blocks.first(count));
     return count;
   }
 
   IRS_NO_INLINE void HintNorms(const BlockIndex& index,
                                std::span<const uint32_t> blocks) noexcept {
     for (const auto b : blocks) {
-      _score.fetcher->Hint(b == 0 ? doc_limits::min() : index.Last(b - 1) + 1,
-                           index.Last(b));
+      _score.fetcher->Hint(index.First(b), index.Last(b));
     }
   }
 

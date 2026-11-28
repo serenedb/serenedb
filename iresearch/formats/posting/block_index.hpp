@@ -192,6 +192,10 @@ class BlockIndex {
     return _narrow ? RunBase(k / kRun) + _last16[k] : _last[k];
   }
 
+  doc_id_t First(uint32_t k) const noexcept {
+    return k == 0 ? doc_limits::min() : Last(k - 1) + 1;
+  }
+
   uint64_t End(uint32_t k) const noexcept {
     const auto* p = Landing(k);
     if (_narrow) {

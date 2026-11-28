@@ -132,17 +132,14 @@ class PrunedPhrase : public Root {
 
   IRS_NO_INLINE void HintCompetitive(const BlockIndex& index, uint32_t b,
                                      score_t threshold) {
-    const auto n = index.Size();
     uint32_t blocks[detail::kMostSpans];
+    const auto count = CompetitiveBlocks(
+      index, b, threshold, [&](uint32_t r) { return RunScore(index, r); },
+      [&](uint32_t c) { return _bound.Score(_slots, index.Bound(c)); }, blocks);
     detail::DocSpan spans[detail::kMostSpans];
-    uint32_t count = 0;
-    for (auto k = b; k != n && count != detail::kMostSpans;
-         k = FirstCompetitive(
-           index, k + 1, threshold,
-           [&](uint32_t r) { return RunScore(index, r); },
-           [&](uint32_t c) { return _bound.Score(_slots, index.Bound(c)); })) {
-      blocks[count] = k;
-      spans[count++] = {.first = index.Last(k - 1) + 1, .last = index.Last(k)};
+    for (uint32_t i = 0; i != count; ++i) {
+      spans[i] = {.first = index.First(blocks[i]),
+                  .last = index.Last(blocks[i])};
     }
     if (!_slots.HintSpans({spans, count})) {
       _hint_at = 0;
@@ -151,7 +148,7 @@ class PrunedPhrase : public Root {
     for (uint32_t i = 0; i != count; ++i) {
       _fetcher.Hint(spans[i].first, spans[i].last);
     }
-    _hint_at = count == detail::kMostSpans ? blocks[count / 2] : n;
+    _hint_at = count == detail::kMostSpans ? blocks[count / 2] : index.Size();
   }
 
   doc_id_t MatchFirst(doc_id_t doc, doc_id_t end,

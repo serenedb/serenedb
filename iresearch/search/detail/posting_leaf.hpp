@@ -666,7 +666,8 @@ class PostingLeaf {
   }
 
   IRS_NO_INLINE void HintRuns(std::span<const BlockRun> runs) {
-    duckdb::FileRange ranges[kMostSpans];
+    SDB_ASSERT(runs.size() <= kBlock);
+    duckdb::FileRange ranges[kBlock];
     for (size_t i = 0; i != runs.size(); ++i) {
       const auto start = _walk.BlockStart(runs[i].first);
       ranges[i] = {.offset = start,
@@ -681,12 +682,11 @@ class PostingLeaf {
   }
 
   IRS_NO_INLINE void HintBlocks(std::span<const uint32_t> blocks) {
-    duckdb::FileRange ranges[kBlock];
+    BlockRun runs[kBlock];
     for (size_t i = 0; i != blocks.size(); ++i) {
-      const auto start = _walk.BlockStart(blocks[i]);
-      ranges[i] = {.offset = start, .size = _walk.BlockEnd(blocks[i]) - start};
+      runs[i] = {.first = blocks[i], .last = blocks[i]};
     }
-    In().File()->Hint(std::span{ranges, blocks.size()});
+    HintRuns({runs, blocks.size()});
   }
 
   template<typename Read>

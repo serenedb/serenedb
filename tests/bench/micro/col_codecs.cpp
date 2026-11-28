@@ -201,7 +201,8 @@ const Seg& GetSeg(Corpus corpus, size_t arm) {
     irs::FileTracker tracker{fs, root, kSeg};
     slot->bytes = Build(tracker, corpus, kArms[arm], slot->rows);
     slot->reader = std::make_unique<irs::ColReader>(
-      CsDb(), fs, root, kSeg, true, duckdb::MappedFileAccess::RANDOM);
+      CsDb(), fs, root, kSeg, tracker.Files()[irs::KindIndex(irs::kColFile)],
+      duckdb::MappedFileAccess::RANDOM);
     slot->col = slot->reader->Column(kField);
     if (slot->col == nullptr) {
       std::fprintf(stderr, "col_codecs: column missing\n");

@@ -270,8 +270,8 @@ class TermsReader final : public irs::BasicTermReader {
   bool _ranges;
 };
 
-void Write(std::string_view root, const Terms& terms, Ladder ladder,
-           bool ranges, uint64_t rows) {
+irs::SegmentMeta Write(std::string_view root, const Terms& terms, Ladder ladder,
+                       bool ranges, uint64_t rows) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   irs::FileTracker tracker{fs, root, "segment"};
@@ -287,6 +287,11 @@ void Write(std::string_view root, const Terms& terms, Ladder ladder,
                TermsReader{terms, ladder, ranges});
   writer.end();
   idx.Commit(nullptr);
+  irs::SegmentMeta meta;
+  meta.name = "segment";
+  meta.kinds = tracker.Kinds();
+  meta.files = tracker.Files();
+  return meta;
 }
 
 std::string MemoryRoot() {
@@ -408,6 +413,7 @@ struct Data {
   std::vector<uint32_t> shifts;
   Terms terms;
   std::string root;
+  irs::SegmentMeta meta;
   std::unique_ptr<irs::IdxReader> idx;
   std::unique_ptr<irs::term_dict::FieldReader> fields;
   const irs::TermReader* field = nullptr;
@@ -516,22 +522,17 @@ void Prepare(Data& data, const Shape& shape,
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   data.root = path.string();
-  Write(data.root, data.terms, data.ladder, true, data.rows);
-  static const irs::SegmentMeta kMeta{[] {
-    irs::SegmentMeta meta;
-    meta.name = "segment";
-    return meta;
-  }()};
+  data.meta = Write(data.root, data.terms, data.ladder, true, data.rows);
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
-  data.idx =
-    std::make_unique<irs::IdxReader>(fs, data.root, "segment", true, nullptr);
+  data.idx = std::make_unique<irs::IdxReader>(
+    fs, data.root, "segment", irs::SizesOf(data.meta, irs::kIdxFile), nullptr);
   data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
     .db = db,
     .fs = fs,
     .root = data.root,
-    .meta = kMeta,
+    .meta = data.meta,
     .idx = data.idx.get(),
   });
   data.field = data.fields->fields(1).front();

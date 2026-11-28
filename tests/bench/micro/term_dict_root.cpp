@@ -173,6 +173,7 @@ struct Data {
   std::vector<bstring> seek;
   std::vector<bstring> batches[std::size(kBatchKinds)][std::size(kBatchSizes)];
   std::string root;
+  irs::SegmentMeta meta;
   std::unique_ptr<irs::IdxReader> idx;
   std::unique_ptr<irs::term_dict::FieldReader> fields;
   const irs::TermReader* field = nullptr;
@@ -204,24 +205,22 @@ void Write(Data& data) {
   writer.write(irs::StringLayout::kStrings, KeysReader{data.keys});
   writer.end();
   idx.Commit(nullptr);
+  data.meta.name = "segment";
+  data.meta.kinds = tracker.Kinds();
+  data.meta.files = tracker.Files();
 }
 
 void Open(Data& data) {
-  static const irs::SegmentMeta kMeta{[] {
-    irs::SegmentMeta meta;
-    meta.name = "segment";
-    return meta;
-  }()};
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
-  data.idx =
-    std::make_unique<irs::IdxReader>(fs, data.root, "segment", true, nullptr);
+  data.idx = std::make_unique<irs::IdxReader>(
+    fs, data.root, "segment", irs::SizesOf(data.meta, irs::kIdxFile), nullptr);
   data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
     .db = db,
     .fs = fs,
     .root = data.root,
-    .meta = kMeta,
+    .meta = data.meta,
     .idx = data.idx.get(),
   });
   data.field = data.fields->fields(1).front();

@@ -161,6 +161,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   con.Query(std::string{"SET force_compression = '"} + shape.codec + "'");
   Words words;
   std::mt19937_64 rng{11};
+  irs::FileSizes sizes;
   {
     irs::FileTracker tracker{c->fs, kRoot, kSegName};
     irs::ColWriter writer{CsDb(), tracker, irs::WriteTier::Merge};
@@ -180,10 +181,12 @@ std::unique_ptr<Column> Build(const Shape& shape) {
       cw.Append(pos, v, kWindow);
     }
     writer.Commit(c->windows * kWindow);
+    sizes = tracker.Files()[irs::KindIndex(irs::kColFile)];
   }
   con.Query("SET force_compression = 'auto'");
-  c->reader = std::make_unique<irs::ColReader>(
-    CsDb(), c->fs, kRoot, kSegName, true, duckdb::MappedFileAccess::SEQUENTIAL);
+  c->reader =
+    std::make_unique<irs::ColReader>(CsDb(), c->fs, kRoot, kSegName, sizes,
+                                     duckdb::MappedFileAccess::SEQUENTIAL);
   c->col = c->reader->Column(kField);
   if (!c->col) {
     std::fprintf(stderr, "Build(%s): column missing\n", shape.name);

@@ -115,6 +115,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
     std::abort();
   }
   const auto col_type = qr->GetTypes()[0];
+  irs::FileSizes sizes;
   {
     irs::FileTracker tracker{blk->fs, kRoot, kSegName};
     irs::ColWriter writer{CsDb(), tracker, irs::WriteTier::Merge};
@@ -130,9 +131,10 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
       pos += take;
     }
     writer.Commit(w);
+    sizes = tracker.Files()[irs::KindIndex(irs::kColFile)];
   }
   blk->reader =
-    std::make_unique<irs::ColReader>(CsDb(), blk->fs, kRoot, kSegName, true,
+    std::make_unique<irs::ColReader>(CsDb(), blk->fs, kRoot, kSegName, sizes,
                                      duckdb::MappedFileAccess::SEQUENTIAL);
   const auto* col = blk->reader->Column(kField);
   if (col == nullptr) {

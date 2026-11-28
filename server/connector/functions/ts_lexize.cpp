@@ -23,8 +23,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry_retriever.hpp>
-#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -51,19 +49,18 @@
 namespace sdb::connector {
 namespace {
 
-catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
-                                          const duckdb::RoleAccess& role,
+catalog::TokenizerRef LookupTokenizerDict(duckdb::ExpressionState& state,
                                           std::string_view dict_name) {
-  auto dict = duckdb::CatalogEntryRetriever{context, role}.GetEntry(
-    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                            duckdb::QualifiedName::Parse(dict_name)},
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  const auto dict = FindTokenizer(
+    state.GetContext(), duckdb::Role(state),
+    state.expr.Cast<duckdb::BoundFunctionExpression>().BoundSearchPath().get(),
+    dict_name);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("text search dictionary \"", dict_name, "\" does not exist"));
   }
-  return dict->Cast<catalog::TokenizerCatalogEntry>().GetTokenizer();
+  return dict->GetTokenizer();
 }
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
@@ -181,7 +178,6 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
                              duckdb::Vector& result) {
   const auto count = static_cast<uint32_t>(args.size());
   SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
-  const auto& role = duckdb::Role(state);
   duckdb::UnifiedVectorFormat dicts;
   args.data[0].ToUnifiedFormat(dicts);
   duckdb::UnifiedVectorFormat texts;
@@ -199,7 +195,7 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
   });
   for (size_t g = 0; g < groups.names.size(); ++g) {
     const auto& rows = groups.rows[g];
-    auto dict = LookupTokenizerDict(state.GetContext(), role, groups.names[g]);
+    auto dict = LookupTokenizerDict(state, groups.names[g]);
     auto tokenizer =
       AcquireTextTokenizer(state.GetContext(), *dict, groups.names[g]);
     duckdb::SelectionVector sel{rows.size()};
@@ -216,7 +212,6 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
                                   duckdb::Vector& result) {
   const auto count = static_cast<uint32_t>(args.size());
   SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
-  const auto& role = duckdb::Role(state);
   duckdb::UnifiedVectorFormat dicts;
   args.data[0].ToUnifiedFormat(dicts);
   auto& input = args.data[1];
@@ -248,7 +243,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
     if (total == 0) {
       continue;
     }
-    auto dict = LookupTokenizerDict(state.GetContext(), role, groups.names[g]);
+    auto dict = LookupTokenizerDict(state, groups.names[g]);
     auto tokenizer =
       AcquireTextTokenizer(state.GetContext(), *dict, groups.names[g]);
     duckdb::SelectionVector sel{total};

@@ -304,7 +304,7 @@ int64_t EvalOptionalLimit(duckdb::ClientContext& context,
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
   ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer,
-  duckdb::optional_idx caller_role) {
+  duckdb::optional_ptr<duckdb::Binder> binder) {
   static constexpr duckdb::idx_t kSyntheticTableIdx = 0;
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 
@@ -323,7 +323,10 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   bound_at_at.SetName(duckdb::Identifier{kTSQueryMatch});
   auto match_expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
     std::move(bound_at_at), std::move(at_at_children), nullptr);
-  match_expr->BoundRoleMutable() = caller_role;
+  if (binder) {
+    match_expr->BoundRoleMutable() = binder->BoundRole();
+    match_expr->BoundSearchPathMutable() = binder->BoundSearchPath();
+  }
 
   auto column_getter = [column_id, dict_tokenizer,
                         &context](const duckdb::BoundColumnRefExpression& ref)
@@ -380,9 +383,9 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
 
   auto bind = duckdb::make_uniq<OffsetsBindData>();
   bind->dict_tokenizer = dict->GetTokenizer();
-  bind->filter =
-    BuildFilterFromTSQuery(context, *arguments[2], kStandaloneSyntheticColumnId,
-                           bind->dict_tokenizer, input.BoundRole());
+  bind->filter = BuildFilterFromTSQuery(
+    context, *arguments[2], kStandaloneSyntheticColumnId, bind->dict_tokenizer,
+    input.HasBinder() ? &input.GetBinder() : nullptr);
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   bind->limit = kDefaultOffsetsLimit;
   if (arguments.size() == 4) {

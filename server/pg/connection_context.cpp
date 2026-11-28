@@ -95,7 +95,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
   }
   const auto roles = catalog::RolesOf(nullptr);
-  const auto principal = roles->AccessOf(role.oid);
+  const auto principal = roles->Access(role.oid);
   struct {
     duckdb::idx_t oid = 0;
     bool connect = false;
@@ -107,9 +107,10 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
         [&](const catalog::DatabaseCatalogEntry& entry) {
           database.oid = entry.oid;
           database.connect =
-            principal.is_superuser ||
-            principal.Can(duckdb::CatalogType::DATABASE_ENTRY,
-                          entry.permissions, duckdb::AclMode::Connect);
+            principal &&
+            (principal->is_superuser ||
+             principal->Can(duckdb::CatalogType::DATABASE_ENTRY,
+                            entry.permissions, duckdb::AclMode::Connect));
           database.allow_connections = entry.AllowConnections();
           database.conn_limit = entry.ConnLimit();
         }) ||

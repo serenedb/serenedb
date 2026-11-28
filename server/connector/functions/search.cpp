@@ -306,17 +306,35 @@ bool IsSearchStub(const duckdb::BoundFunctionExpression& call) {
          });
 }
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
+duckdb::optional_ptr<catalog::TokenizerCatalogEntry> FindTokenizer(
   duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+  duckdb::optional_ptr<const duckdb::vector<duckdb::CatalogSearchEntry>>
+    search_path,
   std::string_view name) {
-  auto dict = duckdb::CatalogEntryRetriever{context, role}.GetEntry(
+  duckdb::CatalogEntryRetriever retriever{context, role};
+  if (search_path) {
+    retriever.ReplaceSearchPath(*search_path);
+  }
+  auto dict = retriever.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                             duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
+    return nullptr;
+  }
+  return &dict->Cast<catalog::TokenizerCatalogEntry>();
+}
+
+catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
+  duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+  duckdb::optional_ptr<const duckdb::vector<duckdb::CatalogSearchEntry>>
+    search_path,
+  std::string_view name) {
+  const auto dict = FindTokenizer(context, role, search_path, name);
+  if (!dict) {
     return {};
   }
-  return dict->Cast<catalog::TokenizerCatalogEntry>().Acquire(context);
+  return dict->Acquire(context);
 }
 
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(

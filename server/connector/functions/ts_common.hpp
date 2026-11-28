@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/catalog/role_graph.hpp>
 #include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -82,6 +83,8 @@ struct FilterContext {
   irs::analysis::Tokenizer& tokenizer;
   duckdb::ClientContext& client_context;
   const duckdb::RoleAccess* role = nullptr;
+  duckdb::optional_ptr<const duckdb::vector<duckdb::CatalogSearchEntry>>
+    search_path;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
   WideRanges wide_ranges = WideRanges::Build;
@@ -100,6 +103,7 @@ struct FilterContext {
       .tokenizer = tokenizer,
       .client_context = client_context,
       .role = role,
+      .search_path = search_path,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
       .wide_ranges = wide_ranges,
@@ -125,9 +129,10 @@ struct FilterContext {
     return out;
   }
 
-  FilterContext WithRole(const duckdb::RoleAccess& acting) const {
+  FilterContext WithCall(const duckdb::BoundFunctionExpression& call) const {
     auto out = *this;
-    out.role = &acting;
+    out.role = &duckdb::Role(client_context, call.BoundRole());
+    out.search_path = call.BoundSearchPath().get();
     return out;
   }
 

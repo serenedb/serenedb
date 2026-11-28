@@ -49,7 +49,8 @@ void FromTokenize(BoolTarget parent, const FilterContext& ctx,
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;
   }
-  auto wrapper = AcquireTokenizer(ctx.client_context, *ctx.role, analyzer_name);
+  auto wrapper = AcquireTokenizer(ctx.client_context, *ctx.role,
+                                  ctx.search_path, analyzer_name);
   if (!wrapper) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("ts_tokenize(text, '", analyzer_name,

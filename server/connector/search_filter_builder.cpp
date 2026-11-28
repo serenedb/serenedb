@@ -498,7 +498,8 @@ void UniqueMarkers(std::vector<NullMarker>& markers) {
 
 catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
   const FilterContext& ctx, std::string_view name) {
-  auto wrapper = AcquireTokenizer(ctx.client_context, *ctx.role, name);
+  auto wrapper =
+    AcquireTokenizer(ctx.client_context, *ctx.role, ctx.search_path, name);
   if (!wrapper) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1652,8 +1653,7 @@ absl::Status FromFunctionExpression(
     // evaluated outside @@" error -- losing the specific cause. Throw
     // at this boundary so users see the actual reason + a hint.
     SDB_ASSERT(args.size() == 2);
-    const auto& role = duckdb::Role(ctx.client_context, func.BoundRole());
-    FromTSQueryMatch(filter, ctx.WithRole(role), *args[0], *args[1]);
+    FromTSQueryMatch(filter, ctx.WithCall(func), *args[0], *args[1]);
     return absl::OkStatus();
   }
   if (TryDispatchGeoFunction(filter, ctx, func)) {

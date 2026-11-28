@@ -88,6 +88,7 @@ NativeIndexSource::NativeIndexSource(
   duckdb::TableFunctionInitInput init(_source->bind_data.get(),
                                       _source->GetColumnIds(), {},
                                       _pushed_filters.get());
+  init.bound_role = _source->bound_role;
   if (_lookup.init_global) {
     _global = _lookup.init_global(context, init);
   }

@@ -1,0 +1,72 @@
+statement ok
+DROP FUNCTION IF EXISTS fspd_lexize(text, text);
+
+
+statement ok
+DROP TABLE IF EXISTS fspd_names;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS fspd_s.fspd_dict;
+
+
+statement ok
+DROP SCHEMA IF EXISTS fspd_s;
+
+
+statement ok
+CREATE SCHEMA fspd_s;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fspd_s.fspd_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', case := 'lower')
+
+
+statement ok
+CREATE TABLE fspd_names (d text);
+
+
+statement ok
+INSERT INTO fspd_names VALUES ('fspd_dict');
+
+
+statement ok
+CREATE FUNCTION fspd_lexize(d text, x text) RETURNS text[] LANGUAGE sql SET search_path = fspd_s
+AS $$ SELECT ts_lexize(d, x) $$;
+
+
+query
+SELECT fspd_lexize('fspd_dict', 'Alpha Beta') AS constant_name;
+----
+constant_name
+{alpha,beta}
+
+
+query
+SELECT fspd_lexize(d, 'Alpha Beta') AS row_name FROM fspd_names;
+----
+row_name
+{alpha,beta}
+
+
+statement error
+SELECT ts_lexize('fspd_dict', 'Alpha Beta');
+----
+db error: ERROR: text search dictionary "fspd_dict" does not exist
+
+
+statement ok
+DROP FUNCTION fspd_lexize(text, text);
+
+
+statement ok
+DROP TABLE fspd_names;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY fspd_s.fspd_dict;
+
+
+statement ok
+DROP SCHEMA fspd_s;

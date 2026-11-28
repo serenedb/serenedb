@@ -1122,13 +1122,6 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     return _named->role;
   }
 
-  const duckdb::RoleAccess& Closure(duckdb::idx_t role) {
-    if (!_closure || role != _closure->role) {
-      _closure = _roles->AccessOf(role);
-    }
-    return *_closure;
-  }
-
   IRS_FORCE_INLINE std::optional<ObjectTarget> Find(
     const duckdb::UnifiedVectorFormat& object, duckdb::idx_t index,
     const Column* column) {
@@ -1182,9 +1175,11 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
                            .modes = ParsePrivileges(AsView(text), _kind.modes)};
     }
     if (target) {
-      return Holds(Closure(role), _kind.type, *target, _modes->modes);
+      return Holds(duckdb::Role(*_session.context, role), _kind.type, *target,
+                   _modes->modes);
     }
-    if (_kind.superuser_first && Closure(role).is_superuser) {
+    if (_kind.superuser_first &&
+        duckdb::Role(*_session.context, role).is_superuser) {
       return true;
     }
     return duckdb::nullopt;
@@ -1197,7 +1192,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
         ParsedRoleModes{.text = text, .modes = ParseRoleModes(AsView(text))};
     }
     const auto& mask = _role_modes->modes;
-    const auto& closure = Closure(member);
+    const auto& closure = duckdb::Role(*_session.context, member);
     if (closure.is_superuser) {
       return true;
     }
@@ -1227,7 +1222,6 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   const PrivilegeKind& _kind;
   std::optional<Named> _named;
-  std::optional<duckdb::RoleAccess> _closure;
   std::optional<ParsedModes> _modes;
   std::optional<ParsedRoleModes> _role_modes;
   duckdb::idx_t _member = kInvalidOid;

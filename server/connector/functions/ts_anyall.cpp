@@ -105,8 +105,8 @@ void FromTokenizeListInAnyAllOf(
     if (analyzer_name == irs::KeywordTokenizer::type_name()) {
       use_identity = true;
     } else {
-      override_wrapper =
-        AcquireTokenizer(ctx.client_context, *ctx.role, analyzer_name);
+      override_wrapper = AcquireTokenizer(ctx.client_context, *ctx.role,
+                                          ctx.search_path, analyzer_name);
       if (!override_wrapper) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

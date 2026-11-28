@@ -540,17 +540,13 @@ duckdb::idx_t HotColumnReader::GatherFilter(
         source.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
         source.GetType() == scratch.GetType()) {
       scratch.Reference(duckdb::Vector{source, in_chunk, in_chunk + span});
-      duckdb::ColumnSegment::FilterSelection(sel, scratch, filter_state, span,
-                                             approved);
-      return approved;
+      return codecs::FilterRows(sel, scratch, filter_state, span, approved);
     }
   }
   scratch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::FlatVector::ValidityMutable(scratch).SetAllValid(span);
   CopyRows(anchor, span, scratch, 0, false);
-  duckdb::ColumnSegment::FilterSelection(sel, scratch, filter_state, span,
-                                         approved);
-  return approved;
+  return codecs::FilterRows(sel, scratch, filter_state, span, approved);
 }
 
 }  // namespace irs

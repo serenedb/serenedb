@@ -167,7 +167,7 @@ row_groups_scanned
 
 
 query
-SELECT json_extract(content, '$.operator[0].children[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
 FROM read_text('${__TEST_DIR__}/fk_string_in.json');
 ----
 row_groups_scanned

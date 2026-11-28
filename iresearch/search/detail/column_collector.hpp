@@ -82,6 +82,12 @@ class ColumnArgsFetcher {
     }
   }
 
+  void Hint(doc_id_t first, doc_id_t last) noexcept {
+    for (auto& entry : _columns) {
+      entry.reader->Hint(first, last);
+    }
+  }
+
   void FetchPostingBlock(const doc_id_t* docs, doc_id_t next_last) {
     for (auto& entry : _columns) {
       entry.reader->GetPostingBlock(

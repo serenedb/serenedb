@@ -192,6 +192,10 @@ class BlockIndex {
     return _narrow ? RunBase(k / kRun) + _last16[k] : _last[k];
   }
 
+  doc_id_t First(uint32_t k) const noexcept {
+    return k == 0 ? doc_limits::min() : Last(k - 1) + 1;
+  }
+
   uint64_t End(uint32_t k) const noexcept {
     const auto* p = Landing(k);
     if (_narrow) {
@@ -414,6 +418,16 @@ class BlockCursor {
     return _doc_start + (block == 0 ? 0 : _index.End(block - 1));
   }
 
+  uint64_t BlockEnd(uint32_t block) const noexcept {
+    SDB_ASSERT(!_pending && block < _index.Size());
+    return block + 1 == _index.Size() ? _offs : _doc_start + _index.End(block);
+  }
+
+  uint64_t PosStart(uint32_t block) const noexcept {
+    SDB_ASSERT(!_pending && _shape.pos && block < _index.Size());
+    return _pos_start + (block == 0 ? 0 : _index.PosGroup(block - 1));
+  }
+
   const BlockIndex& Index() const noexcept { return _index; }
 
   const BlockIndex& Loaded(const InputType& in) {
@@ -454,7 +468,7 @@ class BlockCursor {
       if (const auto extent =
             data + BlockIndex::Bytes(blocks, _shape, flags) - _offs;
           extent > kPrefetchBytes && !file.IsResident(_offs + extent - 1, 1)) {
-        file.Prefetch(_offs, extent);
+        file.Hint(_offs, extent);
       }
       index = in.Data() + data;
     } else {

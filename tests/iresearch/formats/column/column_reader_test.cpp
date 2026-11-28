@@ -87,6 +87,7 @@
 #include "gtest/gtest.h"
 #include "hook_file_system.hpp"
 #include "index_dir.hpp"
+#include "scripted_file_system.hpp"
 #include "tests_shared.hpp"
 
 #ifdef SERENEDB_HAVE_JEMALLOC
@@ -2531,105 +2532,8 @@ TEST_F(ColumnReaderTest, BlobPointReaderHoldsOnlyTheLastValue) {
 #endif
 }
 
-struct PrefetchRange {
-  uint64_t offset = 0;
-  uint64_t size = 0;
-};
-
-class ScriptedMapping final : public duckdb::MemoryMappedFile {
- public:
-  explicit ScriptedMapping(irs::bstring bytes)
-    : MemoryMappedFile{{},
-                       duckdb::FileOpenFlags::FILE_FLAGS_READ,
-                       Reserve(bytes.size()),
-                       static_cast<duckdb::idx_t>(bytes.size())},
-      _bytes{std::move(bytes)} {
-    KeepUntil(size);
-  }
-  ~ScriptedMapping() final { ::munmap(data, Reserved(size)); }
-
-  void Sync() final {}
-  bool Trim(duckdb::idx_t /*offset*/, duckdb::idx_t /*length*/) final {
-    return false;
-  }
-  void Close() final {}
-  void Advise(duckdb::MappedFileAccess /*access*/) final {}
-  void Prefetch(duckdb::idx_t location, duckdb::idx_t nr_bytes) final {
-    prefetched.emplace_back(location, nr_bytes);
-    Load(location / Page(), Pages(location + nr_bytes));
-  }
-  void Evict(duckdb::idx_t /*location*/, duckdb::idx_t /*nr_bytes*/) final {}
-
-  void Drop(uint64_t offset, uint64_t length) {
-    const auto first = offset / Page();
-    const auto end = Pages(std::min<uint64_t>(offset + length, size));
-    ASSERT_EQ(
-      ::madvise(data + first * Page(), (end - first) * Page(), MADV_DONTNEED),
-      0);
-  }
-
-  void KeepUntil(uint64_t end) {
-    const auto all = Pages(size);
-    const auto kept = Pages(std::min<uint64_t>(end, size));
-    Load(0, kept);
-    if (kept != all) {
-      ASSERT_EQ(
-        ::madvise(data + kept * Page(), (all - kept) * Page(), MADV_DONTNEED),
-        0);
-    }
-  }
-
-  std::vector<PrefetchRange> prefetched;
-
- private:
-  static uint64_t Page() noexcept {
-    return static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
-  }
-  static uint64_t Pages(uint64_t bytes) noexcept {
-    return (bytes + Page() - 1) / Page();
-  }
-  static uint64_t Reserved(uint64_t bytes) noexcept {
-    return std::max<uint64_t>(Pages(bytes), 1) * Page();
-  }
-  static duckdb::data_ptr_t Reserve(uint64_t bytes) {
-    auto* const mapped =
-      ::mmap(nullptr, Reserved(bytes), PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    SDB_ENSURE(mapped != MAP_FAILED, "ScriptedMapping: mmap failed");
-    ::madvise(mapped, Reserved(bytes), MADV_NOHUGEPAGE);
-    return static_cast<duckdb::data_ptr_t>(mapped);
-  }
-  void Load(uint64_t first, uint64_t end) noexcept {
-    const auto from = first * Page();
-    const auto to = std::min<uint64_t>(end * Page(), size);
-    if (from < to) {
-      std::memcpy(data + from, _bytes.data() + from, to - from);
-    }
-  }
-
-  irs::bstring _bytes;
-};
-
-class ScriptedFileSystem final : public tests::HookFileSystem {
- public:
-  using HookFileSystem::HookFileSystem;
-
-  duckdb::shared_ptr<duckdb::InputFile> OpenBlockFile(
-    const std::string& /*path*/) final {
-    return nullptr;
-  }
-  duckdb::unique_ptr<duckdb::MemoryMappedFile> MemoryMapFile(
-    const duckdb::OpenFileInfo& path, duckdb::FileOpenFlags /*flags*/,
-    const duckdb::MMapOptions& /*options*/,
-    duckdb::optional_ptr<duckdb::FileOpener> /*opener*/) final {
-    auto mapping = duckdb::make_uniq<ScriptedMapping>(
-      irs::ReadWhole<irs::bstring>(duckdb::QueryContext{}, *this, path.path));
-    mapped = mapping.get();
-    return mapping;
-  }
-
-  ScriptedMapping* mapped = nullptr;
-};
+using tests::PrefetchRange;
+using tests::ScriptedFileSystem;
 
 TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   constexpr uint64_t kRows = 20000;
@@ -6089,6 +5993,96 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
   }
 }
 
+TEST_F(ColumnReaderTest, NormReaderHintsTheNormsOfADenseSpanOnce) {
+  constexpr uint64_t kDocs = 60000;
+  constexpr uint32_t kRgSize = 65536;
+  constexpr irs::field_id kN = 50;
+  const auto norm_val = [](uint64_t d) {
+    return static_cast<uint32_t>(d + 300);
+  };
+  const auto doc = [](uint64_t d) {
+    return static_cast<irs::doc_id_t>(d + irs::doc_limits::min());
+  };
+
+  tests::IndexDir mem{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), mem.Tracker("seg")};
+    auto& nw = w.OpenNormColumn(kN, kRgSize);
+    for (uint64_t d = 0; d < kDocs; ++d) {
+      nw.Append(d, norm_val(d));
+    }
+    w.Commit(kDocs);
+  }
+
+  ScriptedFileSystem fs{mem.Fs()};
+  irs::ColReader r{Db(),  fs,   mem.Root(),
+                   "seg", true, duckdb::MappedFileAccess::RANDOM};
+  ASSERT_NE(fs.mapped, nullptr);
+  const auto* nr = r.NormColumn(kN);
+  ASSERT_NE(nr, nullptr);
+  ASSERT_TRUE(nr->Paged());
+  ASSERT_NO_FATAL_FAILURE(fs.mapped->KeepUntil(0));
+  duckdb::PageResidency::Invalidate();
+  auto& prefetched = fs.mapped->prefetched;
+  prefetched.clear();
+  const auto reader = irs::MakePersistedNormReader(*nr);
+
+  reader->Hint(doc(30000), doc(30127));
+  EXPECT_EQ(prefetched.size(), 1);
+  prefetched.clear();
+  reader->Hint(doc(30000), doc(30127));
+  EXPECT_TRUE(prefetched.empty());
+  reader->Hint(doc(1000), doc(41000));
+  EXPECT_TRUE(prefetched.empty());
+  for (uint64_t d = 30000; d != 30128; ++d) {
+    EXPECT_EQ(reader->Get(doc(d)), norm_val(d)) << "doc " << d;
+  }
+}
+
+TEST_F(ColumnReaderTest, ANormReaderOfSeveralRegionsHintsInItsRegionOnly) {
+  constexpr uint64_t kDocs = 60000;
+  constexpr uint32_t kRgSize = 16384;
+  constexpr irs::field_id kN = 50;
+  const auto norm_val = [](uint64_t d) {
+    return static_cast<uint32_t>(d + 300);
+  };
+  const auto doc = [](uint64_t d) {
+    return static_cast<irs::doc_id_t>(d + irs::doc_limits::min());
+  };
+
+  tests::IndexDir mem{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), mem.Tracker("seg")};
+    auto& nw = w.OpenNormColumn(kN, kRgSize);
+    for (uint64_t d = 0; d < kDocs; ++d) {
+      nw.Append(d, norm_val(d));
+    }
+    w.Commit(kDocs);
+  }
+
+  ScriptedFileSystem fs{mem.Fs()};
+  irs::ColReader r{Db(),  fs,   mem.Root(),
+                   "seg", true, duckdb::MappedFileAccess::RANDOM};
+  ASSERT_NE(fs.mapped, nullptr);
+  const auto* nr = r.NormColumn(kN);
+  ASSERT_NE(nr, nullptr);
+  ASSERT_TRUE(nr->Paged());
+  ASSERT_GT(nr->RegionCount(), 1);
+  ASSERT_NO_FATAL_FAILURE(fs.mapped->KeepUntil(0));
+  duckdb::PageResidency::Invalidate();
+  auto& prefetched = fs.mapped->prefetched;
+  prefetched.clear();
+  const auto reader = irs::MakePersistedNormReader(*nr);
+
+  reader->Hint(doc(30000), doc(30127));
+  EXPECT_TRUE(prefetched.empty());
+  reader->Hint(doc(1000), doc(1127));
+  EXPECT_EQ(prefetched.size(), 1);
+  for (uint64_t d = 1000; d != 1128; ++d) {
+    EXPECT_EQ(reader->Get(doc(d)), norm_val(d)) << "doc " << d;
+  }
+}
+
 // BlobPointReader: point-read raw bytes of a BLOB column (incl null rows),
 // across row-group boundaries -- the geo/wildcard exact-match access path.
 TEST_F(ColumnReaderTest, BlobPointReaderFetch) {
@@ -8389,6 +8383,15 @@ TEST_F(ColumnReaderTest, FooterBlocksSmallerThanTheirCodecNeedsAreRejected) {
               data_size(8), fetch),
             "Corrupted numeric segment: segment is smaller than its header");
   EXPECT_EQ(ReadWithCorruptedFooter(
+              Db(), duckdb::LogicalType::HUGEINT,
+              {.compression = irs::codecs::CodecType::Dict},
+              [](uint64_t g) {
+                return duckdb::Value::HUGEINT(duckdb::hugeint_t{
+                  static_cast<int64_t>(g % 3), g % 50 * 7919});
+              },
+              data_size(8), fetch),
+            "Corrupted numeric segment: segment is smaller than its header");
+  EXPECT_EQ(ReadWithCorruptedFooter(
               Db(), duckdb::LogicalType::DOUBLE,
               {.compression = irs::codecs::CodecType::Alp},
               [](uint64_t g) {
@@ -8464,6 +8467,39 @@ TEST_F(ColumnReaderTest, Fsst12BlocksWithoutTheirSharedSymbolTableAreRejected) {
                 reader.FetchRow(0, out, 0);
               }),
             "Corrupted text segment: entry is inconsistent");
+}
+
+TEST_F(ColumnReaderTest,
+       Fsst12BlocksThatDisagreeOnTheSizeOfTheirSharedTableAreRejected) {
+  const ValueOf urls = [](uint64_t g) {
+    return duckdb::Value{absl::StrCat("https://example.org/", g % 977, "/item/",
+                                      (g * 7919) % 100003)};
+  };
+  const irs::ColumnWriterOptions fsst12{
+    .compression = irs::codecs::CodecType::Fsst12,
+    .codec_params = {.segment_target = 16 * 1024},
+  };
+  EXPECT_EQ(ReadWithCorruptedFooter(
+              Db(), duckdb::LogicalType::VARCHAR, fsst12, urls,
+              [](irs::ColumnMeta& meta) {
+                ASSERT_GE(meta.data.size(), 2);
+                auto& second = meta.data[1];
+                ASSERT_NE(second.shared_size, 0);
+                ASSERT_EQ(second.shared_offset, meta.data[0].shared_offset);
+                ASSERT_EQ(second.shared_size, meta.data[0].shared_size);
+                --second.shared_size;
+              },
+              [](irs::ColReader& r, const irs::ColumnReader& col) {
+                auto state = col.InitScan(r.Ctx());
+                for (uint64_t pos = 0; pos < col.RowCount();
+                     pos += STANDARD_VECTOR_SIZE) {
+                  duckdb::Vector out{col.Type(), STANDARD_VECTOR_SIZE};
+                  col.Scan(state, out,
+                           std::min<uint64_t>(col.RowCount() - pos,
+                                              STANDARD_VECTOR_SIZE));
+                }
+              }),
+            "Corrupted text segment: symbol table is inconsistent");
 }
 
 TEST_F(ColumnReaderTest,

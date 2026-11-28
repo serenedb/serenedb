@@ -1000,7 +1000,8 @@ struct AlpScanState final : SegmentScanState {
 };
 
 template<typename T>
-AlpVector OpenVector(const AlpScanState<T>& state, idx_t vector_index) {
+IRS_FORCE_INLINE AlpVector OpenVector(const AlpScanState<T>& state,
+                                      idx_t vector_index) {
   return OpenVector<T>(
     state.layout, vector_index,
     std::min<idx_t>(kVectorSize, state.count - vector_index * kVectorSize));
@@ -1145,8 +1146,7 @@ void AlpFilter(const ColumnSegment& segment, ColumnScanState& state,
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
     return;
   }
-  duckdb::ColumnSegment::FilterSelection(sel, result, filter_state,
-                                         vector_count, sel_count);
+  FilterRows(sel, result, filter_state, vector_count, sel_count);
 }
 
 template<typename T>
@@ -1209,6 +1209,7 @@ template<typename T>
 constexpr DecompressionFunction kDecompression{
   .init_scan = alp::InitScan<AlpScanState<T>>,
   .scan = alp::Scan<AlpScanState<T>>,
+  .select = alp::Select<AlpScanState<T>>,
   .filter = AlpFilter<T>,
   .fetch_rows = AlpFetchRows<T>,
   .skip = alp::Skip<AlpScanState<T>>,

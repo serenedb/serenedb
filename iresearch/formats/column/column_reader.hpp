@@ -142,6 +142,7 @@ class ColumnReader {
     std::shared_ptr<ReadContext> ctx;
     codecs::ColumnScanState st;
     BlockWindow window{};
+    std::unique_ptr<codecs::SharedScanState> shared_state;
     std::vector<std::unique_ptr<codecs::ColumnSegment>> segments;
     std::vector<ScanState> child_states;
     std::unique_ptr<VariantScanState> variant;
@@ -177,7 +178,8 @@ class ColumnReader {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t RowCount() const noexcept { return _row_count; }
   bool InMemory() const noexcept { return _in_memory; }
-  bool Patched() const noexcept { return _patched; }
+  const ColumnReader* PatchBase() const noexcept { return _patch_base; }
+  bool Patched() const noexcept { return _patch_base != nullptr; }
   bool HasValidity() const noexcept { return _validity_view != nullptr; }
   const ColumnReader* Validity() const noexcept { return _validity_view; }
   std::span<const ColumnBlockMeta> DataBlocks() const noexcept {
@@ -191,6 +193,7 @@ class ColumnReader {
     return _distinct.get();
   }
   uint8_t CompressionLevel() const noexcept { return _compression_level; }
+  bool PointReadsDecodeFrames() const noexcept { return _frame_point_reads; }
   uint64_t FileId() const noexcept { return _file_id; }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
@@ -443,7 +446,7 @@ class ColumnReader {
   duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
   bool _in_memory = false;
-  bool _patched = false;
+  const ColumnReader* _patch_base = nullptr;
 
  private:
   void SkipRows(ScanState& s, duckdb::idx_t count) const;
@@ -506,6 +509,7 @@ class ColumnReader {
   std::vector<ColumnBlockMeta> _segments;
   std::vector<uint64_t> _offsets;
   uint8_t _compression_level = 0;
+  bool _frame_point_reads = false;
 };
 
 inline duckdb::Vector& ResetScratch(

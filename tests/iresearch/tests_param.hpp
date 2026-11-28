@@ -39,6 +39,7 @@ namespace tests {
 std::shared_ptr<IndexDir> MemoryDirectory(const TestBase* test);
 std::shared_ptr<IndexDir> LocalDirectory(const TestBase* test);
 std::shared_ptr<IndexDir> ObjectStoreDirectory(const TestBase* test);
+std::shared_ptr<IndexDir> ScriptedDirectory(const TestBase* test);
 
 irs::SimulatedObjectStore& ObjectStore();
 

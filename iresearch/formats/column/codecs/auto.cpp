@@ -369,7 +369,8 @@ double Analyze(const Asked& asked, uint8_t level, const Candidates& type,
     best = std::min(best, score);
   };
   ask(last);
-  for (size_t i = 0; every && !estimated && i < count; ++i) {
+  const bool all = every || (!data.contested && smallest == kNoScore);
+  for (size_t i = 0; all && !estimated && i < count; ++i) {
     if (i != last) {
       ask(i);
     }
@@ -472,7 +473,27 @@ void CompressAuto(ColumnDataCheckpointData& data) {
   Contest(data, CandidatesOf(data.type.InternalType()));
 }
 
-void CompressAutoCodes(ColumnDataCheckpointData& data) {
+void CompressAutoCodes(
+  std::span<uint32_t> codes,
+  absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
+  SDB_ASSERT(!codes.empty());
+  const WriteChunk chunk{
+    duckdb::Vector{duckdb::LogicalType::UINTEGER,
+                   reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
+                   codes.size()},
+    codes.size()};
+  ColumnTuning column;
+  const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
+                         std::string_view bytes, std::string_view) {
+    SDB_ASSERT(CodesCodec(codec.type));
+    write(codec.type, bytes);
+  };
+  ColumnDataCheckpointData data{
+    .type = chunk.data.GetType(),
+    .flush = flush,
+    .tuning = column,
+    .rows = {{&chunk, 1}, codes.size()},
+  };
   ++data.tuning.row_group;
   Contest(data, kCodes);
 }

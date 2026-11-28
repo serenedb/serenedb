@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -1035,6 +1036,70 @@ TEST_F(ColCodecCorruptionTest, TextSegmentsRejectALargerFieldAtTheirLastEntry) {
       }
     },
     "Corrupted text segment: frame is inconsistent");
+}
+
+TEST_F(ColCodecCorruptionTest,
+       FsstFramesThatClaimMoreBytesThanTheirEntriesTakeAreRejected) {
+  const Case c{
+    "fsst",
+    LogicalType::VARCHAR,
+    CodecType::Fsst,
+    [](uint64_t g) {
+      return Value{absl::StrCat("tenant-", Mix(g) % 100000, "/item-", g % 7)};
+    },
+    {}};
+  const auto path =
+    test_dir() / absl::StrCat("col_codec_corruption_frame_", _next++);
+  std::filesystem::create_directories(path);
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+  {
+    std::fstream io{path / irs::FileName(kSeg),
+                    std::ios::in | std::ios::out | std::ios::binary};
+    ASSERT_TRUE(io.good());
+    std::string bytes(size, '\0');
+    io.seekg(static_cast<std::streamoff>(offset));
+    io.read(bytes.data(), static_cast<std::streamsize>(size));
+    irs::codecs::Header h;
+    ASSERT_GE(size, sizeof(h));
+    std::memcpy(&h, bytes.data(), sizeof(h));
+    ASSERT_GE(h.frame_count, 2);
+    auto* first = reinterpret_cast<duckdb::data_ptr_t>(bytes.data()) +
+                  h.off_frames + offsetof(irs::codecs::FrameMeta, comp_len);
+    duckdb::Store(duckdb::Load<uint32_t>(first) + 1, first);
+    io.seekp(static_cast<std::streamoff>(offset));
+    io.write(bytes.data(), static_cast<std::streamsize>(size));
+  }
+  std::set<std::string> messages;
+  ASSERT_NO_FATAL_FAILURE(Read(path, c, c.value(3), messages));
+  tests::IndexDir dir{Db(), path.string()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  Guarded(messages, [&] {
+    std::vector<uint64_t> picked(STANDARD_VECTOR_SIZE);
+    absl::c_iota(picked, uint64_t{0});
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+    duckdb::FlatVector::ValidityMutable(out).Reset(STANDARD_VECTOR_SIZE);
+    const Rows dense{picked.data(), picked.size()};
+    irs::column_internal::GatherRows(*col, state, dense, out, 0,
+                                     /*whole_output=*/true);
+  });
+  EXPECT_EQ(absl::StrJoin(messages, "\n"),
+            "Corrupted text segment: frame is inconsistent");
+  std::set<std::string> fetched;
+  Guarded(fetched, [&] {
+    irs::ColumnReader::PointReader reader{r, *col};
+    duckdb::Vector out{c.type, 1};
+    for (uint64_t g = 0; g < c.rows; ++g) {
+      duckdb::FlatVector::ValidityMutable(out).Reset();
+      reader.FetchRow(g, out, 0);
+    }
+  });
+  EXPECT_EQ(absl::StrJoin(fetched, "\n"),
+            "Corrupted text segment: frame is inconsistent");
 }
 
 TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {

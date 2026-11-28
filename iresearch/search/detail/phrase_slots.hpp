@@ -31,6 +31,7 @@
 #include "iresearch/search/detail/conjunction_leaves.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/phrase_variadic_pos.hpp"
+#include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -169,6 +170,23 @@ class PhraseSlots {
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
     return _leaves.Probe(target);
+  }
+
+  bool HintSpans(std::span<const DocSpan> spans) {
+    const auto* const bound = BoundLeaf();
+    bool hinted = false;
+    for (auto& slot : _leaves) {
+      for (auto& leaf : LeavesOf(slot)) {
+        const bool hints = leaf.HintSpans(spans);
+        hinted = hinted || (&leaf == bound && hints);
+      }
+    }
+    return hinted;
+  }
+
+  bool InMemory(uint32_t block) {
+    auto* const bound = BoundLeaf();
+    return !bound || bound->InMemory(block);
   }
 
   bool Match(doc_id_t) { return Collect() && _matcher.Match(); }

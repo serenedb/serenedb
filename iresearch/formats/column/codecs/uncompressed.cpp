@@ -28,6 +28,7 @@
 #include <duckdb/common/types/null_value.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/validity_mask.hpp>
+#include <duckdb/common/types/validity_range.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
@@ -264,6 +265,20 @@ struct ValidityAppender {
       return append;
     }
     auto* entries = reinterpret_cast<validity_t*>(segment.Data());
+    if (!data.sel->IsSet()) {
+      duckdb::ValidityMask{entries, kMaxRows}.SliceInPlace(
+        data.validity, segment.count, offset, append);
+      const auto valid =
+        duckdb::CountValid(data.validity, offset, offset + append);
+      if (valid != append) {
+        stats.SetHasNullFast();
+      }
+      if (valid != 0) {
+        stats.SetHasNoNullFast();
+      }
+      segment.count += append;
+      return append;
+    }
     for (idx_t i = 0; i < append; ++i) {
       const auto idx = data.sel->get_index(offset + i);
       if (data.validity.RowIsValidUnsafe(idx)) {

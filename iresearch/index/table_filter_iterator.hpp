@@ -293,8 +293,8 @@ class ColFilterChain {
   // anchor + sel[w]. In-place friendly: the write cursor never passes the
   // read cursor.
   static void CompactByOffsets(const duckdb::SelectionVector& sel,
-                               duckdb::idx_t survivors, uint64_t anchor,
-                               const irs::doc_id_t* docs_in,
+                               duckdb::idx_t count, duckdb::idx_t survivors,
+                               uint64_t anchor, const irs::doc_id_t* docs_in,
                                const irs::score_t* scores_in,
                                irs::doc_id_t* docs_out,
                                irs::score_t* scores_out);

@@ -1,0 +1,109 @@
+statement ok
+CREATE TABLE fsv (
+  id BIGINT,
+  k BIGINT,
+  plain BIGINT USING COMPRESSION uncompressed,
+  packed BIGINT USING COMPRESSION bitpacking,
+  runs BIGINT USING COMPRESSION rle,
+  dict BIGINT USING COMPRESSION dict,
+  frac DOUBLE USING COMPRESSION alp,
+  holes BIGINT,
+  body TEXT)
+WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+CREATE INDEX fsv_body ON fsv USING inverted(body);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO fsv SELECT i, i % 10, i % 100, i % 100, i / 50 % 10, (i % 7) * 1000003,
+  (i % 100) / 4.0, CASE WHEN i % 3 = 0 THEN NULL ELSE i % 100 END,
+  CASE WHEN i % 5 = 0 THEN 'alpha' ELSE 'gamma' END
+FROM range(0, 10000) t(i);
+
+
+statement ok
+RESET threads
+
+
+query
+SELECT 'hot' AS phase,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND plain > 40) AS plain,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND packed > 40) AS packed,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND runs > 4) AS runs,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND dict > 3000000) AS dict,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND frac > 10.0) AS frac,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND holes > 40) AS holes;
+----
+phase	plain	packed	runs	dict	frac	holes
+hot	600	600	500	572	600	400
+
+
+query
+SELECT 'hot hits' AS phase,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND plain > 40) AS plain,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND packed > 40) AS packed,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND runs > 4) AS runs,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND dict > 3000000) AS dict,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND frac > 10.0) AS frac,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND holes > 40) AS holes;
+----
+phase	plain	packed	runs	dict	frac	holes
+hot hits	1100	1100	1000	1143	1100	733
+
+
+statement ok
+VACUUM (FLUSH_TABLE) fsv;
+
+
+query
+SELECT 'flushed' AS phase,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND plain > 40) AS plain,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND packed > 40) AS packed,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND runs > 4) AS runs,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND dict > 3000000) AS dict,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND frac > 10.0) AS frac,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND holes > 40) AS holes;
+----
+phase	plain	packed	runs	dict	frac	holes
+flushed	600	600	500	572	600	400
+
+
+query
+SELECT 'flushed hits' AS phase,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND plain > 40) AS plain,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND packed > 40) AS packed,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND runs > 4) AS runs,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND dict > 3000000) AS dict,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND frac > 10.0) AS frac,
+  (SELECT count(*) FROM fsv WHERE body @@ 'alpha' AND holes > 40) AS holes;
+----
+phase	plain	packed	runs	dict	frac	holes
+flushed hits	1100	1100	1000	1143	1100	733
+
+
+statement ok
+UPDATE fsv SET plain = plain + 1000 WHERE id % 1000 < 30
+
+
+statement ok
+ALTER TABLE fsv ADD COLUMN extra BIGINT
+
+
+statement ok
+UPDATE fsv SET extra = id WHERE id >= 9000
+
+
+query
+SELECT 'patched' AS phase,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND plain > 40) AS plain,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND extra > 9500) AS extra,
+  (SELECT count(*) FROM fsv WHERE k = 3 AND extra IS NULL) AS extra_null;
+----
+phase	plain	extra	extra_null
+patched	630	50	900

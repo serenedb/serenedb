@@ -46,6 +46,8 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
   using Base::SeekToLeaf;
 
  public:
+  using Base::HintSpans;
+
   PostingProbe() = default;
 
   PostingProbe(const PostingMeta& meta, const duckdb::InputFile& doc_in,

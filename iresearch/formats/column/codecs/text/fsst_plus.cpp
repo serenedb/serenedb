@@ -113,8 +113,7 @@ class Prefixes {
             fsst::Decoder<fsst::Fsst8>& decoder) {
     SDB_ASSERT(section.size() >=
                static_cast<uint64_t>(table_size) + sizeof(uint32_t));
-    if (table_size != 0 &&
-        !decoder.Import(nullptr, section.substr(0, table_size))) {
+    if (table_size != 0 && !decoder.Import(section.substr(0, table_size))) {
       return false;
     }
     const auto rest = section.substr(table_size);
@@ -290,9 +289,10 @@ struct Scan {
     entry_decoded[e] = 1;
   }
 
-  template<typename Frames, typename Entry>
-  void Ensure(Frames& s, duckdb::idx_t, Entry, uint32_t first, uint32_t end) {
-    s.EnsureRange(first, end);
+  template<typename Frames>
+  void DecodeInto(Frames& s, duckdb::Vector& result,
+                  duckdb::idx_t result_offset, uint32_t first, uint32_t end) {
+    s.WriteRange(result, result_offset, first, end);
   }
 
   template<typename Frames, typename Entry>

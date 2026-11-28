@@ -1116,10 +1116,20 @@ struct Scan {
   }
 
   template<typename Frames>
-  bool DecodeInto(Frames& s, duckdb::Vector& result,
-                  duckdb::idx_t result_offset, uint32_t first, uint32_t end)
-    requires(kCodec == ByteCodec::Zstd)
-  {
+  void DecodeInto(Frames& s, duckdb::Vector& result,
+                  duckdb::idx_t result_offset, uint32_t first, uint32_t end) {
+    if constexpr (kCodec == ByteCodec::Zstd) {
+      if (InflateWindow(s, result, result_offset, first, end)) {
+        return;
+      }
+    }
+    s.WriteRange(result, result_offset, first, end);
+  }
+
+  template<typename Frames>
+  bool InflateWindow(Frames& s, duckdb::Vector& result,
+                     duckdb::idx_t result_offset, uint32_t first,
+                     uint32_t end) {
     SDB_ASSERT(first < end);
     auto f = s.FrameOf(first);
     if (s.frames[f].first_entry != first) {
@@ -1154,11 +1164,6 @@ struct Scan {
     if (got.data() != out) {
       std::memcpy(out, got.data(), m.raw_len);
     }
-  }
-
-  template<typename Frames, typename Entry>
-  void Ensure(Frames& s, duckdb::idx_t, Entry, uint32_t first, uint32_t end) {
-    s.EnsureRange(first, end);
   }
 
   template<typename Frames, typename Entry>

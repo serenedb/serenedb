@@ -29,6 +29,7 @@
 #include <atomic>
 #include <bit>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/page_residency.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/exclusion_of.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -48,6 +49,7 @@
 #include <vector>
 
 #include "index/index_tests.hpp"
+#include "scripted_file_system.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -293,6 +295,8 @@ class PrunedTopTest : public tests::IndexTestBase {
                                  doc_id_t span, bool prune, bool bounds,
                                  bool reuse, uint64_t& total) {
     const auto queries = Prepare(filter);
+    tests::DropScriptedMappings();
+    duckdb::PageResidency::Invalidate();
     std::vector<irs::ScoreDoc> hits(k);
     std::atomic<irs::score_t> threshold{
       std::numeric_limits<irs::score_t>::lowest()};
@@ -1140,10 +1144,12 @@ TEST_P(PrunedTopTest, required_term_with_sparser_optional_ones) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(pruned_top_test, PrunedTopTest,
-                         ::testing::Combine(::testing::Values(
-                           tests::kMemoryDirParam,
-                           tests::DirParam{"local", &tests::LocalDirectory})),
-                         PrunedTopTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  pruned_top_test, PrunedTopTest,
+  ::testing::Combine(::testing::Values(
+    tests::kMemoryDirParam, tests::DirParam{"local", &tests::LocalDirectory},
+    tests::DirParam{"sim", &tests::ObjectStoreDirectory},
+    tests::DirParam{"scripted", &tests::ScriptedDirectory})),
+  PrunedTopTest::to_string);
 
 }  // namespace

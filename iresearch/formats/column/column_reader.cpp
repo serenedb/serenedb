@@ -93,6 +93,9 @@ GatherBands BandsFor(codecs::CodecType codec,
       return {0, 1000};
     case codecs::CodecType::Lz4:
       return {0, 1000};
+    case codecs::CodecType::Alp:
+    case codecs::CodecType::Alprd:
+      return {10, 90};
     default:
       return text ? GatherBands{10, 1000} : GatherBands{10, 0};
   }
@@ -222,10 +225,15 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _segments.empty() ? _type : _segments.front().statistics.GetType());
   _offsets.reserve(_segments.size() + 1);
   _offsets.push_back(0);
+  const bool text = _type.InternalType() == duckdb::PhysicalType::VARCHAR;
   for (const auto& m : _segments) {
     _row_count += m.tuple_count;
     _offsets.push_back(_row_count);
     stats.Merge(m.statistics);
+    const auto codec = m.codec->type;
+    _frame_point_reads |= text && codecs::IsText(codec) &&
+                          codecs::ShapeOf(codec) == codecs::Shape::Plain &&
+                          !codecs::Sorted(codecs::LeafOf(codec));
   }
   FinishStats(std::move(stats));
 }
@@ -467,14 +475,24 @@ void CertifyStrings(const ColumnReader::ScanState& s,
     result, duckdb::make_uniq<ScannedStrings>(s.ctx, segment.Pin()));
 }
 
+void ShareState(ColumnReader::ScanState& s, codecs::ColumnSegment& segment) {
+  if (segment.shared_size == 0) {
+    return;
+  }
+  if (!s.shared_state) {
+    s.shared_state = std::make_unique<codecs::SharedScanState>();
+  }
+  segment.shared_state = s.shared_state.get();
+}
+
 }  // namespace
 
 void ColumnReader::OpenScanSegment(ScanState& s) const {
   if (s.st.scan_state) {
     s.st.previous_states.emplace_back(std::move(s.st.scan_state));
   }
-  const auto& segment =
-    *s.segments.emplace_back(Open(s.window.block, *s.ctx, &s));
+  auto& segment = *s.segments.emplace_back(Open(s.window.block, *s.ctx, &s));
+  ShareState(s, segment);
   s.opened_block = s.window.block;
   s.st.scan_state = segment.function.init_scan(segment);
   s.st.internal_index = 0;
@@ -639,6 +657,7 @@ void ColumnReader::FetchInto(ScanState& s, std::span<const uint64_t> rows,
       }
       s.fetch_window = Locate(rows[i], s.window);
       s.fetch.segment = Open(s.fetch_window.block, *s.ctx);
+      ShareState(s, *s.fetch.segment);
     }
     auto end = i;
     for (; end < rows.size() && rows[end] < s.fetch_window.end; ++end) {
@@ -1032,8 +1051,7 @@ duckdb::idx_t ColumnReader::FilterBlock(
   } else {
     ResetAllValid(result, span);
     ColumnReader::ScanCount(s, result, span, 0);
-    duckdb::ColumnSegment::FilterSelection(sel, result, filter_state, span,
-                                           approved);
+    codecs::FilterRows(sel, result, filter_state, span, approved);
   }
   return approved;
 }

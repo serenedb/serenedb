@@ -79,11 +79,15 @@ struct Fsst8 {
 
   using Imported = Table;
 
-  static bool Import(Imported& imported, duckdb::ObjectCache*,
-                     std::string_view table) noexcept {
+  static bool Import(Imported& imported, std::string_view table) noexcept {
     return duckdb_fsst_import(
              &imported, reinterpret_cast<const unsigned char*>(table.data()),
              table.size()) == table.size();
+  }
+
+  static bool Import(Imported& imported, std::string_view table,
+                     const ColumnSegment&, bool) noexcept {
+    return Import(imported, table);
   }
 
   static size_t Decompress(const Imported& imported, const unsigned char* in,
@@ -176,8 +180,13 @@ struct SharedEncoder final : State {
 template<typename Impl>
 class Decoder {
  public:
-  bool Import(duckdb::ObjectCache* cache, std::string_view table) {
-    return Impl::Import(_imported, cache, table);
+  bool Import(std::string_view table) noexcept {
+    return Impl::Import(_imported, table);
+  }
+
+  bool Import(std::string_view table, const ColumnSegment& segment,
+              bool shared) {
+    return Impl::Import(_imported, table, segment, shared);
   }
 
   size_t Decode(const char* in, size_t in_length, char* out,

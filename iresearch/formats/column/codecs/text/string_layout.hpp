@@ -37,16 +37,6 @@
 
 namespace irs::codecs {
 
-inline constexpr CodecSet kCodesGroup =
-  CodecSet{}
-    .set(std::to_underlying(CodecType::Bitpacking))
-    .set(std::to_underlying(CodecType::Rle));
-
-constexpr bool CodesCodec(CodecType type) noexcept {
-  const auto index = std::to_underlying(type);
-  return index < kCodesGroup.size() && kCodesGroup.test(index);
-}
-
 inline uint64_t Packed(uint64_t count, uint64_t max_value) noexcept {
   return duckdb::BitpackingPrimitives::GetRequiredSize(
     count, duckdb::BitpackingPrimitives::MinimumBitWidth<uint32_t>(

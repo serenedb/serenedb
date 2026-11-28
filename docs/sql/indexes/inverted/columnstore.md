@@ -39,7 +39,7 @@ A column's codec is either picked automatically (`auto`, the default) or named e
 
 A row group whose values are all equal is stored as `constant` whatever the codec, and so is a text row group of only `NULL`s.
 
-Filters and expressions on a text column stored with a dictionary codec (`dict_fsst`, `dict_lz4`, `dict_zstd`) get cheaper the more its values repeat.
+Filters and expressions on a text column stored with a dictionary codec (`dict_fsst`, `dict_lz4`, `dict_zstd`) get cheaper the more its values repeat, and so do filters on a `UUID` column stored with `dict`.
 
 Decompressed data that queries read again stays in memory while there is room, so repeated scans and lookups of the same columns do not decompress it each time. `SET GLOBAL sdb_object_cache_size = <bytes>` sets how much memory that takes (by default an eighth of `memory_limit`, at least 256 MB; `0` restores the default): a smaller value saves memory and makes repeated reads slower.
 
@@ -71,7 +71,7 @@ An index stores no copy of its `INCLUDE`d columns: a codec named there applies t
 
 A codec named with `ALTER TABLE ... SET COMPRESSION` applies to the rows written afterwards; the existing rows keep their codecs until [background compaction](./maintenance.md#background-compaction) writes them anew with the column's codec. Rows that a statement wrote straight to disk likewise keep their faster codecs until then.
 
-The global `force_compression` setting wins over `auto` and loses to a codec named on the column. A forced codec applies only to the columns it can store and leaves the others to `auto`: `rle` stores no text and `dictionary` is not a columnstore codec, so both leave text columns to `auto`, while `uncompressed` stores them as-is, and a codec for text only, such as `fsst`, leaves numeric columns to `auto`. A codec that cannot encode the column's type is rejected at `CREATE TABLE` / `ALTER TABLE`. A table in an attached [DuckDB file](../../statements/attach/duckdb.md) takes DuckDB's own compressions only, and no `compression_level`.
+The global `force_compression` setting wins over `auto` and loses to a codec named on the column. A forced codec applies only to the columns it can store and leaves the others to `auto`: `rle` stores no text and `dictionary` is not a columnstore codec, so both leave text columns to `auto`, while `uncompressed` stores them as-is, and a codec for text only, such as `fsst`, leaves numeric columns to `auto`. A codec that cannot encode the column's values is rejected at `CREATE TABLE`, `ALTER TABLE` and `CREATE INDEX`. A table in an attached [DuckDB file](../../statements/attach/duckdb.md) takes DuckDB's own compressions only, and no `compression_level`.
 
 The global `disabled_compression_methods` setting removes the compressions it lists from what `auto` considers, and a forced compression it disables falls back to `auto`. A text row group whose every candidate is disabled is stored `uncompressed`.
 

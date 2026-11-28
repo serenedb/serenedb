@@ -114,6 +114,31 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   }
 
  private:
+  static constexpr bool kHintsExcluded =
+    requires(Excludes& excludes, std::span<const detail::DocSpan> spans) {
+      excludes.HintSpans(spans);
+    };
+
+  IRS_FORCE_INLINE void Hint() {
+    uint32_t blocks[Base::kHintBlocks];
+    const auto count = this->HintCompetitive(blocks);
+    if constexpr (kHintsExcluded) {
+      if (count != 0) {
+        HintExcluded({blocks, count});
+      }
+    }
+  }
+
+  IRS_NO_INLINE void HintExcluded(std::span<const uint32_t> blocks) {
+    const auto& index = _walk.Index();
+    detail::DocSpan spans[Base::kHintBlocks];
+    for (size_t i = 0; i != blocks.size(); ++i) {
+      spans[i] = {.first = index.First(blocks[i]),
+                  .last = index.Last(blocks[i])};
+    }
+    _excludes.HintSpans({spans, blocks.size()});
+  }
+
   IRS_NO_INLINE uint32_t FilterBlock(doc_id_t* IRS_RESTRICT docs,
                                      score_t* IRS_RESTRICT scores, uint32_t len,
                                      score_t threshold) {
@@ -150,6 +175,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
           if (_left_in_list == 0) {
             break;
           }
+          Hint();
           const auto state = _walk.Landing();
           In().Seek(state.doc_ptr);
           last = state.doc;

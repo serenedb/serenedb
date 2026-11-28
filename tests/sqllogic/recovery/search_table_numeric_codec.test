@@ -234,3 +234,38 @@ statement error
 CREATE TABLE stnc_bad_level (a INTEGER PRIMARY KEY, n BIGINT USING COMPRESSION delta_zstd(compression_level = 23));
 ----
 db error: ERROR: Column "n": compression_level 23 is out of range for 'delta_zstd' (1 to 22)
+
+
+statement ok
+CREATE TABLE stnc_uuid (a INTEGER PRIMARY KEY, u UUID, n UUID USING COMPRESSION dict)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_uuid
+SELECT a, h::UUID, h::UUID FROM (SELECT a, md5((a % 300)::VARCHAR) AS h FROM range(20000) t(a));
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_uuid;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression || ' ' || regexp_extract(segment_info, 'wide: (\w+)', 1), ',') AS codec_and_form
+FROM pragma_storage_info('stnc_uuid', include_segment_info = true)
+WHERE column_name IN ('u', 'n') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	codec_and_form
+n	DICT entries
+u	DICT entries
+
+
+query
+SELECT count(DISTINCT u) AS distinct_values, count(*) FILTER (WHERE u IS DISTINCT FROM md5((a % 300)::VARCHAR)::UUID) AS mismatches,
+       count(*) FILTER (WHERE u = md5('7')::UUID) AS sevens,
+       bit_xor(hash(n)) = (SELECT bit_xor(hash(md5((a % 300)::VARCHAR)::UUID)) FROM range(20000) t(a)) AS same_hashes
+FROM stnc_uuid;
+----
+distinct_values	mismatches	sevens	same_hashes
+300	0	67	t

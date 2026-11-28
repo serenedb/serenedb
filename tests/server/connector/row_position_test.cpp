@@ -75,6 +75,37 @@ TEST(RowPositionTest, FillRowPositions) {
   }
 }
 
+TEST(RowPositionTest, FillRowPositionsOfEveryLength) {
+  for (const duckdb::idx_t count :
+       {duckdb::idx_t{1}, duckdb::idx_t{3}, duckdb::idx_t{4}, duckdb::idx_t{5},
+        duckdb::idx_t{7}, duckdb::idx_t{8}, duckdb::idx_t{9}, duckdb::idx_t{17},
+        duckdb::idx_t{STANDARD_VECTOR_SIZE - 1},
+        duckdb::idx_t{STANDARD_VECTOR_SIZE}}) {
+    std::vector<irs::doc_id_t> docs;
+    duckdb::SelectionVector sel{count};
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      docs.push_back(static_cast<irs::doc_id_t>(5 + 3 * i + i % 7));
+      sel.set_index(i, 2 * i + i % 3);
+    }
+    duckdb::Vector from_docs{duckdb::LogicalType::ROW_TYPE, count};
+    FillRowPositions(11, docs, from_docs);
+    duckdb::Vector from_sel{duckdb::LogicalType::ROW_TYPE, count};
+    FillRowPositions(11, 40, &sel, count, from_sel);
+    ASSERT_EQ(count, from_docs.size());
+    ASSERT_EQ(count, from_sel.size());
+    const auto* by_doc = duckdb::FlatVector::GetData<duckdb::row_t>(from_docs);
+    const auto* by_sel = duckdb::FlatVector::GetData<duckdb::row_t>(from_sel);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      ASSERT_EQ(MakeRowPosition(11, docs[i]), static_cast<uint64_t>(by_doc[i]))
+        << count << " " << i;
+      ASSERT_EQ(
+        MakeRowPosition(11, static_cast<irs::doc_id_t>(40 + sel.get_index(i))),
+        static_cast<uint64_t>(by_sel[i]))
+        << count << " " << i;
+    }
+  }
+}
+
 TEST(RowPositionTest, FillRowPositionsOfHighIndexes) {
   constexpr auto kLast = std::numeric_limits<irs::doc_id_t>::max();
   const std::vector<irs::doc_id_t> docs{kLast - 2, kLast - 1, kLast};

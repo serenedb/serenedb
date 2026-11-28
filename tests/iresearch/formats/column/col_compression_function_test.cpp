@@ -38,6 +38,7 @@
 #include <iresearch/formats/column/codecs/codec_type.hpp>
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/codecs/text/string_tuning.hpp>
 #include <iresearch/formats/column/codecs/tuning.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -705,6 +706,49 @@ TEST_F(ColCompressionFunctionTest, UncompressedTextIsNeverScoredByAnalysis) {
   ASSERT_NO_FATAL_FAILURE(ExpectReadBack(blocks, rows));
 }
 
+TEST_F(ColCompressionFunctionTest,
+       AnFsst12SegmentThatCarriesItsOwnSymbolTableReadsBack) {
+  const duckdb::LogicalType type = duckdb::LogicalType::VARCHAR;
+  const Rows rows{type, RepeatedUrls(5000, 700)};
+  FlushedBlocks blocks{type};
+  size_t segments = 0;
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
+  const auto flush = [&](const irs::codecs::Codec& codec,
+                         duckdb::BaseStatistics stats, uint64_t count,
+                         std::string_view bytes, std::string_view shared) {
+    ASSERT_FALSE(shared.empty());
+    auto h = duckdb::Load<irs::codecs::Header>(
+      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data()));
+    ASSERT_EQ(h.symtab_size, 0);
+    std::string segment{bytes.substr(0, h.off_symtab)};
+    segment.append(shared);
+    segment.resize(duckdb::AlignValue<size_t, 8>(segment.size()), '\0');
+    const auto off_data = segment.size();
+    segment.append(bytes.substr(h.off_data, h.data_size));
+    h.symtab_size = static_cast<uint32_t>(shared.size());
+    h.off_data = static_cast<uint32_t>(off_data);
+    std::memcpy(segment.data(), &h, sizeof(h));
+    blocks.Add(codec, std::move(stats), count, segment, {});
+    ++segments;
+  };
+  irs::codecs::ColumnTuning tuning;
+  ColumnDataCheckpointData data{
+    .type = type,
+    .ctx = &ctx,
+    .flush = flush,
+    .tuning = tuning,
+    .rows = {rows.Chunks(), rows.Count()},
+  };
+  irs::codecs::Compress(CodecType::Fsst12, data);
+  ASSERT_NE(segments, 0);
+  for (const auto& block : blocks.Blocks()) {
+    ASSERT_EQ(block.codec->type, CodecType::Fsst12);
+    ASSERT_EQ(block.shared_size, 0);
+  }
+  ExpectReadBack(blocks, rows);
+}
+
 TEST(ColCodecTypeTest, EveryFormIsNamedByItsShapeAndLeaf) {
   size_t forms = 0;
   for (const auto type : magic_enum::enum_values<CodecType>()) {
@@ -781,6 +825,59 @@ TEST_F(ColCompressionFunctionTest,
   FillValidity(2 * kBlockRows, [](uint64_t i) { return i < kBlockRows; });
   EXPECT_EQ(Blocks(type, CodecType::Uncompressed, irs::WriteTier::Flush),
             (std::vector{CodecType::Empty, CodecType::Constant}));
+}
+
+TEST_F(ColCompressionFunctionTest,
+       AValidityRowGroupReadThroughASelectionStoresWhatItsFlatCopyStores) {
+  const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
+  const auto valid = [](uint64_t i) { return i % 7 != 3 && i % 64 != 5; };
+  struct Stored {
+    std::string bytes;
+    bool has_null = false;
+    bool has_valid = false;
+  };
+  const auto store = [&] {
+    Stored stored;
+    duckdb::MemoryStream out;
+    irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
+    const auto flush = [&](const irs::codecs::Codec& codec,
+                           duckdb::BaseStatistics stats, uint64_t,
+                           std::string_view bytes, std::string_view) {
+      EXPECT_EQ(codec.type, CodecType::Uncompressed);
+      stored.bytes.append(bytes);
+      stored.has_null = stored.has_null || stats.CanHaveNull();
+      stored.has_valid = stored.has_valid || stats.CanHaveNoNull();
+    };
+    irs::codecs::ColumnTuning tuning;
+    ColumnDataCheckpointData data{
+      .type = type,
+      .ctx = &ctx,
+      .flush = flush,
+      .tuning = tuning,
+      .rows = {_chunks, kManyRows},
+    };
+    const auto& codec =
+      *irs::codecs::GetCodec(CodecType::Uncompressed, type.InternalType());
+    EXPECT_TRUE(codec.compression.front().compress(codec, data));
+    return stored;
+  };
+  FillValidity(kManyRows, [&](uint64_t i) { return valid(kManyRows - 1 - i); });
+  const auto flat = store();
+  EXPECT_TRUE(flat.has_null);
+  EXPECT_TRUE(flat.has_valid);
+  FillValidity(kManyRows, valid);
+  duckdb::SelectionVector reversed{kManyRows};
+  for (uint64_t i = 0; i < kManyRows; ++i) {
+    reversed.set_index(i, kManyRows - 1 - i);
+  }
+  const duckdb::Vector selected{*_values, reversed, kManyRows};
+  ASSERT_EQ(selected.GetVectorType(), duckdb::VectorType::DICTIONARY_VECTOR);
+  _chunks.clear();
+  _chunks.push_back(irs::RefChunk(selected, kManyRows));
+  const auto through = store();
+  EXPECT_EQ(through.bytes, flat.bytes);
+  EXPECT_EQ(through.has_null, flat.has_null);
+  EXPECT_EQ(through.has_valid, flat.has_valid);
 }
 
 TEST_F(ColCompressionFunctionTest, AutoStoresAConstantRowGroupConstant) {

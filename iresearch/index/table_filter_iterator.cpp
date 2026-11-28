@@ -24,6 +24,7 @@
 
 #include <array>
 #include <bit>
+#include <cstring>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/optimizer/expression_heuristics.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
@@ -35,6 +36,8 @@
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 
 namespace irs {
 namespace {
@@ -53,6 +56,17 @@ bool AllWordsSet(const uint64_t* words, duckdb::idx_t count) noexcept {
 void SetNullColumn(duckdb::Vector& vector) {
   vector.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
   duckdb::ConstantVector::SetNull(vector, true);
+}
+
+void NarrowSelection(duckdb::SelectionVector& sel, duckdb::idx_t count,
+                     const duckdb::SelectionVector& kept,
+                     duckdb::idx_t kept_count) {
+  if (kept_count == count) {
+    return;
+  }
+  for (duckdb::idx_t k = 0; k < kept_count; ++k) {
+    sel.set_index(k, sel.get_index(kept.get_index(k)));
+  }
 }
 
 }  // namespace
@@ -409,9 +423,8 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       }
       const bool projected = !f.output_slots.empty();
       if (projected) {
-        for (duckdb::idx_t k = 0; k < survivors; ++k) {
-          f.gathered.set_index(k, sel.get_index(k));
-        }
+        std::memcpy(f.gathered.data(), sel.data(),
+                    survivors * sizeof(duckdb::sel_t));
         f.gathered_count = survivors;
       }
       const auto& rows = projected ? f.gathered : sel;
@@ -430,9 +443,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       duckdb::idx_t approved = survivors;
       duckdb::ColumnSegment::FilterSelection(compact, values, *f.state,
                                              survivors, approved);
-      for (duckdb::idx_t k = 0; k < approved; ++k) {
-        sel.set_index(k, sel.get_index(compact.get_index(k)));
-      }
+      NarrowSelection(sel, survivors, compact, approved);
       survivors = approved;
       continue;
     }
@@ -490,9 +501,7 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
       return static_cast<doc_id_t>(anchor + sel.get_index(k)) +
              doc_limits::min();
     });
-    for (duckdb::idx_t k = 0; k < approved; ++k) {
-      sel.set_index(k, sel.get_index(_row_sel.get_index(k)));
-    }
+    NarrowSelection(sel, survivors, _row_sel, approved);
     survivors = approved;
   }
   return survivors;
@@ -540,11 +549,11 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
     const uint64_t rg_end = window_col != nullptr
                               ? window_col->RowGroupEnd(anchor)
                               : std::numeric_limits<uint64_t>::max();
-    duckdb::idx_t j = i;
-    while (j < n && (docs[j] - irs::doc_limits::min()) < rg_end &&
-           (docs[j] - irs::doc_limits::min()) - anchor < STANDARD_VECTOR_SIZE) {
-      ++j;
-    }
+    const auto limit =
+      std::min<uint64_t>(rg_end, anchor + STANDARD_VECTOR_SIZE);
+    const auto j = static_cast<duckdb::idx_t>(GallopIndex(i, n, [&](size_t k) {
+      return docs[k] - irs::doc_limits::min() < limit;
+    }));
     const duckdb::idx_t run = j - i;
     const auto span = static_cast<duckdb::idx_t>(
       (docs[j - 1] - irs::doc_limits::min()) - anchor + 1);
@@ -553,7 +562,7 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
       _sel.set_index(k, (docs[i + k] - irs::doc_limits::min()) - anchor);
     }
     const auto survivors = FilterWindow(anchor, span, _sel, run, nullptr);
-    CompactByOffsets(_sel, survivors, anchor, docs + i,
+    CompactByOffsets(_sel, run, survivors, anchor, docs + i,
                      scores != nullptr ? scores + i : nullptr, docs + w,
                      scores != nullptr ? scores + w : nullptr);
     w += survivors;
@@ -563,21 +572,12 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
 }
 
 detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
-  const auto frames = [](const irs::ColumnReader& reader) {
-    return reader.Type().InternalType() == duckdb::PhysicalType::VARCHAR &&
-           absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
-             const auto type = block.codec->type;
-             return codecs::IsText(type) &&
-                    codecs::ShapeOf(type) == codecs::Shape::Plain &&
-                    !codecs::Sorted(codecs::LeafOf(type));
-           });
-  };
   auto read = detail::PointRead::Row;
   for (const auto& c : _cols) {
     if (c.nested) {
       return detail::PointRead::None;
     }
-    if (frames(*c.reader)) {
+    if (c.reader->PointReadsDecodeFrames()) {
       read = detail::PointRead::Vector;
     }
   }
@@ -589,7 +589,7 @@ detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
       if (reader->Type().IsNested()) {
         return detail::PointRead::None;
       }
-      if (frames(*reader)) {
+      if (reader->PointReadsDecodeFrames()) {
         read = detail::PointRead::Vector;
       }
     }
@@ -905,6 +905,9 @@ duckdb::idx_t ColFilterChain::FilterDocsScores(
   duckdb::SelectionVector score_sel;
   duckdb::idx_t kept = n;
   duckdb::ColumnSegment::FilterSelection(score_sel, svec, state, n, kept);
+  if (kept == n) {
+    return n;
+  }
   // Survivor indices are ascending, so writes never clobber unread input.
   for (duckdb::idx_t s = 0; s < kept; ++s) {
     const auto idx = score_sel.get_index(s);
@@ -915,22 +918,36 @@ duckdb::idx_t ColFilterChain::FilterDocsScores(
 }
 
 void ColFilterChain::CompactByOffsets(const duckdb::SelectionVector& sel,
+                                      duckdb::idx_t count,
                                       duckdb::idx_t survivors, uint64_t anchor,
                                       const irs::doc_id_t* docs_in,
                                       const irs::score_t* scores_in,
                                       irs::doc_id_t* docs_out,
                                       irs::score_t* scores_out) {
-  duckdb::idx_t k = 0;
-  for (duckdb::idx_t s = 0; s < survivors; ++s) {
-    const uint64_t want = sel.get_index(s);
-    while (((docs_in[k] - irs::doc_limits::min()) - anchor) != want) {
-      ++k;
+  Resolve(scores_out != nullptr, [&]<bool kScores>() IRS_FORCE_INLINE {
+    if (survivors == count) {
+      if (docs_out != docs_in) {
+        std::memmove(docs_out, docs_in, count * sizeof(irs::doc_id_t));
+        if constexpr (kScores) {
+          std::memmove(scores_out, scores_in, count * sizeof(irs::score_t));
+        }
+      }
+      return;
     }
-    docs_out[s] = docs_in[k];
-    if (scores_out != nullptr) {
-      scores_out[s] = scores_in[k];
+    const auto first =
+      static_cast<irs::doc_id_t>(anchor) + irs::doc_limits::min();
+    [[maybe_unused]] duckdb::idx_t k = 0;
+    for (duckdb::idx_t s = 0; s < survivors; ++s) {
+      const auto doc = first + static_cast<irs::doc_id_t>(sel.get_index(s));
+      if constexpr (kScores) {
+        while (docs_in[k] != doc) {
+          ++k;
+        }
+        scores_out[s] = scores_in[k];
+      }
+      docs_out[s] = doc;
     }
-  }
+  });
 }
 
 }  // namespace irs

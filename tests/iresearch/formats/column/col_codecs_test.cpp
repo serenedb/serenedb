@@ -43,11 +43,13 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/object_cache.hpp>
@@ -60,6 +62,7 @@
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/text/dictionary_scan.tpp>
 #include <iresearch/formats/column/codecs/text/fsst.hpp>
 #include <iresearch/formats/column/codecs/text/onpair.hpp>
 #include <iresearch/formats/column/codecs/text/segment_buffer.hpp>
@@ -132,7 +135,8 @@ class ColCodecsTest : public TestBase {
     std::vector<std::string> keys;
     for (const auto& block : col.DataBlocks()) {
       keys.push_back(
-        irs::codecs::DictionaryCacheKey(file_id, block.file_offset));
+        irs::codecs::SegmentCacheKey<irs::codecs::DecodedDictionary>(
+          file_id, block.file_offset));
     }
     return keys;
   }
@@ -507,51 +511,51 @@ TEST_F(ColCodecsTest, PlainFsstRowOrder) {
   RoundTrip(irs::codecs::CodecType::Fsst, {}, 3000, 2048, kLongTextWithNulls);
 }
 
-struct CountedSymbols {
-  static constexpr std::string_view kCacheType = "test-symbols";
-
-  bool Open(std::string_view bytes) {
-    ++opens;
-    value = bytes;
-    return !bytes.empty();
-  }
-
-  static inline size_t opens = 0;
-  std::string value;
-};
-
-TEST_F(ColCodecsTest, EqualSymbolTableBytesShareOneOpenedTable) {
-  auto& cache = Db().GetObjectCache();
-  CountedSymbols::opens = 0;
-  const auto open = [&](std::string_view bytes) {
-    return irs::codecs::OpenSymbolTable<CountedSymbols>(&cache, bytes);
+TEST_F(ColCodecsTest, AnFsst12TableImportedForAnotherFileIsNotReused) {
+  constexpr uint64_t kRows = 4096;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("https://example.org/", g % 977, "/item/",
+                        (g * 7919) % 100003);
   };
-  const auto first = open("abcdefghij");
-  ASSERT_TRUE(first);
-  EXPECT_EQ("abcdefghij", first->Table().value);
-  EXPECT_EQ(first, open("abcdefghij"));
-  EXPECT_EQ(1, CountedSymbols::opens);
-  const auto second = open("Xbcdefghij");
-  ASSERT_TRUE(second);
-  EXPECT_NE(first, second);
-  EXPECT_EQ("Xbcdefghij", second->Table().value);
-  EXPECT_EQ(first, open("abcdefghij"));
-  EXPECT_EQ(second, open("Xbcdefghij"));
-  EXPECT_EQ(2, CountedSymbols::opens);
-  ASSERT_EQ(irs::codecs::SymbolTableCacheKey("t", "abcdefghij"),
-            irs::codecs::SymbolTableCacheKey("t", "abcdefghiX"));
-  const auto collided = open("abcdefghiX");
-  ASSERT_TRUE(collided);
-  EXPECT_EQ("abcdefghiX", collided->Table().value);
-  EXPECT_EQ("abcdefghij", first->Table().value);
-  EXPECT_EQ(3, CountedSymbols::opens);
-  EXPECT_FALSE(open(""));
-  EXPECT_EQ(4, CountedSymbols::opens);
-  const auto uncached =
-    irs::codecs::OpenSymbolTable<CountedSymbols>(nullptr, "Xbcdefghij");
-  ASSERT_TRUE(uncached);
-  EXPECT_NE(second, uncached);
-  EXPECT_EQ(5, CountedSymbols::opens);
+  tests::IndexDir first_dir{Db(), TestEnv::MemoryRoot()};
+  tests::IndexDir second_dir{Db(), TestEnv::MemoryRoot()};
+  Write(first_dir, irs::codecs::CodecType::Fsst12, {}, kRows, kRows, value);
+  Write(second_dir, irs::codecs::CodecType::Fsst12, {}, kRows, kRows, value);
+  irs::ColReader first = irs::tests::OpenColReader(first_dir, kSeg);
+  irs::ColReader second = irs::tests::OpenColReader(second_dir, kSeg);
+  const auto* first_col = first.Column(kField);
+  const auto* second_col = second.Column(kField);
+  ASSERT_NE(first_col, nullptr);
+  ASSERT_NE(second_col, nullptr);
+  irs::ReadContext first_ctx{first};
+  irs::ReadContext second_ctx{second};
+  const auto first_segment = first_col->OpenSegment(0, first_ctx);
+  const auto second_segment = second_col->OpenSegment(0, second_ctx);
+  ASSERT_NE(first_segment->shared_size, 0);
+  ASSERT_EQ(first_segment->shared_offset, second_segment->shared_offset);
+  ASSERT_EQ(first_segment->shared_size, second_segment->shared_size);
+  ASSERT_NE(first_segment->cache_slot.file_id,
+            second_segment->cache_slot.file_id);
+  irs::codecs::SharedScanState slot;
+  first_segment->shared_state = &slot;
+  second_segment->shared_state = &slot;
+  irs::codecs::ColumnScanState first_state;
+  first_state.scan_state = first_segment->function.init_scan(*first_segment);
+  ASSERT_EQ(slot.file_id, first_segment->cache_slot.file_id);
+  const auto first_table = slot.decoded;
+  ASSERT_TRUE(first_table);
+  irs::codecs::ColumnScanState second_state;
+  second_state.scan_state = second_segment->function.init_scan(*second_segment);
+  EXPECT_EQ(slot.file_id, second_segment->cache_slot.file_id);
+  EXPECT_NE(slot.decoded, first_table);
+  const auto rows =
+    std::min<duckdb::idx_t>(second_segment->count, STANDARD_VECTOR_SIZE);
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+  second_segment->function.scan(*second_segment, second_state, rows, out, 0,
+                                duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+  for (duckdb::idx_t k = 0; k < rows; ++k) {
+    ExpectRow(out, k, k, value);
+  }
 }
 
 TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
@@ -595,7 +599,7 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   batch.resize(all.bytes);
 
   irs::codecs::text::fsst::Decoder<irs::codecs::text::fsst::Fsst8> decoder;
-  ASSERT_TRUE(decoder.Import(nullptr, encoder.SymbolTable()));
+  ASSERT_TRUE(decoder.Import(encoder.SymbolTable()));
   std::string single;
   uint32_t single_length = 0;
   std::string decoded;
@@ -682,6 +686,135 @@ TEST(PackedReaderTest, ReadsEveryWidth) {
     for (size_t i = 0; i < kValues; ++i) {
       ASSERT_EQ(values[i], reader.At(i))
         << "width " << int{width} << ", value " << i;
+    }
+  }
+}
+
+TEST(ColTextKernelsTest, DictionaryFiltersKeepTheRowsOfAcceptedCodes) {
+  using irs::codecs::text::EntryRanges;
+  using irs::codecs::text::FilterVerdicts;
+  constexpr duckdb::sel_t kUntouched = 0xDEAD;
+  enum class Kind : uint8_t {
+    Ranges,
+    Selection,
+    Lazy,
+  };
+  std::mt19937_64 rng{23};
+  for (const uint32_t entries :
+       {1U, 2U, 31U, 32U, 33U, 63U, 64U, 65U, 300U, 5000U}) {
+    std::vector<std::vector<bool>> sets;
+    sets.emplace_back(entries, false);
+    sets.emplace_back(entries, true);
+    sets.emplace_back(entries, false).front() = true;
+    sets.emplace_back(entries, false).back() = true;
+    auto& alternate = sets.emplace_back(entries, false);
+    for (uint32_t e = 0; e < entries; e += 2) {
+      alternate[e] = true;
+    }
+    for (const double share : {0.05, 0.5, 0.95}) {
+      std::bernoulli_distribution pick{share};
+      auto& set = sets.emplace_back(entries);
+      for (uint32_t e = 0; e < entries; ++e) {
+        set[e] = pick(rng);
+      }
+    }
+    for (const auto& accepted : sets) {
+      EntryRanges ranges;
+      duckdb::SelectionVector listed{entries};
+      duckdb::idx_t matches = 0;
+      for (uint32_t e = 0; e < entries; ++e) {
+        if (!accepted[e]) {
+          continue;
+        }
+        listed.set_index(matches++, e);
+        if (!ranges.empty() && ranges.back().hi == e) {
+          ++ranges.back().hi;
+        } else {
+          ranges.push_back({e, e + 1});
+        }
+      }
+      for (const duckdb::idx_t span :
+           {1U, 7U, 8U, 9U, 15U, 16U, 17U, 2047U, 2048U}) {
+        duckdb::SelectionVector codes{span};
+        std::uniform_int_distribution<uint32_t> code{0, entries - 1};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          codes.set_index(i, i % 5 == 0   ? 0
+                             : i % 5 == 1 ? entries - 1
+                                          : code(rng));
+        }
+        std::vector<std::vector<duckdb::sel_t>> row_sets(6);
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto row = static_cast<duckdb::sel_t>(i);
+          row_sets[0].push_back(row);
+          if (i < (span + 1) / 2) {
+            row_sets[1].push_back(row);
+          }
+          if (i != 0) {
+            row_sets[2].push_back(row);
+          }
+          if (i + 1 != span) {
+            row_sets[3].push_back(row);
+          }
+          if (rng() % 4 == 0) {
+            row_sets[4].push_back(row);
+          }
+          if (rng() % 4 != 0) {
+            row_sets[5].push_back(row);
+          }
+        }
+        for (const auto& rows_in : row_sets) {
+          const auto count = rows_in.size();
+          std::vector<duckdb::sel_t> expected;
+          for (const auto row : rows_in) {
+            if (accepted[codes.get_index(row)]) {
+              expected.push_back(row);
+            }
+          }
+          for (const auto kind : {Kind::Ranges, Kind::Selection, Kind::Lazy}) {
+            if (matches == 0 && kind != Kind::Lazy) {
+              continue;
+            }
+            SCOPED_TRACE(testing::Message()
+                         << "entries " << entries << " matches " << matches
+                         << " span " << span << " count " << count << " kind "
+                         << static_cast<int>(kind));
+            duckdb::SelectionVector rows{STANDARD_VECTOR_SIZE};
+            for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+              rows.set_index(i, i < count ? rows_in[i] : kUntouched);
+            }
+            FilterVerdicts verdicts;
+            switch (kind) {
+              case Kind::Ranges:
+                verdicts.Accept(ranges, entries);
+                break;
+              case Kind::Selection:
+                verdicts.Accept(listed, matches, entries);
+                break;
+              case Kind::Lazy: {
+                verdicts.Defer(entries);
+                const auto pending = verdicts.Unfiltered(codes, rows, count);
+                duckdb::SelectionVector resolved{STANDARD_VECTOR_SIZE};
+                duckdb::idx_t resolved_count = 0;
+                for (size_t k = 0; k < pending.size(); ++k) {
+                  if (accepted[pending[k]]) {
+                    resolved.set_index(resolved_count++, k);
+                  }
+                }
+                verdicts.AcceptPending(resolved, resolved_count);
+                break;
+              }
+            }
+            const auto kept = verdicts.KeepAccepted(codes, rows, count);
+            ASSERT_EQ(kept, expected.size());
+            for (duckdb::idx_t i = 0; i < kept; ++i) {
+              ASSERT_EQ(rows.get_index(i), expected[i]) << "at " << i;
+            }
+            for (auto i = count; i < STANDARD_VECTOR_SIZE; ++i) {
+              ASSERT_EQ(rows.get_index(i), kUntouched) << "at " << i;
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -2976,6 +3109,236 @@ TEST_F(ColCodecsTest, DictionaryFiltersMatchTheValues) {
             }
           }
         }
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, SortedDictionariesFollowAMovingTopNBound) {
+  constexpr uint64_t kRows = 9 * STANDARD_VECTOR_SIZE + 100;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    if (g % 7 == 0) {
+      return std::string{};
+    }
+    return absl::StrCat("phrase-", (g * 7919) % 5000);
+  };
+  using Cmp = duckdb::ExpressionType;
+  const auto column = [] {
+    return duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+      duckdb::LogicalType::VARCHAR, 0);
+  };
+  const auto not_empty = [&] {
+    return duckdb::BoundComparisonExpression::Create(
+      Cmp::COMPARE_NOTEQUAL, column(),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(duckdb::Value{""}));
+  };
+  const auto optional = [](duckdb::unique_ptr<duckdb::Expression> dynamic) {
+    return duckdb::CreateSelectivityOptionalFilterExpression(
+      std::move(dynamic), duckdb::LogicalType::VARCHAR, 1, 1);
+  };
+  enum class Shape : uint8_t {
+    Bound,
+    OverAConstant,
+    IntegerBound,
+    BoundFirst,
+  };
+  for (const auto shape : {Shape::Bound, Shape::OverAConstant,
+                           Shape::IntegerBound, Shape::BoundFirst}) {
+    for (const auto cmp :
+         {Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_LESSTHAN,
+          Cmp::COMPARE_GREATERTHAN, Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+      std::vector<std::string> bounds = {
+        "phrase-4", "phrase-3",  "phrase-3", "phrase-2999",
+        "phrase-1", "phrase-00", "phrase-0", "a",
+      };
+      const bool ascending = cmp == Cmp::COMPARE_GREATERTHAN ||
+                             cmp == Cmp::COMPARE_GREATERTHANOREQUALTO;
+      if (ascending) {
+        absl::c_reverse(bounds);
+      }
+      for (const auto codec : {irs::codecs::CodecType::DictFsst,
+                               irs::codecs::CodecType::DictFsst12,
+                               irs::codecs::CodecType::DictFsstPlus,
+                               irs::codecs::CodecType::DictOnpair,
+                               irs::codecs::CodecType::DictLz4}) {
+        SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(codec), " ",
+                                  duckdb::EnumUtil::ToString(cmp), " shape ",
+                                  static_cast<int>(shape)));
+        tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+        Write(dir, codec, {}, kRows, 4 * STANDARD_VECTOR_SIZE, value);
+        irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+        const auto* col = r.Column(kField);
+        ASSERT_NE(col, nullptr);
+        auto bound = duckdb::make_shared_ptr<duckdb::DynamicFilterData>(
+          cmp, shape == Shape::IntegerBound ? duckdb::Value::INTEGER(0)
+                                            : duckdb::Value{""});
+        auto dynamic = shape == Shape::OverAConstant
+                         ? duckdb::CreateDynamicFilterExpression(
+                             bound, duckdb::LogicalType::VARCHAR,
+                             duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                               duckdb::Value{"phrase-2"}))
+                         : duckdb::CreateDynamicFilterExpression(
+                             bound, duckdb::LogicalType::VARCHAR);
+        auto expr = shape == Shape::BoundFirst
+                      ? duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+                          Cmp::CONJUNCTION_AND, optional(std::move(dynamic)),
+                          duckdb::BoundComparisonExpression::Create(
+                            Cmp::COMPARE_EQUAL, column(), column()))
+                      : duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+                          Cmp::CONJUNCTION_AND, not_empty(),
+                          optional(std::move(dynamic)));
+        const duckdb::ExpressionFilter filter{std::move(expr)};
+        duckdb::Connection con{_db};
+        auto filter_state =
+          duckdb::TableFilterState::Initialize(*con.context, filter);
+        auto state = col->InitScan(r.Ctx());
+        const bool exact = shape == Shape::Bound &&
+                           irs::codecs::Sorted(irs::codecs::LeafOf(codec));
+        for (uint64_t anchor = 0; anchor < kRows;
+             anchor += STANDARD_VECTOR_SIZE) {
+          const auto vector = anchor / STANDARD_VECTOR_SIZE;
+          if (vector != 0) {
+            const auto& next = bounds[(vector - 1) % bounds.size()];
+            bound->SetValue(
+              shape == Shape::IntegerBound
+                ? duckdb::Value::INTEGER(static_cast<int32_t>(next.size()))
+                : duckdb::Value{next});
+          }
+          const auto key = shape == Shape::IntegerBound
+                             ? std::string{}
+                             : duckdb::StringValue::Get(bound->constant);
+          const auto span =
+            std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            sel.set_index(i, i);
+          }
+          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
+                             STANDARD_VECTOR_SIZE};
+          const auto kept =
+            col->GatherFilter(state, anchor, span, sel, span, filter,
+                              *filter_state, irs::NullCheckKind::None, out);
+          duckdb::idx_t next = 0;
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            const auto v = value(anchor + i);
+            const bool candidate =
+              v && (shape == Shape::BoundFirst || !v->empty());
+            bool within = candidate && vector != 0;
+            switch (cmp) {
+              case Cmp::COMPARE_LESSTHANOREQUALTO:
+                within = within && *v <= key;
+                break;
+              case Cmp::COMPARE_LESSTHAN:
+                within = within && *v < key;
+                break;
+              case Cmp::COMPARE_GREATERTHAN:
+                within = within && *v > key;
+                break;
+              default:
+                within = within && *v >= key;
+                break;
+            }
+            const bool got = next < kept && sel.get_index(next) == i;
+            next += got ? 1 : 0;
+            ASSERT_TRUE(!got || candidate) << "row " << anchor + i;
+            if (exact) {
+              ASSERT_EQ(got, vector == 0 ? candidate : within)
+                << "row " << anchor + i << " bound " << key;
+            } else if (shape != Shape::OverAConstant &&
+                       shape != Shape::IntegerBound) {
+              ASSERT_TRUE(!within || got) << "row " << anchor + i;
+            }
+          }
+          ASSERT_EQ(next, kept);
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, SortedLeafDictionariesFollowAMovingTopNBound) {
+  constexpr uint64_t kRows = 30000;
+  const Value clustered = [](uint64_t g) -> std::optional<std::string> {
+    return Clustered(Scattered(g, 4000));
+  };
+  using Cmp = duckdb::ExpressionType;
+  const auto column = [] {
+    return duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+      duckdb::LogicalType::VARCHAR, 0);
+  };
+  for (const auto codec :
+       {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::DictZstd,
+        irs::codecs::CodecType::DictZxc}) {
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {}, kRows, kRows, clustered);
+    const auto sorted = SegmentInfo(dir, "sorted");
+    ASSERT_FALSE(sorted.empty());
+    ASSERT_TRUE(absl::c_all_of(
+      sorted, [](const std::string& flag) { return flag == "true"; }))
+      << magic_enum::enum_name(codec) << " "
+      << ::testing::PrintToString(sorted);
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const auto cmp :
+         {Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_GREATERTHAN}) {
+      SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(codec), " ",
+                                duckdb::EnumUtil::ToString(cmp)));
+      std::vector<std::string> bounds = {
+        Clustered(3999), Clustered(2001), Clustered(2001),
+        Clustered(17),   Clustered(4),    "",
+      };
+      if (cmp == Cmp::COMPARE_GREATERTHAN) {
+        absl::c_reverse(bounds);
+      }
+      auto bound = duckdb::make_shared_ptr<duckdb::DynamicFilterData>(
+        cmp, duckdb::Value{""});
+      const duckdb::ExpressionFilter filter{
+        duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+          Cmp::CONJUNCTION_AND,
+          duckdb::BoundComparisonExpression::Create(
+            Cmp::COMPARE_NOTEQUAL, column(),
+            duckdb::make_uniq<duckdb::BoundConstantExpression>(
+              duckdb::Value{""})),
+          duckdb::CreateSelectivityOptionalFilterExpression(
+            duckdb::CreateDynamicFilterExpression(bound,
+                                                  duckdb::LogicalType::VARCHAR),
+            duckdb::LogicalType::VARCHAR, 1, 1))};
+      duckdb::Connection con{_db};
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto vector = anchor / STANDARD_VECTOR_SIZE;
+        if (vector != 0) {
+          bound->SetValue(duckdb::Value{bounds[(vector - 1) % bounds.size()]});
+        }
+        const auto key = duckdb::StringValue::Get(bound->constant);
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, span, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto v = *clustered(anchor + i);
+          const bool expected =
+            vector == 0 ||
+            (cmp == Cmp::COMPARE_LESSTHANOREQUALTO ? v <= key : v > key);
+          const bool got = next < kept && sel.get_index(next) == i;
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, expected) << "row " << anchor + i << " bound " << key;
+        }
+        ASSERT_EQ(next, kept);
       }
     }
   }
@@ -5526,6 +5889,173 @@ TEST_F(ColCodecsTest, SparseAndDenseSelectionsOfEveryTextCodecMatchTheValues) {
   }
 }
 
+TEST_F(ColCodecsTest, DictionaryInListsMatchTheValues) {
+  constexpr uint64_t kRows = 30000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 13 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("tenant-", (g * 7919) % 3000, "/item");
+  };
+  std::vector<std::vector<std::optional<std::string>>> lists = {
+    {"tenant-0/item", "tenant-1499/item", "tenant-2999/item"},
+    {"tenant-17/item", "missing", std::nullopt},
+    {"tenant-42/item", "tenant-42/item"},
+    {"tenant-100/item", "tenant-1000/item", "tenant-10/item", "tenant-1/item"},
+    {"a", "z"},
+    {std::nullopt},
+    {},
+  };
+  for (uint64_t i = 0; i < 300; ++i) {
+    lists.back().emplace_back(absl::StrCat("tenant-", 3 * i, "/item"));
+    lists.back().emplace_back(absl::StrCat("absent-", i));
+  }
+  for (const auto codec :
+       {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictFsstPlus,
+        irs::codecs::CodecType::DictOnpair, irs::codecs::CodecType::DictFsst12,
+        irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::DictZstd,
+        irs::codecs::CodecType::DictZxc}) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {}, kRows, 8192, value);
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    duckdb::Connection con{_db};
+    const bool sorted = irs::codecs::Sorted(irs::codecs::LeafOf(codec));
+    for (const auto& list : lists) {
+      for (const bool optional : {false, true}) {
+        if (optional && !sorted) {
+          continue;
+        }
+        SCOPED_TRACE(optional ? "optional" : "required");
+        duckdb::vector<duckdb::Value> constants;
+        for (const auto& key : list) {
+          constants.push_back(key
+                                ? duckdb::Value{*key}
+                                : duckdb::Value{duckdb::LogicalType::VARCHAR});
+        }
+        auto in = duckdb::ExpressionFilter::CreateInExpression(
+          duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            duckdb::LogicalType::VARCHAR, 0),
+          std::move(constants));
+        const duckdb::ExpressionFilter filter{
+          optional ? duckdb::CreateOptionalFilterExpression(
+                       std::move(in), duckdb::LogicalType::VARCHAR)
+                   : std::move(in)};
+        auto filter_state =
+          duckdb::TableFilterState::Initialize(*con.context, filter);
+        auto state = col->InitScan(r.Ctx());
+        for (uint64_t anchor = 0; anchor < kRows;
+             anchor += STANDARD_VECTOR_SIZE) {
+          const auto span =
+            std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            sel.set_index(i, i);
+          }
+          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
+                             STANDARD_VECTOR_SIZE};
+          const auto kept =
+            col->GatherFilter(state, anchor, span, sel, span, filter,
+                              *filter_state, irs::NullCheckKind::None, out);
+          duckdb::idx_t next = 0;
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            const auto v = value(anchor + i);
+            const bool expected = v && absl::c_linear_search(list, v);
+            const bool got = next < kept && sel.get_index(next) == i;
+            next += got ? 1 : 0;
+            if (optional && list.size() > 4) {
+              ASSERT_TRUE(!expected || got) << "row " << anchor + i;
+            } else {
+              ASSERT_EQ(got, expected) << "row " << anchor + i;
+            }
+          }
+        }
+      }
+    }
+    duckdb::vector<duckdb::Value> constants{duckdb::Value{"tenant-0/item"},
+                                            duckdb::Value{"missing"}};
+    const duckdb::ExpressionFilter over_a_constant{
+      duckdb::ExpressionFilter::CreateInExpression(
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{"tenant-0/item"}),
+        std::move(constants))};
+    auto filter_state =
+      duckdb::TableFilterState::Initialize(*con.context, over_a_constant);
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+      const auto span =
+        std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t i = 0; i < span; ++i) {
+        sel.set_index(i, i);
+      }
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      ASSERT_EQ(
+        col->GatherFilter(state, anchor, span, sel, span, over_a_constant,
+                          *filter_state, irs::NullCheckKind::None, out),
+        span);
+    }
+    const auto column = [] {
+      return duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::VARCHAR, 0);
+    };
+    const auto expect_matches = [&](const duckdb::ExpressionFilter& filter,
+                                    const auto& passes) {
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, span, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto v = value(anchor + i);
+          const bool expected = v && passes(*v);
+          const bool got = next < kept && sel.get_index(next) == i;
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, expected) << "row " << anchor + i;
+        }
+        ASSERT_EQ(next, kept);
+      }
+    };
+    {
+      SCOPED_TRACE("a member that is not a constant");
+      auto in = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
+        duckdb::ExpressionType::COMPARE_IN, duckdb::LogicalType::BOOLEAN);
+      in->GetChildrenMutable().push_back(column());
+      in->GetChildrenMutable().push_back(
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{"missing"}));
+      in->GetChildrenMutable().push_back(column());
+      const duckdb::ExpressionFilter filter{std::move(in)};
+      expect_matches(filter, [](std::string_view) { return true; });
+    }
+    {
+      SCOPED_TRACE("a constant that is not text");
+      duckdb::vector<duckdb::Value> constants{
+        duckdb::Value{"tenant-0/item"},
+        duckdb::Value::BLOB_RAW(std::string_view{"tenant-1/item"})};
+      const duckdb::ExpressionFilter filter{
+        duckdb::ExpressionFilter::CreateInExpression(column(),
+                                                     std::move(constants))};
+      expect_matches(filter, [](std::string_view v) {
+        return v == "tenant-0/item" || v == "tenant-1/item";
+      });
+    }
+  }
+}
+
 namespace {
 
 using Offered = std::function<bool(uint64_t)>;
@@ -6335,4 +6865,76 @@ TEST_F(ColCodecsTest, ZstdTextWithoutALevelCompressesAtLevelThree) {
   const auto unset = blocks(0);
   EXPECT_EQ(unset, blocks(3));
   EXPECT_NE(unset, blocks(1));
+}
+
+TEST_F(ColCodecsTest, RowFiltersOfEveryRowKeepTheSurvivorsInOrder) {
+  constexpr duckdb::idx_t kCount = STANDARD_VECTOR_SIZE;
+  duckdb::Connection con{_db};
+  duckdb::Vector values{duckdb::LogicalType::BIGINT, kCount};
+  auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
+  auto& validity = duckdb::FlatVector::ValidityMutable(values);
+  for (duckdb::idx_t i = 0; i < kCount; ++i) {
+    data[i] = static_cast<int64_t>(i % 10);
+    if (i % 37 == 0) {
+      validity.SetInvalid(i);
+    }
+  }
+  duckdb::FlatVector::SetSize(values, kCount);
+  using Cmp = duckdb::ExpressionType;
+  const auto compare = [](Cmp cmp, int64_t key) {
+    return duckdb::BoundComparisonExpression::Create(
+      cmp,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::BIGINT, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value::BIGINT(key)));
+  };
+  const auto check = [&](const duckdb::Expression& expression,
+                         const auto& holds) {
+    const duckdb::ExpressionFilter filter{expression.Copy()};
+    auto state = duckdb::TableFilterState::Initialize(*con.context, filter);
+    for (const duckdb::idx_t count : {kCount, duckdb::idx_t{1000}}) {
+      for (const duckdb::idx_t every : {duckdb::idx_t{1}, duckdb::idx_t{3}}) {
+        SCOPED_TRACE(absl::StrCat(expression.ToString(), ", ", count,
+                                  " rows, every ", every));
+        duckdb::SelectionVector sel{kCount};
+        duckdb::idx_t offered = 0;
+        for (duckdb::idx_t row = 0; row < count; row += every) {
+          sel.set_index(offered++, row);
+        }
+        duckdb::idx_t kept = offered;
+        ASSERT_EQ(irs::codecs::FilterRows(sel, values, *state, count, kept),
+                  kept);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t row = 0; row < count; ++row) {
+          if (row % every == 0 && validity.RowIsValid(row) &&
+              holds(data[row])) {
+            ASSERT_LT(next, kept);
+            ASSERT_EQ(sel.get_index(next++), row);
+          }
+        }
+        ASSERT_EQ(next, kept);
+      }
+    }
+  };
+  check(*compare(Cmp::COMPARE_EQUAL, 3), [](int64_t v) { return v == 3; });
+  check(*compare(Cmp::COMPARE_GREATERTHANOREQUALTO, 0),
+        [](int64_t v) { return v >= 0; });
+  check(*compare(Cmp::COMPARE_EQUAL, 99), [](int64_t v) { return v == 99; });
+  check(*compare(Cmp::COMPARE_NOTEQUAL, 3), [](int64_t v) { return v != 3; });
+  check(
+    duckdb::BoundConjunctionExpression{
+      Cmp::CONJUNCTION_AND, compare(Cmp::COMPARE_GREATERTHANOREQUALTO, 2),
+      compare(Cmp::COMPARE_LESSTHANOREQUALTO, 5)},
+    [](int64_t v) { return v >= 2 && v <= 5; });
+  check(duckdb::BoundConjunctionExpression{Cmp::CONJUNCTION_OR,
+                                           compare(Cmp::COMPARE_EQUAL, 1),
+                                           compare(Cmp::COMPARE_EQUAL, 7)},
+        [](int64_t v) { return v == 1 || v == 7; });
+  duckdb::BoundOperatorExpression not_null{Cmp::OPERATOR_IS_NOT_NULL,
+                                           duckdb::LogicalType::BOOLEAN};
+  not_null.GetChildrenMutable().push_back(
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+      duckdb::LogicalType::BIGINT, 0));
+  check(not_null, [](int64_t) { return true; });
 }

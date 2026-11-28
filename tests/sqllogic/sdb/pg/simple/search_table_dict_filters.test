@@ -135,6 +135,33 @@ ok
 t
 
 query
+SELECT (SELECT count(*) FROM df_s WHERE k IN ('k-1', 'k-10', 'k-100', 'missing')) = (SELECT count(*) FROM df_d WHERE k IN ('k-1', 'k-10', 'k-100', 'missing')) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k IN ('', 'k-2999', 'k-0')) = (SELECT count(*) FROM df_d WHERE k IN ('', 'k-2999', 'k-0')) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM df_s WHERE k IN ('a', 'zzz')) = (SELECT count(*) FROM df_d WHERE k IN ('a', 'zzz')) AS ok;
+----
+ok
+t
+
+query
+SELECT a, k FROM df_s WHERE k IN ('k-7', 'k-2999') AND a < 6000 ORDER BY a;
+----
+a	k
+7	k-7
+2999	k-2999
+3007	k-7
+5999	k-2999
+
+query
 SELECT (SELECT count(*) FROM df_s WHERE k IS NULL) = (SELECT count(*) FROM df_d WHERE k IS NULL) AS ok;
 ----
 ok
@@ -475,6 +502,14 @@ z	s	x
 t	t	t
 
 query
+SELECT (SELECT count(*) FROM df_f WHERE z IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', '', 'missing')) = (SELECT count(*) FROM df_v WHERE v IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', '', 'missing')) AS z,
+       (SELECT count(*) FROM df_f WHERE s IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', '', 'missing')) = (SELECT count(*) FROM df_v WHERE v IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', '', 'missing')) AS s,
+       (SELECT count(*) FROM df_f WHERE x IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', '', 'missing')) = (SELECT count(*) FROM df_v WHERE v IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', '', 'missing')) AS x;
+----
+z	s	x
+t	t	t
+
+query
 SELECT (SELECT count(*) FROM df_f WHERE z IS NULL) = (SELECT count(*) FROM df_v WHERE v IS NULL) AS z,
        (SELECT count(*) FROM df_f WHERE s IS NULL) = (SELECT count(*) FROM df_v WHERE v IS NULL) AS s,
        (SELECT count(*) FROM df_f WHERE x IS NULL) = (SELECT count(*) FROM df_v WHERE v IS NULL) AS x;
@@ -573,6 +608,39 @@ SELECT count(*) AS n, count(k) AS k, count(z) AS z, min(k::INTEGER) AS low, max(
 ----
 n	k	z	low	high
 60000	60000	60000	100	399
+
+query
+SELECT a, k FROM df_s WHERE k <> '' ORDER BY k, a LIMIT 4;
+----
+a	k
+3000	k-0
+6000	k-0
+9000	k-0
+12000	k-0
+
+query
+SELECT (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_s WHERE k <> '' ORDER BY k LIMIT 50)) = (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_d WHERE k <> '' ORDER BY k LIMIT 50)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_s WHERE k <> '' ORDER BY k DESC LIMIT 50)) = (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_d WHERE k <> '' ORDER BY k DESC LIMIT 50)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT string_agg(coalesce(k, '-'), ',' ORDER BY k NULLS FIRST) FROM (SELECT k FROM df_s ORDER BY k NULLS FIRST LIMIT 50)) = (SELECT string_agg(coalesce(k, '-'), ',' ORDER BY k NULLS FIRST) FROM (SELECT k FROM df_d ORDER BY k NULLS FIRST LIMIT 50)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT string_agg(l, ',' ORDER BY l) FROM (SELECT l FROM df_s WHERE l <> 'l-0' ORDER BY l DESC LIMIT 50)) = (SELECT string_agg(l, ',' ORDER BY l) FROM (SELECT l FROM df_d WHERE l <> 'l-0' ORDER BY l DESC LIMIT 50)) AS ok;
+----
+ok
+t
 
 statement ok
 DROP TABLE df_n;

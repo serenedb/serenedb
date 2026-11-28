@@ -72,6 +72,20 @@ IRS_FORCE_INLINE uint32_t FirstCompetitive(const BlockIndex& index, uint32_t b,
   return b;
 }
 
+template<typename RunScore, typename BlockScore>
+uint32_t CompetitiveBlocks(const BlockIndex& index, uint32_t b,
+                           score_t threshold, RunScore&& run_score,
+                           BlockScore&& block_score,
+                           std::span<uint32_t, detail::kMostSpans> blocks) {
+  const auto n = index.Size();
+  uint32_t count = 0;
+  for (auto k = b; k != n && count != blocks.size();
+       k = FirstCompetitive(index, k + 1, threshold, run_score, block_score)) {
+    blocks[count++] = k;
+  }
+  return count;
+}
+
 inline constexpr detail::LeafShape kPrunedShape{
   .scored = true,
   .defer = true,
@@ -138,6 +152,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     _cached_runs.fill(kNoBlock);
     _root_score = std::numeric_limits<score_t>::max();
     _threshold = std::numeric_limits<score_t>::lowest();
+    _hint_at = 0;
 
     if (meta.docs_count == 1) {
       *(std::end(_docs) - 1) = doc_limits::min() + meta.doc_delta;
@@ -266,6 +281,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   static constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
   static constexpr uint32_t kCachedRuns = 8;
+  static constexpr uint32_t kHintBlocks = detail::kMostSpans;
 
   score_t BoundScore(BoundPair bound) {
     _bound_source->Set(bound.freq, bound.norm);
@@ -299,6 +315,34 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
         [&](uint32_t b) { return BlockScore(b); }));
     } else {
       return _walk.Seek(target, In());
+    }
+  }
+
+  uint32_t HintCompetitive(std::span<uint32_t, kHintBlocks> blocks) {
+    static_assert(Standalone);
+    const auto& index = _walk.Index();
+    const auto n = index.Size();
+    const auto b = _walk.Block();
+    if (b == n || b < _hint_at || (_hint_at == 0 && this->InMemory(b))) {
+      return 0;
+    }
+    const auto count = CompetitiveBlocks(
+      index, b, _threshold, [&](uint32_t r) { return RunScore(r); },
+      [&](uint32_t c) { return BlockScore(c); }, blocks);
+    if (this->InMemory(blocks[count - 1])) {
+      _hint_at = 0;
+      return 0;
+    }
+    _hint_at = count == kHintBlocks ? blocks[count / 2] : n;
+    this->HintBlocks(blocks.first(count));
+    HintNorms(index, blocks.first(count));
+    return count;
+  }
+
+  IRS_NO_INLINE void HintNorms(const BlockIndex& index,
+                               std::span<const uint32_t> blocks) noexcept {
+    for (const auto b : blocks) {
+      _score.fetcher->Hint(index.First(b), index.Last(b));
     }
   }
 
@@ -437,6 +481,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   std::array<score_t, kCachedRuns> _run_scores;
   score_t _root_score = std::numeric_limits<score_t>::max();
   score_t _threshold = std::numeric_limits<score_t>::lowest();
+  uint32_t _hint_at = 0;
   uint32_t _len = 0;
   doc_id_t _base = 0;
   uint32_t _cost = 0;
@@ -541,7 +586,7 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
     const auto& index = _walk.Index();
     const auto size = index.Size();
     const auto block = _walk.NextBlock(_left_in_list);
-    return irs::detail::PlanLandings(
+    const auto landings = irs::detail::PlanLandings(
       index,
       {.block = block,
        .next = _needs_reposition ? size : block,
@@ -561,6 +606,10 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
           }
         }
       });
+    if (landings != 0 && !this->InMemory(blocks[landings - 1])) {
+      this->HintBlocks({blocks, landings});
+    }
+    return landings;
   }
 
   void LandOn(uint32_t block) {

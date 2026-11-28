@@ -63,6 +63,22 @@ enum class CompressionValidity : uint8_t {
   NoValidityRequired,
 };
 
+struct SegmentScanState {
+  virtual ~SegmentScanState() = default;
+
+  template<typename T>
+  T& Cast() noexcept {
+    return utils::downCast<T>(*this);
+  }
+};
+
+struct SharedScanState {
+  uint64_t file_id = 0;
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  std::shared_ptr<const SegmentScanState> decoded;
+};
+
 struct ColumnSegment {
   duckdb::BufferHandle Pin() const;
 
@@ -77,15 +93,7 @@ struct ColumnSegment {
   CodecType codec = CodecType::Uncompressed;
   uint64_t shared_offset = 0;
   uint64_t shared_size = 0;
-};
-
-struct SegmentScanState {
-  virtual ~SegmentScanState() = default;
-
-  template<typename T>
-  T& Cast() noexcept {
-    return utils::downCast<T>(*this);
-  }
+  SharedScanState* shared_state = nullptr;
 };
 
 struct ColumnScanState {
@@ -161,6 +169,7 @@ enum class StateId : uint8_t {
   TextZxcSizes,
   AlpSample,
   AlprdSample,
+  WideEntries,
 };
 
 consteval StateId TextState(Shape shape, ByteCodec leaf) noexcept {
@@ -292,7 +301,19 @@ struct Codec {
 
 void CompressAuto(ColumnDataCheckpointData& data);
 
-void CompressAutoCodes(ColumnDataCheckpointData& data);
+inline constexpr CodecSet kCodesGroup =
+  CodecSet{}
+    .set(std::to_underlying(CodecType::Bitpacking))
+    .set(std::to_underlying(CodecType::Rle));
+
+constexpr bool CodesCodec(CodecType type) noexcept {
+  const auto index = std::to_underlying(type);
+  return index < kCodesGroup.size() && kCodesGroup.test(index);
+}
+
+void CompressAutoCodes(
+  std::span<uint32_t> codes,
+  absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data);
 
@@ -301,5 +322,9 @@ void CompressUncompressed(ColumnDataCheckpointData& data);
 void Compress(CodecType method, ColumnDataCheckpointData& data);
 
 [[noreturn]] void ThrowCorrupted(std::string_view codec, std::string_view what);
+
+duckdb::idx_t FilterRows(duckdb::SelectionVector& sel, duckdb::Vector& values,
+                         duckdb::TableFilterState& filter_state,
+                         duckdb::idx_t count, duckdb::idx_t& sel_count);
 
 }  // namespace irs::codecs

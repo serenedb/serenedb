@@ -45,6 +45,8 @@ struct NormReader : public memory::Managed {
 
   virtual uint32_t Get(doc_id_t doc) = 0;
 
+  virtual void Hint(doc_id_t first, doc_id_t last) noexcept = 0;
+
   virtual score_t GetAvg() const noexcept {
     SDB_ASSERT(false);
     return {};

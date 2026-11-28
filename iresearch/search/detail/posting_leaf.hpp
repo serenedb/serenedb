@@ -114,6 +114,18 @@ struct FreqLen {
   uint32_t value = 0;
 };
 
+struct DocSpan {
+  doc_id_t first;
+  doc_id_t last;
+};
+
+struct BlockRun {
+  uint32_t first;
+  uint32_t last;
+};
+
+inline constexpr size_t kMostSpans = 2 * BlockIndex::kRun;
+
 struct LeafScore {
   ColumnArgsFetcher* fetcher = nullptr;
   ScoreFunction score;
@@ -240,6 +252,7 @@ class PostingLeaf {
   static constexpr bool kEnc = Shape.enc || !InputType::CONTIGUOUS;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
+  static constexpr doc_id_t kHintDocs = doc_id_t{1} << 16;
 
   IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
@@ -291,6 +304,7 @@ class PostingLeaf {
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(doc_in, meta);
+      _hinted_end = 0;
     }
     if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
@@ -339,9 +353,24 @@ class PostingLeaf {
     }
     if (min > _last + doc_limits::kBlockSize && Armed()) [[unlikely]] {
       Land(min);
-      return !doc_limits::eof(_doc);
+      if (doc_limits::eof(_doc)) {
+        return false;
+      }
+    }
+    if constexpr (Shape.reads == LeafReads::Whole) {
+      if (uint64_t{max} + kHintDocs / 2 > _hinted_end && Armed() &&
+          !_walk.Pending()) [[unlikely]] {
+        HintFrom(std::max(min, _hinted_end), max);
+      }
     }
     return true;
+  }
+
+  IRS_NO_INLINE void HintFrom(doc_id_t from, doc_id_t max) {
+    _hinted_end = static_cast<doc_id_t>(
+      std::min<uint64_t>(uint64_t{max} + kHintDocs, doc_limits::eof()));
+    const DocSpan span{.first = from, .last = _hinted_end - 1};
+    HintSpans({&span, 1});
   }
 
   IRS_FORCE_INLINE void SetFreqLen(bool has_freq) noexcept {
@@ -561,8 +590,14 @@ class PostingLeaf {
   }
 
   IRS_FORCE_INLINE bool ReadToDelta(doc_id_t target) {
-    return SeekToLeaf(
-      target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeafDelta(prev); });
+    return SeekToLeaf(target, [this](doc_id_t prev) IRS_FORCE_INLINE {
+      if constexpr (InputType::CONTIGUOUS) {
+        if (prev != _last) [[unlikely]] {
+          In().Landed();
+        }
+      }
+      ReadLeafDelta(prev);
+    });
   }
 
   uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
@@ -572,7 +607,7 @@ class PostingLeaf {
       return 0;
     }
     const auto block = _walk.NextBlock(_left_in_list);
-    return PlanLandings(
+    const auto landings = PlanLandings(
       _walk.Index(),
       {.block = block, .next = block, .upper = _last, .cap = kBlock}, in, n,
       blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
@@ -582,6 +617,76 @@ class PostingLeaf {
           __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
         }
       });
+    if (landings != 0 && !InMemory(blocks[landings - 1])) {
+      HintBlocks({blocks, landings});
+    }
+    return landings;
+  }
+
+  bool HintSpans(std::span<const DocSpan> spans) {
+    BlockRun runs[kMostSpans];
+    const auto count = RunsToHint(spans, runs);
+    if (count == 0) {
+      return false;
+    }
+    HintRuns({runs, count});
+    return true;
+  }
+
+  uint32_t RunsToHint(std::span<const DocSpan> spans, BlockRun* runs) {
+    SDB_ASSERT(spans.size() <= kMostSpans);
+    if (spans.empty() || spans.back().last <= _last || _left_in_list == 0 ||
+        !_walk.Armed()) {
+      return 0;
+    }
+    return ArmedRunsToHint(spans, runs);
+  }
+
+  IRS_NO_INLINE uint32_t ArmedRunsToHint(std::span<const DocSpan> spans,
+                                         BlockRun* runs) {
+    const auto& index = _walk.Loaded(In());
+    const auto n = index.Size();
+    auto block = _walk.NextBlock(_left_in_list);
+    if (InMemory(std::min(index.Find(block, spans.back().last), n - 1))) {
+      return 0;
+    }
+    uint32_t count = 0;
+    for (const auto& span : spans) {
+      if (span.last <= _last) {
+        continue;
+      }
+      const auto first = index.Find(block, std::max(span.first, _last + 1));
+      if (first == n) {
+        break;
+      }
+      block = std::min(index.Find(first, span.last), n - 1);
+      runs[count++] = {.first = first, .last = block};
+    }
+    return count;
+  }
+
+  IRS_NO_INLINE void HintRuns(std::span<const BlockRun> runs) {
+    SDB_ASSERT(runs.size() <= kBlock);
+    duckdb::FileRange ranges[kBlock];
+    for (size_t i = 0; i != runs.size(); ++i) {
+      const auto start = _walk.BlockStart(runs[i].first);
+      ranges[i] = {.offset = start,
+                   .size = _walk.BlockEnd(runs[i].last) - start};
+    }
+    In().File()->Hint(std::span{ranges, runs.size()});
+  }
+
+  bool InMemory(uint32_t block) {
+    const auto start = _walk.BlockStart(block);
+    return In().File()->IsResident(start, _walk.BlockEnd(block) - start);
+  }
+
+  IRS_NO_INLINE void HintBlocks(std::span<const uint32_t> blocks) {
+    BlockRun runs[kBlock];
+    for (size_t i = 0; i != blocks.size(); ++i) {
+      runs[i] = {.first = blocks[i], .last = blocks[i]};
+    }
+    HintRuns({runs, blocks.size()});
   }
 
   template<typename Read>
@@ -635,6 +740,8 @@ class PostingLeaf {
     std::conditional_t<Shape.defer, FreqProvider<ScoreInputs>, LeafProvider>>
     _provider;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
+  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Whole, doc_id_t>
+    _hinted_end{};
   BlockCursor<InputType> _walk;
 };
 

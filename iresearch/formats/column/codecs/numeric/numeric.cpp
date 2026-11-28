@@ -30,7 +30,9 @@
 #include <cstring>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/planner/filter/zonemap_checker.hpp>
 #include <duckdb/planner/table_filter.hpp>
@@ -221,10 +223,16 @@ class DeltaReader final : public FrameReader<T> {
 
  public:
   using Base::ConstantRows;
-  using Base::FetchRows;
   using Base::NarrowBounds;
 
   static constexpr bool kPacks = !std::is_floating_point_v<T>;
+
+  IRS_FORCE_INLINE void FetchRows(const duckdb::idx_t* rows,
+                                  duckdb::idx_t count, T* out,
+                                  const duckdb::SelectionVector& sel,
+                                  duckdb::idx_t offset) {
+    this->FetchBlockRows(rows, count, out, sel, offset);
+  }
 
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})
@@ -359,6 +367,9 @@ class DeltaReader final : public FrameReader<T> {
 };
 
 inline constexpr uint8_t kLeastDictionaryValueBytes = 2;
+inline constexpr size_t kProbeAhead = 16;
+inline constexpr size_t kLeastPrefetchedIndexBytes = size_t{1} << 20;
+inline constexpr size_t kLeastEntryRunRows = 8;
 inline constexpr uint32_t kMostNarrowDictionaryEntries = 256;
 
 template<typename T>
@@ -369,16 +380,58 @@ template<typename T>
 struct Entries;
 
 template<typename T>
-bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
-                    uint32_t expected, Entries<T>& entries) {
+IRS_FORCE_INLINE bool AddEntry(Bits<sizeof(T)> value, uint32_t cap,
+                               Entries<T>& entries, uint32_t& entry) {
+  auto& values = entries.values;
+  const auto [it, added] =
+    entries.index.try_emplace(value, static_cast<uint32_t>(values.size()));
+  if (added) {
+    if (entries.index.size() > cap) {
+      return false;
+    }
+    values.push_back(value);
+  }
+  entry = it->second;
+  return true;
+}
+
+template<typename T>
+IRS_FORCE_INLINE size_t IndexBytes(const Entries<T>& entries) noexcept {
+  using Index = decltype(entries.index);
+  return entries.index.capacity() * sizeof(typename Index::value_type);
+}
+
+template<typename T>
+void SortEntries(Entries<T>& entries, std::span<uint32_t> codes) {
   using U = Bits<sizeof(T)>;
   using Ordered =
     std::conditional_t<Values<T>::kSigned, std::make_signed_t<U>, U>;
-  const auto n = static_cast<uint32_t>(rows.size());
   auto& values = entries.values;
+  std::span keys{reinterpret_cast<Ordered*>(values.data()), values.size()};
+  if (absl::c_is_sorted(keys)) {
+    return;
+  }
+  absl::c_sort(keys);
+  const auto& index = entries.index;
+  const bool prefetches = IndexBytes(entries) >= kLeastPrefetchedIndexBytes;
+  ScratchVector<uint32_t> ranks(values.size());
+  for (uint32_t k = 0; k < values.size(); ++k) {
+    if (prefetches && k + kProbeAhead < values.size()) {
+      index.prefetch(values[k + kProbeAhead]);
+    }
+    ranks[index.find(values[k])->second] = k;
+  }
+  for (auto& code : codes) {
+    code = ranks[code];
+  }
+}
+
+template<typename T>
+bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
+                    Entries<T>& entries) {
+  using U = Bits<sizeof(T)>;
   auto& codes = entries.codes;
-  codes.resize(n);
-  entries.index.reserve(std::min(cap, expected));
+  codes.resize(rows.size());
   uint32_t entry = 0;
   uint32_t row = 0;
   U previous = 0;
@@ -388,30 +441,35 @@ bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
     for (size_t i = 0; i < size; ++i, ++row) {
       if (row == 0 || block[i] != previous) {
         previous = block[i];
-        const auto [it, added] = entries.index.try_emplace(
-          previous, static_cast<uint32_t>(values.size()));
-        if (added) {
-          if (entries.index.size() > cap) {
-            return false;
-          }
-          values.push_back(previous);
+        if (!AddEntry(previous, cap, entries, entry)) {
+          return false;
         }
-        entry = it->second;
       }
       codes[row] = entry;
     }
   }
-  std::span keys{reinterpret_cast<Ordered*>(values.data()), values.size()};
-  if (absl::c_is_sorted(keys)) {
-    return true;
+  SortEntries(entries, codes);
+  return true;
+}
+
+template<typename T>
+bool CollectRunEntries(const Runs<T>& runs, uint32_t cap, Entries<T>& entries) {
+  const auto count = runs.values.size();
+  ScratchVector<uint32_t> run_codes(count);
+  const bool prefetches = IndexBytes(entries) >= kLeastPrefetchedIndexBytes;
+  for (size_t r = 0; r < count; ++r) {
+    if (prefetches && r + kProbeAhead < count) {
+      entries.index.prefetch(runs.values[r + kProbeAhead]);
+    }
+    if (!AddEntry(runs.values[r], cap, entries, run_codes[r])) {
+      return false;
+    }
   }
-  absl::c_sort(keys);
-  ScratchVector<uint32_t> ranks(values.size());
-  for (uint32_t k = 0; k < values.size(); ++k) {
-    ranks[entries.index.find(values[k])->second] = k;
-  }
-  for (uint32_t i = 0; i < n; ++i) {
-    codes[i] = ranks[codes[i]];
+  SortEntries(entries, run_codes);
+  auto& codes = entries.codes;
+  codes.resize(size_t{runs.rows[count - 1]} + runs.lengths[count - 1]);
+  for (size_t r = 0; r < count; ++r) {
+    std::fill_n(codes.data() + runs.rows[r], runs.lengths[r], run_codes[r]);
   }
   return true;
 }
@@ -440,12 +498,19 @@ struct Entries final : State {
         affordable > 1 ? static_cast<uint32_t>(std::ceil(affordable)) - 1 : 0;
     }
     auto& expected = data.tuning.dictionary_entries;
-    fits = CollectEntries<T>(rows, cap, expected, *this);
-    expected = static_cast<uint32_t>(index.size());
-    if (const auto scale = input.Scale(); fits && scale > 1) {
-      DivideExact<Values<T>::kSigned>(values.data(), values.size(), scale,
-                                      values.data());
+    index.reserve(std::min(cap, expected));
+    const auto* runs = data.Find<Runs<T>>();
+    if (runs && !runs->rows.empty() &&
+        runs->rows.size() * kLeastEntryRunRows <= rows.size()) {
+      fits = CollectRunEntries<T>(*runs, cap, *this);
+    } else {
+      fits = CollectEntries<T>(rows, cap, *this);
+      if (const auto scale = input.Scale(); fits && scale > 1) {
+        DivideExact<Values<T>::kSigned>(values.data(), values.size(), scale,
+                                        values.data());
+      }
     }
+    expected = static_cast<uint32_t>(index.size());
   }
 
   std::vector<Bits<sizeof(T)>> values;
@@ -886,13 +951,27 @@ IRS_FORCE_INLINE bool ScanStored(R& reader, uint64_t start, idx_t scan_count,
 }
 
 template<typename R>
+IRS_FORCE_INLINE bool ScanEntries(R& reader, uint64_t start, idx_t scan_count,
+                                  duckdb::ScanVectorType scan_type,
+                                  duckdb::Vector& result) {
+  if constexpr (requires { reader.ScanEntries(start, scan_count, result); }) {
+    return scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
+           scan_count == STANDARD_VECTOR_SIZE &&
+           reader.ScanEntries(start, scan_count, result);
+  } else {
+    return false;
+  }
+}
+
+template<typename R>
 void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
           duckdb::Vector& result, idx_t result_offset,
           duckdb::ScanVectorType scan_type) {
   auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
   const uint64_t start = state.GetPositionInSegment();
   if (ScanConstant(frames, start, scan_count, scan_type, result) ||
-      ScanStored(frames, start, scan_count, scan_type, result)) {
+      ScanStored(frames, start, scan_count, scan_type, result) ||
+      ScanEntries(frames, start, scan_count, scan_type, result)) {
     return;
   }
   frames.Read(start, scan_count,
@@ -1126,14 +1205,23 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
                       filter_state)) {
       return;
     }
+  } else if constexpr (requires {
+                         scan.frames.FilterCodes(start, vector_count, result,
+                                                 sel, sel_count, filter_state);
+                       }) {
+    static_assert(!std::is_integral_v<typename R::Value>);
+    if (!state.dynamic_filter &&
+        scan.frames.FilterCodes(start, vector_count, result, sel, sel_count,
+                                filter_state)) {
+      return;
+    }
   }
   Scan<R>(segment, state, vector_count, result, 0,
           duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
   if (every_row) {
     return;
   }
-  duckdb::ColumnSegment::FilterSelection(sel, result, filter_state,
-                                         vector_count, sel_count);
+  FilterRows(sel, result, filter_state, vector_count, sel_count);
 }
 
 template<typename R>
@@ -1145,29 +1233,50 @@ struct FetchCache final : SegmentScanState {
 };
 
 template<typename R>
+IRS_FORCE_INLINE std::unique_ptr<FetchCache<R>> MakeFetchCache(
+  const ColumnSegment& segment, ColumnFetchState& state) {
+  return std::make_unique<FetchCache<R>>(state.GetOrInsertHandle(segment).Ptr(),
+                                         segment);
+}
+
+template<typename R>
+IRS_NO_INLINE std::unique_ptr<FetchCache<R>> NewFetchCache(
+  const ColumnSegment& segment, ColumnFetchState& state) {
+  return MakeFetchCache<R>(segment, state);
+}
+
+template<typename R>
+IRS_NO_INLINE void FetchRowList(const ColumnSegment& segment,
+                                ColumnFetchState& state, const idx_t* rows,
+                                idx_t count, duckdb::Vector& result,
+                                const duckdb::SelectionVector& result_sel,
+                                idx_t result_offset) {
+  auto& frames = state
+                   .GetOrCreateSegmentState<FetchCache<R>>(
+                     [&] { return MakeFetchCache<R>(segment, state); })
+                   .frames;
+  auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
+  frames.FetchRows(rows, count, data, result_sel, result_offset);
+}
+
+template<typename R>
 void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
-  auto& frames = state
-                   .GetOrCreateSegmentState<FetchCache<R>>([&] {
-                     return std::make_unique<FetchCache<R>>(
-                       state.GetOrInsertHandle(segment).Ptr(), segment);
-                   })
-                   .frames;
-  auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
-  if constexpr (requires {
-                  frames.FetchRows(rows, count, data, result_sel,
-                                   result_offset);
-                }) {
-    frames.FetchRows(rows, count, data, result_sel, result_offset);
-  } else {
-    for (idx_t i = 0; i < count; ++i) {
-      const auto row = static_cast<uint64_t>(rows[i]);
-      SDB_ASSERT(row < segment.count);
-      const uint64_t next = i + 1 < count ? rows[i + 1] : kNoRow;
-      data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
-    }
+  if (count != 1) {
+    return FetchRowList<R>(segment, state, rows, count, result, result_sel,
+                           result_offset);
   }
+  const auto row = static_cast<uint64_t>(rows[0]);
+  const auto at = result_offset + result_sel.get_index(0);
+  SDB_ASSERT(row < segment.count);
+  auto& frames = state
+                   .GetOrCreateSegmentState<FetchCache<R>>(
+                     [&] { return NewFetchCache<R>(segment, state); })
+                   .frames;
+  auto* data =
+    duckdb::FlatVector::GetDataMutableUnsafe<typename R::Value>(result);
+  data[at] = frames.Fetch(row, kNoRow);
 }
 
 inline uint64_t RawBytes(const_data_ptr_t base, const FrameHeader& h,
@@ -1289,6 +1398,28 @@ inline constexpr CompressionFunction kWide{
   .compress = CompressWide<W, kCodec, kInner>,
 };
 
+template<typename W>
+double AnalyzeWideEntries(ColumnDataCheckpointData& data, double) {
+  const auto& entries = data.Get<WideEntries<W>>();
+  return entries.fits ? ScoreOfBytes(entries.out.size(), data) : kNoScore;
+}
+
+template<typename W>
+bool CompressWideEntries(const Codec& codec, ColumnDataCheckpointData& data) {
+  const auto& entries = data.Get<WideEntries<W>>();
+  if (!entries.fits) {
+    return false;
+  }
+  data.flush(codec, entries.Stats(data.type), data.rows.count, entries.out, {});
+  return true;
+}
+
+template<typename W>
+inline constexpr CompressionFunction kWideEntries{
+  .analyze = AnalyzeWideEntries<W>,
+  .compress = CompressWideEntries<W>,
+};
+
 template<typename W, typename R>
 class WideReader {
  public:
@@ -1320,9 +1451,13 @@ class WideReader {
     }
   }
 
-  bool Halves() const noexcept { return _header.form == WideForm::Halves; }
-
-  FrameHeader LowFrames() const noexcept { return _low_frames; }
+  duckdb::InsertionOrderPreservingMap<std::string> Info(
+    const ColumnSegment& segment) const {
+    duckdb::InsertionOrderPreservingMap<std::string> info;
+    info["transform"] = TransformName(ShapeOf(segment.codec), _low_frames);
+    info["wide"] = _header.form == WideForm::Halves ? "halves" : "offsets";
+    return info;
+  }
 
   void Read(uint64_t row, uint64_t count, W* out) {
     if (_lows.size() < count) {
@@ -1359,11 +1494,7 @@ class WideReader {
   }
 
   void FetchRows(const duckdb::idx_t* rows, duckdb::idx_t count, W* out,
-                 const duckdb::SelectionVector& sel, duckdb::idx_t offset)
-    requires requires(R& half, uint64_t* halves) {
-      half.FetchRows(rows, count, halves, sel, offset);
-    }
-  {
+                 const duckdb::SelectionVector& sel, duckdb::idx_t offset) {
     const duckdb::SelectionVector in_order;
     if (_lows.size() < count) {
       _lows.resize(count);
@@ -1499,15 +1630,199 @@ class WideReader {
   ScratchVector<uint64_t> _highs;
 };
 
+template<typename W>
+class WideDictionaryReader {
+ public:
+  using Value = W;
+
+  struct Matches {};
+
+  static constexpr bool kHasRuns = false;
+  static constexpr bool kFiltersRuns = false;
+  static constexpr bool kFiltersEntries = false;
+
+  WideDictionaryReader(duckdb::const_data_ptr_t base,
+                       const ColumnSegment& segment) {
+    if (segment.size < sizeof(WideHeader)) [[unlikely]] {
+      ThrowCorrupted("numeric", "segment is smaller than its header");
+    }
+    const auto header = duckdb::Load<WideHeader>(base);
+    if (header.form != WideForm::Entries) {
+      _parts.emplace(base, segment);
+      return;
+    }
+    const uint64_t at =
+      sizeof(WideHeader) + uint64_t{header.entries} * sizeof(W);
+    if (!(header.entries != 0 && header.entries <= kMostWideDictionaryEntries &&
+          at < segment.size && CodesCodec(header.codes))) [[unlikely]] {
+      ThrowCorrupted("numeric", "header is inconsistent");
+    }
+    _entries = base + sizeof(WideHeader);
+    _count = header.entries;
+    _frames =
+      ParseFrames(base + at, segment.size - at, segment.count, header.codes);
+    auto slot = segment.cache_slot;
+    slot.file_offset += at;
+    if (ShapeOf(header.codes) == Shape::Plain) {
+      _plain.emplace(base + at, _frames, header.codes, slot);
+    } else {
+      _runs.emplace(base + at, _frames, header.codes, slot);
+    }
+  }
+
+  duckdb::InsertionOrderPreservingMap<std::string> Info(
+    const ColumnSegment& segment) const {
+    if (_parts) {
+      return _parts->Info(segment);
+    }
+    duckdb::InsertionOrderPreservingMap<std::string> info;
+    info["transform"] =
+      TransformName(_plain ? Shape::Plain : Shape::Runs, _frames);
+    info["wide"] = "entries";
+    info["entries"] = absl::StrCat(_count);
+    return info;
+  }
+
+  void Read(uint64_t row, uint64_t count, W* out) {
+    if (_parts) {
+      _parts->Read(row, count, out);
+      return;
+    }
+    if (_codes.size() < count) {
+      _codes.resize(count);
+    }
+    ReadCodes(row, count, _codes.data());
+    for (uint64_t i = 0; i < count; ++i) {
+      out[i] = duckdb::Load<W>(_entries + size_t{_codes[i]} * sizeof(W));
+    }
+  }
+
+  W Get(uint64_t row) {
+    if (_parts) {
+      return _parts->Get(row);
+    }
+    return Entry(Visit([&](auto& codes) { return codes.Get(row); }));
+  }
+
+  W Fetch(uint64_t row, uint64_t next) {
+    if (_parts) {
+      return _parts->Fetch(row, next);
+    }
+    return Entry(Visit([&](auto& codes) { return codes.Fetch(row, next); }));
+  }
+
+  void FetchRows(const duckdb::idx_t* rows, duckdb::idx_t count, W* out,
+                 const duckdb::SelectionVector& sel, duckdb::idx_t offset) {
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      out[offset + sel.get_index(i)] =
+        Fetch(rows[i], i + 1 < count ? uint64_t{rows[i + 1]} : kNoRow);
+    }
+  }
+
+  bool ScanEntries(uint64_t row, uint64_t count, duckdb::Vector& result) {
+    if (_parts) {
+      return false;
+    }
+    if (!_sel) {
+      _sel = duckdb::make_buffer<duckdb::SelectionVector>(STANDARD_VECTOR_SIZE);
+    }
+    ReadCodes(row, count, _sel->data());
+    result.Dictionary(Dictionary(result.GetType()), *_sel, count);
+    return true;
+  }
+
+  bool FilterCodes(uint64_t row, idx_t count, duckdb::Vector& result,
+                   duckdb::SelectionVector& sel, idx_t& sel_count,
+                   duckdb::TableFilterState& filter_state) {
+    if (_parts) {
+      return false;
+    }
+    if (_verdicts.empty()) {
+      _verdicts.assign(_count, 0);
+      duckdb::SelectionVector accepted;
+      idx_t accepted_count = _count;
+      duckdb::ColumnSegment::FilterSelection(
+        accepted, Dictionary(result.GetType())->data, filter_state, _count,
+        accepted_count);
+      for (idx_t i = 0; i < accepted_count; ++i) {
+        _verdicts[accepted.get_index(i)] = 1;
+      }
+    }
+    if (_codes.size() < count) {
+      _codes.resize(count);
+    }
+    ReadCodes(row, count, _codes.data());
+    auto* out = duckdb::FlatVector::GetDataMutable<W>(result);
+    idx_t kept = 0;
+    for (idx_t i = 0; i < sel_count; ++i) {
+      const auto at = sel.get_index(i);
+      const auto code = _codes[at];
+      if (_verdicts[code] != 0) {
+        out[at] = duckdb::Load<W>(_entries + size_t{code} * sizeof(W));
+        sel.set_index(kept++, at);
+      }
+    }
+    sel_count = kept;
+    return true;
+  }
+
+ private:
+  static_assert(kMostWideDictionaryEntries <= STANDARD_VECTOR_SIZE);
+
+  template<typename F>
+  IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
+    if (_plain) {
+      return f(*_plain);
+    }
+    return f(*_runs);
+  }
+
+  const duckdb::buffer_ptr<duckdb::DictionaryEntry>& Dictionary(
+    const duckdb::LogicalType& type) {
+    if (!_dictionary) {
+      _dictionary =
+        duckdb::DictionaryVector::CreateReusableDictionary(type, _count);
+      std::memcpy(duckdb::FlatVector::GetDataMutable<W>(_dictionary->data),
+                  _entries, size_t{_count} * sizeof(W));
+    }
+    return _dictionary;
+  }
+
+  void ReadCodes(uint64_t row, uint64_t count, uint32_t* out) {
+    Visit([&](auto& codes) { codes.Read(row, count, out); });
+    uint32_t worst = 0;
+    for (uint64_t i = 0; i < count; ++i) {
+      worst = std::max(worst, out[i]);
+    }
+    if (worst >= _count) [[unlikely]] {
+      ThrowCorrupted("numeric", "dictionary code is out of range");
+    }
+  }
+
+  W Entry(uint32_t code) const {
+    if (code >= _count) [[unlikely]] {
+      ThrowCorrupted("numeric", "dictionary code is out of range");
+    }
+    return duckdb::Load<W>(_entries + size_t{code} * sizeof(W));
+  }
+
+  std::optional<WideReader<W, DictionaryReader<uint64_t>>> _parts;
+  duckdb::const_data_ptr_t _entries = nullptr;
+  uint32_t _count = 0;
+  FrameHeader _frames;
+  std::optional<PlainReader<uint32_t>> _plain;
+  std::optional<RunsReader<uint32_t>> _runs;
+  ScratchVector<uint32_t> _codes;
+  std::vector<uint8_t> _verdicts;
+  duckdb::buffer_ptr<duckdb::SelectionVector> _sel;
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> _dictionary;
+};
+
 template<typename R>
 duckdb::InsertionOrderPreservingMap<std::string> WideSegmentInfo(
   const ColumnSegment& segment) {
   auto handle = segment.Pin();
-  R reader{handle.Ptr(), segment};
-  duckdb::InsertionOrderPreservingMap<std::string> info;
-  info["transform"] = TransformName(ShapeOf(segment.codec), reader.LowFrames());
-  info["wide"] = reader.Halves() ? "halves" : "offsets";
-  return info;
+  return R{handle.Ptr(), segment}.Info(segment);
 }
 
 template<typename R>
@@ -1614,6 +1929,12 @@ consteval auto DictionaryFunctions() {
       Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, true>>(),
     };
+  } else if constexpr (kIsWide<T>) {
+    return std::array{
+      Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Dictionary, kLeaf, kBlocks<DictBitpacking<Inner<T>>>>(),
+      kWideEntries<T>,
+    };
   } else {
     return std::array{
       Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, false>>(),
@@ -1651,7 +1972,9 @@ consteval auto ReaderType() {
 template<typename T, Shape kShape>
 consteval const DecompressionFunction& DecompressionOf() noexcept {
   using Reader = typename decltype(ReaderType<T, kShape>())::type;
-  if constexpr (kIsWide<T>) {
+  if constexpr (kIsWide<T> && kShape == Shape::Dictionary) {
+    return kWideDecompression<WideDictionaryReader<T>>;
+  } else if constexpr (kIsWide<T>) {
     return kWideDecompression<WideReader<T, Reader>>;
   } else {
     return kDecompression<Reader>;

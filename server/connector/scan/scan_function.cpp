@@ -837,6 +837,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.sampling_pushdown = true;
   func.multi_column_filter_pushdown = true;
   func.ordered_filter_pushdown = true;
+  func.exact_in_filter_pushdown = true;
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   return func;
 }

@@ -68,6 +68,19 @@ class BlockRows {
     return Block(row / kBlockValues)[row % kBlockValues];
   }
 
+  const V* Data() const noexcept { return _base; }
+
+  template<typename F>
+  void ForEachPart(size_t begin, size_t end, F&& f) const {
+    for (size_t row = begin; row < end;) {
+      const size_t block = row / kBlockValues;
+      const size_t at = row % kBlockValues;
+      const size_t take = std::min(end - row, BlockSize(block) - at);
+      f(Block(block) + at, take);
+      row += take;
+    }
+  }
+
  private:
   const V* _base = nullptr;
   const V* const* _blocks = nullptr;

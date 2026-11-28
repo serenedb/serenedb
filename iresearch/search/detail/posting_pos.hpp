@@ -52,6 +52,7 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
   using Base::ReadLeafDelta;
 
  public:
+  using Base::InMemory;
   using PosTraits = IteratorTraitsImpl<true, true, Offs>;
   using Position = PositionImpl<PosTraits, InputType>;
 
@@ -96,6 +97,17 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
   uint32_t Estimate() const noexcept { return _docs_count; }
 
   bool Covers(doc_id_t target) const noexcept { return target <= _last; }
+
+  bool HintSpans(std::span<const DocSpan> spans) {
+    BlockRun runs[kMostSpans];
+    const auto count = this->RunsToHint(spans, runs);
+    if (count == 0) {
+      return false;
+    }
+    this->HintRuns({runs, count});
+    HintPositions({runs, count});
+    return true;
+  }
 
   std::span<const doc_id_t> Upcoming() const noexcept {
     return {std::cend(_docs) - _left_in_leaf, _left_in_leaf};
@@ -216,6 +228,19 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
   }
 
  private:
+  IRS_NO_INLINE void HintPositions(std::span<const BlockRun> runs) {
+    const auto n = _walk.Index().Size();
+    duckdb::FileRange ranges[kMostSpans];
+    for (size_t i = 0; i != runs.size(); ++i) {
+      const auto start = _walk.PosStart(runs[i].first);
+      const auto end =
+        runs[i].last + 1 < n ? _walk.PosStart(runs[i].last + 1) : start;
+      ranges[i] = {.offset = start,
+                   .size = end - start + duckdb::PageResidency::PAGE_SIZE};
+    }
+    _pos.File().Hint(std::span{ranges, runs.size()});
+  }
+
   IRS_NO_INLINE bool SeekToLeaf(doc_id_t target) {
     if (target <= _walk.UpperBound()) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {

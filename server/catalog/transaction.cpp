@@ -36,6 +36,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
+#include <mutex>
 #include <string>
 
 #include "catalog/base_catalog.h"
@@ -692,7 +693,7 @@ void Transactions::MaintainLog(Lsn end) {
       })
       .Detach();
   }
-  auto tail_limit = Log::kTailBytes;
+  auto tail_limit = std::max(Log::kTailBytes, _log->HistoryBytes());
   SDB_IF_FAILURE("fold_log_tail") { tail_limit = 0; }
   if (_log->TailBytes() > tail_limit &&
       !_folding_tail.exchange(true, std::memory_order_acq_rel)) {
@@ -701,12 +702,15 @@ void Transactions::MaintainLog(Lsn end) {
         absl::Cleanup done = [this] {
           _folding_tail.store(false, std::memory_order_release);
         };
-        Lsn bound = 0;
-        {
-          const CommittedView view;
-          bound = CommitEnd(view.Snapshot()).value_or(0);
+        if (const std::unique_lock round{_truncate_mutex, std::try_to_lock}) {
+          Lsn bound = 0;
+          {
+            const CommittedView view;
+            bound = CommitEnd(view.Snapshot()).value_or(0);
+          }
+          _log->FoldTail(bound, &CatalogPart, &CompactHistory);
         }
-        _log->FoldTail(bound, &CatalogPart, &CompactHistory);
+        SDB_PARK_ONCE_ON_FAILURE("pause_after_log_tail_fold");
       })
       .Detach();
   }

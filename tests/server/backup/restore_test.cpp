@@ -62,6 +62,7 @@ catalog::RecordBuffer Bytes(const std::string& payload) {
   catalog::RecordBuffer record;
   record.WriteData(reinterpret_cast<const uint8_t*>(payload.data()),
                    payload.size());
+  record.MarkCatalog(0, payload.size());
   return record;
 }
 

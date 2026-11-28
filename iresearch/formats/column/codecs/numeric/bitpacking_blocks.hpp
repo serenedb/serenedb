@@ -36,6 +36,7 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::numeric {
 
@@ -101,6 +102,16 @@ BlockBounds<V> BoundsOf(const V* values, size_t count) noexcept {
 template<typename V>
 class BitpackingBlocks {
  public:
+  explicit BitpackingBlocks(TrackedAllocator<> alloc)
+    : _base{alloc},
+      _top{alloc},
+      _first{alloc},
+      _steps{alloc},
+      _bits{alloc},
+      _own{alloc},
+      _scratch{alloc},
+      _words{alloc} {}
+
   template<bool kSigned>
   void Plan(BlockRows<V> rows) {
     Resize(rows.size());
@@ -189,7 +200,7 @@ class BitpackingBlocks {
   }
 
   void AppendStream(BlockRows<V> rows, size_t first, size_t count,
-                    std::string& out) {
+                    TrackedString& out) {
     _scratch.resize(kBlockValues);
     const size_t at = out.size();
     out.resize_and_overwrite(
@@ -310,8 +321,10 @@ class BitpackingBlocks {
     if (!DifferencesNarrower(rows)) {
       return;
     }
-    const auto lows = std::exchange(_base, {});
-    const auto widths = std::exchange(_bits, {});
+    const auto lows =
+      std::exchange(_base, TrackedVector<V>{_base.get_allocator()});
+    const auto widths =
+      std::exchange(_bits, TrackedVector<uint8_t>{_bits.get_allocator()});
     PlanSteps(rows);
     for (size_t b = 0; b < _bits.size(); ++b) {
       const auto for_bytes = PackedBytes<V>(widths[b], Values(b));
@@ -330,7 +343,7 @@ class BitpackingBlocks {
   }
 
   void Append(BlockRows<V> rows, size_t first, size_t count,
-              BlockBases<V> stored, std::string& out) {
+              BlockBases<V> stored, TrackedString& out) {
     _scratch.resize(kBlockValues);
     const size_t at = out.size();
     out.resize_and_overwrite(
@@ -575,15 +588,15 @@ class BitpackingBlocks {
     return best;
   }
 
-  std::vector<V> _base;
-  std::vector<V> _top;
-  std::vector<V> _first;
-  std::vector<V> _steps;
-  std::vector<uint8_t> _bits;
-  std::vector<uint8_t> _own;
+  TrackedVector<V> _base;
+  TrackedVector<V> _top;
+  TrackedVector<V> _first;
+  TrackedVector<V> _steps;
+  TrackedVector<uint8_t> _bits;
+  TrackedVector<uint8_t> _own;
   size_t _size = 0;
-  ScratchVector<V> _scratch;
-  ScratchVector<LaneWord<V>> _words;
+  TrackedScratchVector<V> _scratch;
+  TrackedScratchVector<LaneWord<V>> _words;
 };
 
 }  // namespace irs::codecs::numeric

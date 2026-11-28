@@ -33,6 +33,7 @@
 #include "iresearch/search/detail/phrase_variadic_pos.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -44,9 +45,11 @@ struct PhraseTerms {
     uint32_t rank;
   };
 
-  PhraseTerms(std::span<const PostingMeta> metas,
+  PhraseTerms(PlanMemory& memory, std::span<const PostingMeta> metas,
               std::span<const TermInterval> intervals)
-    : metas{metas} {
+    : metas{metas}, leaves{memory.Scratch()}, repeats{memory.Scratch()} {
+    leaves.reserve(metas.size());
+    repeats.reserve(metas.size());
     const bool distinct = absl::c_none_of(
       intervals.subspan(1),
       [](const TermInterval& interval) { return interval.offs_min == 0; });
@@ -67,8 +70,8 @@ struct PhraseTerms {
   }
 
   std::span<const PostingMeta> metas;
-  absl::InlinedVector<uint32_t, 8> leaves;
-  absl::InlinedVector<Repeat, 4> repeats;
+  memory::ArenaVector<uint32_t> leaves;
+  memory::ArenaVector<Repeat> repeats;
 };
 
 template<typename Matcher, typename Leaf, size_t N = 0, typename Slot = Leaf>
@@ -78,13 +81,14 @@ class PhraseSlots {
 
  public:
   template<typename... Args>
-  PhraseSlots(const PhraseTerms& terms, std::span<const TermInterval> intervals,
+  PhraseSlots(PlanMemory& memory, const PhraseTerms& terms,
+              std::span<const TermInterval> intervals,
               const duckdb::InputFile& doc_in, IndexFeatures layout,
               const duckdb::InputFile& pos_in, const duckdb::InputFile* pay_in,
               Args&&... args)
-    : _matcher{terms.metas.size(), std::forward<Args>(args)...},
-      _repeats{terms.repeats.size()},
-      _leaves{terms.leaves,
+    : _matcher{memory, terms.metas.size(), std::forward<Args>(args)...},
+      _repeats{memory.Arena(), terms.repeats.size()},
+      _leaves{memory, terms.leaves,
               [&](uint32_t j) { return terms.metas[j].docs_count; },
               [&](uint32_t j) {
                 return std::forward_as_tuple(terms.metas[j], doc_in, layout,
@@ -106,7 +110,8 @@ class PhraseSlots {
                     _matcher.Position(slot) = {&repeat.pos, intervals[slot]};
                   }
                 }
-              }} {
+              }},
+      _gates{memory.Arena(), _leaves.Size()} {
     static_assert(!kVariadic);
     SDB_ASSERT(terms.metas.size() == intervals.size());
     SDB_ASSERT(terms.metas.size() > 1);
@@ -115,20 +120,20 @@ class PhraseSlots {
   }
 
   template<typename... Args>
-  PhraseSlots(std::span<const PostingMeta> metas,
+  PhraseSlots(PlanMemory& memory, std::span<const PostingMeta> metas,
               std::span<const uint32_t> offsets,
               std::span<const score_t> boosts,
               std::span<const TermInterval> intervals,
               const duckdb::InputFile& doc_in, IndexFeatures layout,
               const duckdb::InputFile& pos_in, const duckdb::InputFile* pay_in,
               Args&&... args)
-    : _terms{metas.size(), std::piecewise_construct,
+    : _terms{memory.Arena(), metas.size(), std::piecewise_construct,
              [&](size_t i) {
                return std::forward_as_tuple(metas[i], doc_in, layout, pos_in,
                                             pay_in);
              }},
-      _matcher{intervals.size(), std::forward<Args>(args)...},
-      _leaves{intervals.size(),
+      _matcher{memory, intervals.size(), std::forward<Args>(args)...},
+      _leaves{memory, intervals.size(),
               [&](uint32_t j) {
                 uint64_t estimate = 0;
                 for (auto i = offsets[j]; i != offsets[j + 1]; ++i) {
@@ -138,13 +143,14 @@ class PhraseSlots {
               },
               [&](uint32_t j) {
                 const auto offset = offsets[j];
-                return std::tuple<Leaf*, uint32_t, const score_t*>{
-                  _terms.data() + offset, offsets[j + 1] - offset,
+                return std::tuple<PlanMemory&, Leaf*, uint32_t, const score_t*>{
+                  memory, _terms.data() + offset, offsets[j + 1] - offset,
                   boosts.empty() ? nullptr : boosts.data() + offset};
               },
               [&](uint32_t j, Slot& slot) {
                 _matcher.Position(j) = {&slot.Positions(), intervals[j]};
-              }} {
+              }},
+      _gates{memory.Arena(), _leaves.Size()} {
     static_assert(kVariadic);
     SDB_ASSERT(offsets.size() == intervals.size() + 1);
     SDB_ASSERT(offsets.back() == metas.size());
@@ -398,7 +404,7 @@ class PhraseSlots {
     _repeats;
   Leaves _leaves;
   [[no_unique_address]] utils::Need<kVariadic, Leaf*> _bound{};
-  containers::Fixed<SlotGate, N> _gates{_leaves.Size()};
+  containers::Fixed<SlotGate, N> _gates;
   bool _gating = false;
 };
 

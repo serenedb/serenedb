@@ -25,6 +25,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <memory>
 #include <typeinfo>
 #include <utility>
@@ -129,7 +130,8 @@ TEST(scan_profile, a_filter_never_prepared_shows_no_counts) {
   tree.boxes.push_back({.filter = &root});
   tree.boxes.push_back({.filter = &inner, .parent = 0, .node = 1});
   ScanProfile profile{std::move(tree), {}, "", false, 0};
-  profile.Query().Prepare(root, irs::SubReader::empty(), {});
+  irs::QueryMemory memory;
+  profile.Query().Prepare(root, irs::SubReader::empty(), {.memory = memory});
 
   duckdb::OperatorMetrics metrics;
   profile.Report(metrics);

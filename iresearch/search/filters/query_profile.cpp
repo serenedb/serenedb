@@ -291,11 +291,11 @@ class ProfiledChecks final : public detail::TableFilter {
 };
 
 template<typename Wrapper, typename Ptr>
-Ptr WrapPart(QueryProfile& profile, Ptr node, uint32_t id) {
-  if (typeid(*node) == typeid(memory::OnHeap<Wrapper>)) {
+Ptr WrapPart(QueryProfile& profile, PlanMemory& memory, Ptr node, uint32_t id) {
+  if (typeid(*node) == typeid(memory::OnArena<Wrapper>)) {
     node = utils::downCast<Wrapper>(*node).Release();
   }
-  return profile.WrapAs<Wrapper>(std::move(node), id);
+  return profile.WrapAs<Wrapper>(memory, std::move(node), id);
 }
 
 }  // namespace
@@ -380,61 +380,71 @@ std::unique_ptr<detail::TableFilter> QueryProfile::WrapChecks(
 }
 
 template<typename Wrapper, typename Ptr>
-Ptr QueryProfile::WrapRootAs(Ptr root, uint32_t id, uint64_t ticks,
-                             OwnedChecks checks) {
+Ptr QueryProfile::WrapRootAs(PlanMemory& memory, Ptr root, uint32_t id,
+                             uint64_t ticks, OwnedChecks checks) {
   if (!root || !WrapsRoot(id)) {
     return root;
   }
   auto& slot = Plan(id, typeid(*root));
   slot.plan_ticks.fetch_add(ticks, std::memory_order_relaxed);
-  return memory::make_managed<Wrapper>(std::move(root), slot,
-                                       std::move(checks));
+  return memory.Make<Wrapper>(std::move(root), slot, std::move(checks));
 }
 
-docs::Root::ptr QueryProfile::WrapRoot(docs::Root::ptr root, uint32_t id,
-                                       uint64_t ticks, OwnedChecks checks) {
-  return WrapRootAs<ProfiledDocs>(std::move(root), id, ticks,
+docs::Root::ptr QueryProfile::WrapRoot(PlanMemory& memory, docs::Root::ptr root,
+                                       uint32_t id, uint64_t ticks,
+                                       OwnedChecks checks) {
+  return WrapRootAs<ProfiledDocs>(memory, std::move(root), id, ticks,
                                   std::move(checks));
 }
 
-hits::Root::ptr QueryProfile::WrapRoot(hits::Root::ptr root, uint32_t id,
-                                       uint64_t ticks, OwnedChecks checks) {
-  return WrapRootAs<ProfiledHits>(std::move(root), id, ticks,
+hits::Root::ptr QueryProfile::WrapRoot(PlanMemory& memory, hits::Root::ptr root,
+                                       uint32_t id, uint64_t ticks,
+                                       OwnedChecks checks) {
+  return WrapRootAs<ProfiledHits>(memory, std::move(root), id, ticks,
                                   std::move(checks));
 }
 
-count::Root::ptr QueryProfile::WrapRoot(count::Root::ptr root, uint32_t id,
+count::Root::ptr QueryProfile::WrapRoot(PlanMemory& memory,
+                                        count::Root::ptr root, uint32_t id,
                                         uint64_t ticks, OwnedChecks checks) {
-  return WrapRootAs<ProfiledCount>(std::move(root), id, ticks,
+  return WrapRootAs<ProfiledCount>(memory, std::move(root), id, ticks,
                                    std::move(checks));
 }
 
-top::Root::ptr QueryProfile::WrapRoot(top::Root::ptr root, uint32_t id,
-                                      uint64_t ticks, OwnedChecks checks) {
-  return WrapRootAs<ProfiledTop>(std::move(root), id, ticks, std::move(checks));
+top::Root::ptr QueryProfile::WrapRoot(PlanMemory& memory, top::Root::ptr root,
+                                      uint32_t id, uint64_t ticks,
+                                      OwnedChecks checks) {
+  return WrapRootAs<ProfiledTop>(memory, std::move(root), id, ticks,
+                                 std::move(checks));
 }
 
-ann::Root::ptr QueryProfile::WrapRoot(ann::Root::ptr root, uint32_t id,
-                                      uint64_t ticks, OwnedChecks checks) {
-  return WrapRootAs<ProfiledAnn>(std::move(root), id, ticks, std::move(checks));
+ann::Root::ptr QueryProfile::WrapRoot(PlanMemory& memory, ann::Root::ptr root,
+                                      uint32_t id, uint64_t ticks,
+                                      OwnedChecks checks) {
+  return WrapRootAs<ProfiledAnn>(memory, std::move(root), id, ticks,
+                                 std::move(checks));
 }
 
-fill::Node::ptr QueryProfile::WrapRoot(fill::Node::ptr root, uint32_t id,
-                                       uint64_t ticks, OwnedChecks checks) {
-  return WrapRootAs<ProfiledFill>(std::move(root), id, ticks,
+fill::Node::ptr QueryProfile::WrapRoot(PlanMemory& memory, fill::Node::ptr root,
+                                       uint32_t id, uint64_t ticks,
+                                       OwnedChecks checks) {
+  return WrapRootAs<ProfiledFill>(memory, std::move(root), id, ticks,
                                   std::move(checks));
 }
 
-lead::Node::ptr QueryProfile::Wrap(lead::Node::ptr node, uint32_t id) {
-  return WrapPart<ProfiledLead>(*this, std::move(node), id);
+lead::Node::ptr QueryProfile::Wrap(PlanMemory& memory, lead::Node::ptr node,
+                                   uint32_t id) {
+  return WrapPart<ProfiledLead>(*this, memory, std::move(node), id);
 }
 
-probe::Node::ptr QueryProfile::Wrap(probe::Node::ptr node, uint32_t id) {
-  return WrapPart<ProfiledProbe>(*this, std::move(node), id);
+probe::Node::ptr QueryProfile::Wrap(PlanMemory& memory, probe::Node::ptr node,
+                                    uint32_t id) {
+  return WrapPart<ProfiledProbe>(*this, memory, std::move(node), id);
 }
 
-fill::Node::ptr QueryProfile::Wrap(fill::Node::ptr node, uint32_t id) {
-  return WrapPart<ProfiledFill>(*this, std::move(node), id);
+fill::Node::ptr QueryProfile::Wrap(PlanMemory& memory, fill::Node::ptr node,
+                                   uint32_t id) {
+  return WrapPart<ProfiledFill>(*this, memory, std::move(node), id);
 }
 
 }  // namespace irs

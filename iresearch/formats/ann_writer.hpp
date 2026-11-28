@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,17 +30,31 @@
 #include <yaclib/coro/task.hpp>
 
 #include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
-struct BasicTermReader;
 class ColReader;
 class ColumnReader;
 class IdxWriter;
 struct MergeSource;
+
+struct AnnFlushBound {
+  size_t compute = 0;
+  size_t kept = 0;
+  uint64_t terms = 0;
+};
+
+inline void Accumulate(AnnFlushBound& total,
+                       const AnnFlushBound& next) noexcept {
+  total.compute = std::max(total.compute, total.kept + next.compute);
+  total.kept += next.kept;
+  total.terms += next.terms;
+}
 
 class AnnWriter {
  public:
@@ -61,17 +78,20 @@ class AnnWriter {
   }
 
  protected:
+  explicit AnnWriter(TrackedAllocator<> alloc) noexcept : _alloc{alloc} {}
+
   IdxWriter* _idx = nullptr;
+  TrackedAllocator<> _alloc;
 };
 
 inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
   std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
-  std::optional<ReadContext>& ctx) {
+  std::optional<ReadContext>& ctx, TrackedAllocator<> alloc) {
   std::vector<const BasicTermReader*> out;
   if (col_reader == nullptr || writers.empty()) {
     return out;
   }
-  ctx.emplace(*col_reader);
+  ctx.emplace(*col_reader, alloc);
   out.reserve(writers.size());
   for (const auto& w : writers) {
     if (!w) {
@@ -81,6 +101,9 @@ inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
       out.push_back(r);
     }
   }
+  absl::c_sort(out, [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+    return lhs->id() < rhs->id();
+  });
   return out;
 }
 

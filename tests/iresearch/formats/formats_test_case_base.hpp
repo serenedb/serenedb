@@ -119,25 +119,28 @@ class SeekPostingsImpl : public SeekPostings {
   Leaf _leaf;
 };
 
-inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
+inline SeekPostings::ptr MakeSeekPostings(irs::PlanMemory& memory,
+                                          const irs::PostingMeta& meta,
                                           const irs::PostingsHandles& handles,
                                           irs::IndexFeatures layout,
                                           irs::IndexFeatures required,
                                           bool has_score_bounds) {
   return irs::Resolve(*handles.doc, [&]<typename Input> -> SeekPostings::ptr {
     if (irs::IndexFeatures::None == (required & irs::IndexFeatures::Pos)) {
-      return irs::memory::make_managed<
-        SeekPostingsImpl<irs::detail::PostingLead<Input>>>(
-        meta, *handles.doc, layout, has_score_bounds);
+      return memory
+        .Make<SeekPostings, SeekPostingsImpl<irs::detail::PostingLead<Input>>>(
+          meta, *handles.doc, layout, has_score_bounds);
     }
     return irs::Resolve<irs::detail::BoundsAxis>(
       has_score_bounds, [&]<bool Bounds> -> SeekPostings::ptr {
         if (irs::IndexFeatures::None != (required & irs::IndexFeatures::Offs)) {
-          return irs::memory::make_managed<
+          return memory.Make<
+            SeekPostings,
             SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, true>>>(
             meta, *handles.doc, layout, *handles.pos, handles.pay);
         }
-        return irs::memory::make_managed<
+        return memory.Make<
+          SeekPostings,
           SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, false>>>(
           meta, *handles.doc, layout, *handles.pos, handles.pay);
       });

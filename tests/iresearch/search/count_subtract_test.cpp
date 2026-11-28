@@ -153,16 +153,18 @@ class CountSubtractTest : public tests::IndexTestBase {
     auto reader = open_reader();
     ASSERT_EQ(1, reader.size());
     const auto& segment = reader[0];
-    auto query = irs::PrepareMasked(filter, segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto query = irs::PrepareMasked(filter, segment, {.memory = query_memory});
     ASSERT_NE(nullptr, query);
 
-    auto whole = query->PlanCount({});
+    auto whole = query->PlanCount({.memory = plan_memory});
     ASSERT_NE(nullptr, whole);
     ASSERT_EQ(expected,
               whole->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
                 whole->Finish());
 
-    auto split = query->PlanCount({.partial = true});
+    auto split = query->PlanCount({.memory = plan_memory, .partial = true});
     ASSERT_NE(nullptr, split);
     constexpr doc_id_t kBounds[]{
       irs::doc_limits::min(), 777, 30001, 65536, 70001, irs::doc_limits::eof()};

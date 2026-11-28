@@ -44,6 +44,7 @@
 #include <string_view>
 
 #include "index_dir.hpp"
+#include "tests_shared.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace irs::tests {
@@ -155,7 +156,10 @@ void AssertBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
 class BlobPointReader {
  public:
   BlobPointReader(const SubReader& segment, const ColumnReader& column)
-    : _impl(*segment.GetColReader(), column) {}
+    : BlobPointReader{segment, column, ::TestAlloc()} {}
+  BlobPointReader(const SubReader& segment, const ColumnReader& column,
+                  TrackedAllocator<> alloc)
+    : _impl(*segment.GetColReader(), column, alloc) {}
 
   BlobPointReader(const BlobPointReader&) = delete;
   BlobPointReader& operator=(const BlobPointReader&) = delete;

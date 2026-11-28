@@ -23,9 +23,10 @@
 
 namespace irs::fill {
 
-Node::ptr MakeRoot(const QueryBuilder& query) {
-  return ProfileRoot(query,
-                     [&] { return query.PlanFill({}, ScoreMergeType::Noop); });
+Node::ptr MakeRoot(PlanMemory& memory, const QueryBuilder& query) {
+  return ProfileRoot(memory, query, [&] {
+    return query.PlanFill({.memory = memory}, ScoreMergeType::Noop);
+  });
 }
 
 }  // namespace irs::fill

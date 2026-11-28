@@ -57,8 +57,8 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost * GetBoost(), options().merge);
+  auto query = ctx.memory.Make<MultiTermQuery>(
+    ctx.memory, segment, ctx.boost * GetBoost(), options().merge);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
   auto terms = options().source->Iterator(*reader);
   SDB_ASSERT(terms);

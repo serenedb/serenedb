@@ -53,7 +53,7 @@ template<template<typename...> typename Shape, typename... Parts,
          typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   return irs::detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
-    return memory::make_managed<Shape<Parts..., decltype(table)>>(
+    return ctx.memory.Make<Shape<Parts..., decltype(table)>>(
       table, std::forward<Args>(args)...);
   });
 }
@@ -69,7 +69,7 @@ inline uint64_t PrunedCandidates(uint64_t docs, const Context& ctx) noexcept {
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
-Root::ptr MakeEmpty();
+Root::ptr MakeEmpty(PlanMemory& memory);
 
 template<irs::detail::PhraseMatch M, typename Query>
 struct PhraseMaker {

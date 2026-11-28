@@ -23,7 +23,9 @@
 #include <cstdint>
 #include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -31,9 +33,18 @@
 
 namespace sdb::connector {
 
+struct RemovedRows {
+  explicit RemovedRows(irs::MemoryBudget& parent)
+    : budget{parent}, rows{irs::TrackedAllocator<>{budget}} {}
+
+  irs::LocalBudget budget;
+  irs::TrackedVector<std::pair<uint64_t, int64_t>> rows;
+};
+
 irs::DocRemovalBuilder ResolveRemoves(
-  const irs::CompositeReader& snapshot, std::vector<uint64_t> deleted_files,
+  irs::MemoryBudget& parent, const irs::CompositeReader& snapshot,
+  std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
-  std::vector<std::pair<uint64_t, int64_t>> eq_rows);
+  std::span<const std::pair<uint64_t, int64_t>> eq_rows);
 
 }  // namespace sdb::connector

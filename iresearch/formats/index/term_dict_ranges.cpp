@@ -39,6 +39,10 @@ constexpr uint32_t kFanout = 16;
 constexpr uint64_t kHeavyDocs = uint64_t{1} << 14;
 constexpr uint64_t kTopRangePostings = 16;
 
+constexpr uint64_t HeavyDocs(uint64_t docs) noexcept {
+  return std::max(kHeavyDocs, docs / kTopRangePostings);
+}
+
 bool Point(bytes_view from, bytes_view to) noexcept {
   return to.size() == from.size() + 1 && to.back() == 0 && to.starts_with(from);
 }
@@ -299,9 +303,13 @@ bool Cover(const TermReaderImpl& field, bytes_view from, bytes_view to,
 
 }  // namespace
 
-void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) noexcept {
+uint64_t RangeWriter::Bound(uint64_t docs) noexcept {
+  return kMaxRangeLevels * 4 * HeavyDocs(docs) * sizeof(doc_id_t);
+}
+
+void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) {
+  _heavy = HeavyDocs(docs);
   _pw = &pw;
-  _heavy = std::max(kHeavyDocs, docs / kTopRangePostings);
 }
 
 DocTee RangeWriter::Tee() noexcept {
@@ -440,6 +448,15 @@ void RangeWriter::Clear() noexcept {
   }
   _pw = nullptr;
   _height = 0;
+}
+
+void RangeWriter::Shrink() noexcept {
+  Clear();
+  for (auto& range : _levels) {
+    range.group.docs =
+      TrackedVector<doc_id_t>{range.group.docs.get_allocator()};
+    range.held.docs = TrackedVector<doc_id_t>{range.held.docs.get_allocator()};
+  }
 }
 
 bool TermReaderImpl::CoverRange(bytes_view from, bytes_view to,

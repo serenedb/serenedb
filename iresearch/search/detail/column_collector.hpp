@@ -20,48 +20,37 @@
 
 #pragma once
 
-#include <memory>
 #include <span>
+#include <vector>
 
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
 class ColumnArgsFetcher {
  public:
-  ColumnArgsFetcher() = default;
-  ColumnArgsFetcher(ColumnArgsFetcher&&) noexcept = default;
-  ColumnArgsFetcher& operator=(ColumnArgsFetcher&& rhs) noexcept {
-    if (this != &rhs) {
-      std::swap(_columns, rhs._columns);
-      std::swap(_index, rhs._index);
-    }
-    return *this;
-  }
-  ~ColumnArgsFetcher() { Free(); }
-
-  const uint32_t* AddNorms(const NormProvider& segment, field_id field) {
+  const uint32_t* AddNorms(PlanMemory& memory, const NormProvider& segment,
+                           field_id field) {
     auto [it, emplaced] = _index.try_emplace(field, nullptr);
     if (!emplaced) {
       return it->second;
     }
-    auto reader = segment.norms(field);
+    auto reader = segment.norms(memory, field);
     if (!reader) {
       return nullptr;
     }
-    auto& entry = _columns.emplace_back(std::move(reader), nullptr);
-    auto* norms = std::allocator<uint32_t>{}.allocate(kPostingBlock);
-    entry.norms = norms;
+    auto* norms = memory.Scratch().Allocate<uint32_t>(kPostingBlock);
+    _columns.emplace_back(std::move(reader), norms);
     it->second = norms;
     return norms;
   }
 
   void Clear() noexcept {
-    Free();
     _columns.clear();
     _index.clear();
   }
@@ -98,12 +87,6 @@ class ColumnArgsFetcher {
   }
 
  private:
-  void Free() noexcept {
-    for (auto& entry : _columns) {
-      std::allocator<uint32_t>{}.deallocate(entry.norms, kPostingBlock);
-    }
-  }
-
   struct Entry {
     NormReader::ptr reader;
     uint32_t* norms = nullptr;

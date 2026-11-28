@@ -82,7 +82,7 @@ bool RunsItsArgument(std::string_view name) {
 std::string ShapeName(const std::type_info& type) {
   const auto demangled = absl::debugging_internal::DemangleString(type.name());
   std::string_view shape = demangled;
-  absl::ConsumePrefix(&shape, "irs::memory::OnHeap<");
+  absl::ConsumePrefix(&shape, "irs::memory::OnArena<");
   const std::pair<std::string_view, std::string_view> parts =
     absl::StrSplit(shape, absl::MaxSplits('<', 1));
   auto name = ClassName(parts.first);

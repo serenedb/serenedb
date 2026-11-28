@@ -76,9 +76,7 @@ class RecipeScored {
       detail::NoAttributes());
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    detail::AppendScorer(out, PrepareScore());
-  }
+  void CollectScorers(auto& out) { detail::AppendScorer(out, PrepareScore()); }
 
  private:
   Leaf _leaf;

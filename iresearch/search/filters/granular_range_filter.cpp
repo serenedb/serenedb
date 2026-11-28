@@ -71,20 +71,19 @@ QueryBuilder::ptr Complement(const SubReader& segment,
     return nullptr;
   }
   if (inside == segment.docs_count()) {
-    return memory::make_tracked<AllQuery>(ctx.memory, segment, ctx.boost);
+    return ctx.memory.Make<AllQuery>(segment, ctx.boost);
   }
-  auto tails = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Sum);
+  auto tails = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, kNoBoost,
+                                               ScoreMergeType::Sum);
   if (!from.empty()) {
     VisitInto(*tails, ctx, reader, {}, from);
   }
   if (!to.empty()) {
     VisitInto(*tails, ctx, reader, to, {});
   }
-  BooleanBuilder builder{segment, ctx.memory, 0, ctx.boost,
+  BooleanBuilder builder{ctx.memory, segment, 0, ctx.boost,
                          ScoreMergeType::Sum};
-  builder.Add(memory::make_tracked<AllQuery>(ctx.memory, segment, kNoBoost),
-              Occur::Must);
+  builder.Add(ctx.memory.Make<AllQuery>(segment, kNoBoost), Occur::Must);
   builder.Add(MultiTermQuery::Finish(std::move(tails), ctx), Occur::MustNot);
   if (null_docs != 0) {
     const auto null_meta = nulls->Lookup(kSlotTerm);
@@ -119,8 +118,8 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   const bool has_max = rng.max_type != BoundType::Unbounded && !rng.max.empty();
   const bstring from = has_min ? RangeLower(rng.min, rng.min_type) : bstring{};
   const bstring to = has_max ? RangeUpper(rng.max, rng.max_type) : bstring{};
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Max);
+  auto query = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, ctx.boost,
+                                               ScoreMergeType::Max);
   const auto inside = VisitInto(*query, ctx, *reader, from, to);
   if (auto complement = Complement(segment, ctx, *reader, from, to, inside)) {
     return complement;

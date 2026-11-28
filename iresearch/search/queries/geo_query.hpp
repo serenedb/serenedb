@@ -38,8 +38,10 @@ template<typename Parser, typename Acceptor>
 class GeoVerifier {
  public:
   GeoVerifier(const ColumnReader& stored_field, const ColReader& col_reader,
-              Parser& parser, Acceptor& acceptor)
-    : _cursor{col_reader, stored_field}, _acceptor{acceptor}, _parser{parser} {
+              Parser& parser, Acceptor& acceptor, TrackedAllocator<> alloc)
+    : _cursor{col_reader, stored_field, alloc},
+      _acceptor{acceptor},
+      _parser{parser} {
     SeedShape(_parser, _shape);
   }
 
@@ -87,20 +89,27 @@ class GeoQuery : public QueryBuilderImpl<GeoQuery<Parser, Acceptor>> {
     const ColReader* col_reader = nullptr;
     const Parser* parser = nullptr;
     const Acceptor* acceptor = nullptr;
+    TrackedAllocator<> alloc;
 
     Verifier Make() const {
-      return Verifier{*stored_field, *col_reader, *parser, *acceptor};
+      return Verifier{*stored_field, *col_reader, *parser, *acceptor, alloc};
     }
   };
 
   const QueryBuilder& Cells() const noexcept { return *_cells; }
 
-  Recipe MakeRecipe() const {
+  Recipe MakeRecipe(TrackedAllocator<> alloc) const {
     const auto* col_reader = this->_segment.GetColReader();
     SDB_ASSERT(col_reader);
     const auto* stored_field = col_reader->Column(_store_field_id);
     SDB_ASSERT(stored_field);
-    return {stored_field, col_reader, &_parser, &_acceptor};
+    return {
+      .stored_field = stored_field,
+      .col_reader = col_reader,
+      .parser = &_parser,
+      .acceptor = &_acceptor,
+      .alloc = alloc,
+    };
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}

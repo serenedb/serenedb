@@ -25,6 +25,7 @@
 
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -131,6 +132,11 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   void CopyRows(const ColReader& source, std::span<const field_id> columns,
                 uint64_t first, uint64_t count);
 
+  size_t FlushBound();
+  void AdmitFlush();
+  void BindMemory(MemoryBudget& parent) { _budget.Rebind(parent); }
+  void ReturnMemory() noexcept { _budget.Return(); }
+
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs; }
   bool initialized() const noexcept { return _initialized; }
@@ -163,6 +169,18 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     }
     return MakePersistedNormReader(*col);
   }
+
+  NormReader::ptr norms(PlanMemory& memory, field_id id) const final {
+    if (_col_reader == nullptr) {
+      return {};
+    }
+    const auto* col = _col_reader->NormColumn(id);
+    if (col == nullptr) {
+      return {};
+    }
+    return MakePersistedNormReader(memory, *col);
+  }
+
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
   const ColWriter* GetColWriter() const noexcept { return _col_writer.get(); }
 
@@ -273,13 +291,20 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   };
 
   void FlushFields(FlushState& state,
-                   std::span<const BasicTermReader* const> extra);
+                   std::span<const BasicTermReader* const> extra,
+                   uint64_t extra_terms);
   void CopyColumns();
+  uint64_t CopiedSealBound();
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
   void ResetState() noexcept;
 
+  TrackedAllocator<> TrackedAlloc() noexcept {
+    return TrackedAllocator<>{_budget};
+  }
+
+  LocalBudget _budget{gRootBudget};
   std::shared_ptr<FileTracker> _tracker;
   duckdb::FileSystem& _fs;
   std::string _root;

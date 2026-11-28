@@ -28,7 +28,7 @@ namespace {
 constexpr size_t kHugePage = size_t{2} << 20;
 
 TEST(HugePageAllocatorTest, GrowthAcrossHugePageKeepsContents) {
-  irs::HugePageVector<uint32_t> v;
+  irs::TrackedHugePageVector<uint32_t> v{TestAlloc()};
   for (uint32_t i = 0; i < kHugePage; ++i) {
     v.push_back(i);
   }
@@ -43,11 +43,11 @@ TEST(HugePageAllocatorTest, GrowthAcrossHugePageKeepsContents) {
 }
 
 TEST(HugePageAllocatorTest, ValuesGivenAreConstructed) {
-  irs::HugePageVector<uint32_t> v(kHugePage, 5);
+  irs::TrackedHugePageVector<uint32_t> v(kHugePage, 5, TestAlloc());
   EXPECT_EQ(5, v.front());
   EXPECT_EQ(5, v.back());
   v.assign(3, 9);
-  EXPECT_EQ((irs::HugePageVector<uint32_t>{9, 9, 9}), v);
+  EXPECT_EQ((irs::TrackedHugePageVector<uint32_t>({9, 9, 9}, TestAlloc())), v);
   v.resize(kHugePage, 4);
   EXPECT_EQ(9, v[2]);
   EXPECT_EQ(4, v[3]);
@@ -56,10 +56,10 @@ TEST(HugePageAllocatorTest, ValuesGivenAreConstructed) {
 
 #ifdef __linux__
 TEST(HugePageAllocatorTest, LargeArraysStartOnHugePage) {
-  irs::HugePageVector<uint8_t> large(kHugePage, 1);
+  irs::TrackedHugePageVector<uint8_t> large(kHugePage, 1, TestAlloc());
   EXPECT_EQ(0, reinterpret_cast<uintptr_t>(large.data()) % kHugePage);
   EXPECT_EQ(1, large.back());
-  irs::HugePageVector<uint8_t> small(kHugePage - 1, 2);
+  irs::TrackedHugePageVector<uint8_t> small(kHugePage - 1, 2, TestAlloc());
   EXPECT_EQ(2, small.front());
   EXPECT_EQ(2, small.back());
 }

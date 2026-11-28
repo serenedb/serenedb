@@ -267,7 +267,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
                         TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     const irs::SegmentWriterOptions options;
-    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
     writer.Reset(reader.begin(), reader.end());
 
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
@@ -320,7 +322,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress;
     const irs::SegmentWriterOptions options;
-    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
 
     writer.Reset(reader.begin(), reader.end());
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
@@ -342,7 +346,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
     const irs::SegmentWriterOptions options;
-    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
 
     writer.Reset(reader.begin(), reader.end());
     ASSERT_FALSE(irs::GetReady(writer.Flush(index_segment, progress)));
@@ -367,7 +373,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return true;
     };
     const irs::SegmentWriterOptions options;
-    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
 
     writer.Reset(reader.begin(), reader.end());
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
@@ -396,7 +404,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return --call_count;
     };
     const irs::SegmentWriterOptions options;
-    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
 
     index_segment.name = "merged";
     writer.Reset(reader.begin(), reader.end());
@@ -473,7 +483,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options;
-    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
     writer.Reset(segments.begin(), segments.end());
 
     irs::SegmentMeta index_segment;
@@ -489,7 +501,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options;
-    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+    irs::LocalBudget budget{irs::gRootBudget};
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
     writer.Reset(segments.begin(), segments.end());
 
     irs::SegmentMeta index_segment;
@@ -1163,7 +1177,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   const irs::SegmentWriterOptions options{
     .field_options = &field_options,
   };
-  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+  irs::LocalBudget budget{irs::gRootBudget};
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
   writer.Reset(reader.begin(), reader.end());
   ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
 
@@ -1843,9 +1859,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       EXPECT_EQ(nullptr, segment.Column(kUnusedId));
 
       // doc4's columns are still on disk; the live-docs mask hides it.
-      // Use docs_iterator() to confirm only one local doc id is live.
+      // Use docs_iterator to confirm only one local doc id is live.
       std::vector<irs::doc_id_t> live;
-      auto it = segment.docs_iterator();
+      irs::PlanMemory memory;
+      auto it = segment.docs_iterator(memory);
       for (auto doc = it->Next(); !irs::doc_limits::eof(doc);
            doc = it->Next()) {
         live.push_back(doc);
@@ -2199,7 +2216,9 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
                       TestEnv::MemoryRoot()};
   irs::SegmentMeta index_segment;
   const irs::SegmentWriterOptions options;
-  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+  irs::LocalBudget budget{irs::gRootBudget};
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
   writer.Reset(reader.begin(), reader.end());
   ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
   auto segment =
@@ -2306,7 +2325,9 @@ TEST_P(MergeWriterTestCase, merges_every_member_of_a_json_list) {
                       TestEnv::MemoryRoot()};
   irs::SegmentMeta index_segment;
   const irs::SegmentWriterOptions options;
-  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+  irs::LocalBudget budget{irs::gRootBudget};
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
   writer.Reset(reader.begin(), reader.end());
   ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
   auto segment =
@@ -2377,7 +2398,9 @@ TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
                       TestEnv::MemoryRoot()};
   irs::SegmentMeta index_segment;
   const irs::SegmentWriterOptions options;
-  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options);
+  irs::LocalBudget budget{irs::gRootBudget};
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), options,
+                            irs::TrackedAllocator<>{budget});
   writer.Reset(reader.begin(), reader.end());
   ASSERT_SQL_ERROR(irs::GetReady(writer.Flush(index_segment)),
                    ERRCODE_INDEX_CORRUPTED);

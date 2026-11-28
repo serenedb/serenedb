@@ -49,9 +49,9 @@ class ScaleScore : public ScoreOperatorOf<ScaleScore> {
 inline ScoreFunction MakeScaleScore(const ScoreContext& ctx, score_t value) {
   const auto* scale = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
   if (!scale) {
-    return ScoreFunction::Constant(value);
+    return ScoreFunction::Constant(ctx.memory, value);
   }
-  return ScoreFunction::Make<ScaleScore>(scale->value, value);
+  return ScoreFunction::Make<ScaleScore>(ctx.memory, scale->value, value);
 }
 
 }  // namespace irs

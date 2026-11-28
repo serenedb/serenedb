@@ -40,7 +40,8 @@ namespace irs {
 class HitBatcher {
  public:
   HitBatcher(std::span<const ColumnstoreProjection> projections,
-             irs::field_id pk_field_id, bool track_scores, bool prefetch);
+             irs::field_id pk_field_id, bool track_scores, bool prefetch,
+             irs::TrackedAllocator<> alloc);
 
   HitBatcher(const HitBatcher&) = delete;
   HitBatcher& operator=(const HitBatcher&) = delete;
@@ -163,6 +164,7 @@ class HitBatcher {
   const irs::field_id _pk_field_id;
   const bool _track_scores;
   const bool _prefetch;
+  irs::TrackedAllocator<> _alloc;
 
   std::unique_ptr<irs::ReadContext> _ctx;
   const irs::ColReader* _col_reader = nullptr;

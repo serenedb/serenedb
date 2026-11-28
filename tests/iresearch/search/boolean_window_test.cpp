@@ -279,19 +279,21 @@ class BooleanWindowTest : public tests::IndexTestBase {
     auto reader = open_reader();
     ASSERT_EQ(1, reader.size());
     const auto& segment = reader[0];
-    auto query = irs::PrepareMasked(filter, segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto query = irs::PrepareMasked(filter, segment, {.memory = query_memory});
     ASSERT_NE(nullptr, query);
     const auto end = irs::doc_limits::min() + kDocs;
 
     {
-      auto count = query->PlanCount({});
+      auto count = query->PlanCount({.memory = plan_memory});
       ASSERT_NE(nullptr, count);
       ASSERT_EQ(expected.size(),
                 count->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
                   count->Finish());
     }
     {
-      auto split = query->PlanCount({.partial = true});
+      auto split = query->PlanCount({.memory = plan_memory, .partial = true});
       ASSERT_NE(nullptr, split);
       constexpr doc_id_t kBounds[]{irs::doc_limits::min(),
                                    777,
@@ -310,7 +312,7 @@ class BooleanWindowTest : public tests::IndexTestBase {
       ASSERT_EQ(expected.size(), parts + split->Finish());
     }
     {
-      auto fine = query->PlanCount({.partial = true});
+      auto fine = query->PlanCount({.memory = plan_memory, .partial = true});
       ASSERT_NE(nullptr, fine);
       uint64_t pieces = 0;
       doc_id_t from = irs::doc_limits::min();
@@ -329,10 +331,11 @@ class BooleanWindowTest : public tests::IndexTestBase {
       std::vector<doc_id_t> buf(kSpan + irs::doc_limits::kDocsSlack);
       for (doc_id_t from = irs::doc_limits::min(); from < end; from += kSpan) {
         const auto to = std::min<doc_id_t>(from + kSpan, end);
-        auto count = query->PlanCount({.span = kSpan, .partial = true});
+        auto count = query->PlanCount(
+          {.memory = plan_memory, .span = kSpan, .partial = true});
         ASSERT_NE(nullptr, count);
         ranged += count->Run(from, to) + count->Finish();
-        auto docs = query->PlanDocs({.span = kSpan});
+        auto docs = query->PlanDocs({.memory = plan_memory, .span = kSpan});
         ASSERT_NE(nullptr, docs);
         const auto n = docs->Run(from, to, buf.data());
         actual.insert(actual.end(), buf.begin(), buf.begin() + n);
@@ -342,14 +345,15 @@ class BooleanWindowTest : public tests::IndexTestBase {
     }
     {
       EveryThirdOut table;
-      auto narrowed = query->PlanCount({.table = &table});
+      auto narrowed =
+        query->PlanCount({.memory = plan_memory, .table = &table});
       ASSERT_NE(nullptr, narrowed);
       ASSERT_EQ(absl::c_count_if(expected, Visible),
                 narrowed->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
                   narrowed->Finish());
     }
     for (const doc_id_t window : {doc_id_t{3000}, doc_id_t{211}}) {
-      auto docs = query->PlanDocs({});
+      auto docs = query->PlanDocs({.memory = plan_memory});
       ASSERT_NE(nullptr, docs);
       std::vector<doc_id_t> buf(window + irs::doc_limits::kDocsSlack);
       std::vector<doc_id_t> actual;
@@ -453,7 +457,9 @@ TEST_P(BooleanWindowTest, sparse_prefixes_walk_their_documents) {
   Build();
   auto reader = open_reader();
   ASSERT_EQ(1, reader.size());
-  auto query = irs::PrepareMasked(*PrefixOf("tag"), reader[0], {});
+  irs::QueryMemory query_memory;
+  auto query =
+    irs::PrepareMasked(*PrefixOf("tag"), reader[0], {.memory = query_memory});
   ASSERT_NE(nullptr, query);
   std::vector<doc_id_t> expected;
   for (doc_id_t i = 0; i != kDocs; ++i) {
@@ -462,7 +468,8 @@ TEST_P(BooleanWindowTest, sparse_prefixes_walk_their_documents) {
     }
   }
   const auto end = irs::doc_limits::min() + kDocs;
-  auto docs = query->PlanDocs({});
+  irs::PlanMemory plan_memory;
+  auto docs = query->PlanDocs({.memory = plan_memory});
   ASSERT_NE(nullptr, docs);
   std::vector<doc_id_t> buf(end + irs::doc_limits::kDocsSlack);
   const auto n = docs->Run(irs::doc_limits::min(), end, buf.data());
@@ -492,7 +499,9 @@ TEST_P(BooleanWindowTest, sifting_leaves_the_next_window_intact) {
   ASSERT_EQ(1, reader.size());
   const Phrase phrase{"half", "dense"};
   auto filter = PhraseOf(phrase);
-  auto query = irs::PrepareMasked(*filter, reader[0], {});
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
+  auto query = irs::PrepareMasked(*filter, reader[0], {.memory = query_memory});
   ASSERT_NE(nullptr, query);
   const auto member = [&](doc_id_t doc) {
     return Has(phrase, doc - irs::doc_limits::min());
@@ -506,7 +515,8 @@ TEST_P(BooleanWindowTest, sifting_leaves_the_next_window_intact) {
   };
   for (const bool keep : {false, true}) {
     SCOPED_TRACE(keep);
-    auto node = query->PlanFill({}, irs::ScoreMergeType::Noop);
+    auto node =
+      query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
     ASSERT_NE(nullptr, node);
     doc_id_t from = irs::doc_limits::min();
     for (const doc_id_t step : {7, 3, 11}) {
@@ -569,11 +579,12 @@ TEST_P(BooleanWindowTest, union_merges_every_block_kind) {
         expected.push_back(irs::doc_limits::min() + i);
       }
     }
+    irs::PlanMemory memory;
     irs::Resolve(*doc, [&]<typename Input> {
       using Leaf = irs::detail::PostingLead<Input>;
       const auto make = [&] {
         return std::make_unique<irs::lead::DisjointDisjunction<Leaf>>(
-          metas.size(), [&](Leaf& leaf, size_t i) {
+          memory, metas.size(), [&](Leaf& leaf, size_t i) {
             leaf.Prepare(
               metas[i], *doc, irs::detail::LayoutOf(*field),
               metas[i].docs_count != 1 && irs::detail::BoundsOf(*field));

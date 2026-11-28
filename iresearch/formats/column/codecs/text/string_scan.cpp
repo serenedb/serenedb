@@ -52,7 +52,8 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
 }
 
 std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
-                             duckdb::const_data_ptr_t base, std::string& copy) {
+                             duckdb::const_data_ptr_t base,
+                             TrackedString& copy) {
   if (h.symtab_size != 0 || segment.shared_size == 0) {
     return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
   }

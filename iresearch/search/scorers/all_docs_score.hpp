@@ -46,13 +46,14 @@ inline AttributeProvider& NoAttributes() noexcept {
 inline const FieldMeta& NoField() noexcept { return FieldMeta::kEmpty; }
 
 inline score_t AllDocsScore(const SubReader& segment,
-                            const AllDocsClause& clause,
+                            const AllDocsClause& clause, PlanMemory& memory,
                             ColumnArgsFetcher* fetcher) {
   const auto& record = clause.stats;
   if (record.stats == nullptr) {
     return 0;
   }
-  return PrepareScore({.scorer = record.scorer,
+  return PrepareScore({.memory = &memory,
+                       .scorer = record.scorer,
                        .stats = record.stats,
                        .fetcher = fetcher,
                        .boost = clause.boost},
@@ -64,7 +65,7 @@ template<typename Query>
 score_t AllDocsScoreOf(const Query& query, const ScoredCtx& ctx) {
   return AllDocsScore(query.Segment(),
                       {.boost = query.Boost(), .stats = query.Stats(ctx)},
-                      ctx.fetcher);
+                      ctx.memory, ctx.fetcher);
 }
 
 inline score_t ConstantTermScore(const SubReader& segment,
@@ -83,6 +84,7 @@ inline std::optional<score_t> ConstantOf(const SubReader& segment,
     return score_t{0};
   }
   if (const auto value = args.scorer->Constant({
+        .memory = *args.memory,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = NoAttributes(),
@@ -118,6 +120,7 @@ inline score_t ConstantTermOf(const SubReader& segment, const TermReader& field,
     return 0;
   }
   if (const auto value = args.scorer->Constant({
+        .memory = *args.memory,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = NoAttributes(),

@@ -50,7 +50,7 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
 
   ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 
-  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+  ScoreBoundSource::ptr PrepareScoreBoundSource(PlanMemory& memory) const final;
 
   bool HasScoreBounds() const noexcept final { return true; }
 

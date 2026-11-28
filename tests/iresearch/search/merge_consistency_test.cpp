@@ -238,14 +238,11 @@ void AssertSameAsSingle(const tests::PreparedFilter& single,
 void AssertMergeConsistent(const irs::Filter& filter,
                            const irs::IndexReader& index,
                            const irs::Scorer* scorer) {
-  tests::PreparedFilter single{
-    filter, index, scorer, irs::IResourceManager::gNoop, nullptr, Mode::Single};
-  tests::PreparedFilter paired{filter,  index,
-                               scorer,  irs::IResourceManager::gNoop,
-                               nullptr, Mode::PairThreads};
-  tests::PreparedFilter per_segment{filter,  index,
-                                    scorer,  irs::IResourceManager::gNoop,
-                                    nullptr, Mode::PerSegment};
+  tests::PreparedFilter single{filter, index, scorer, nullptr, Mode::Single};
+  tests::PreparedFilter paired{filter, index, scorer, nullptr,
+                               Mode::PairThreads};
+  tests::PreparedFilter per_segment{filter, index, scorer, nullptr,
+                                    Mode::PerSegment};
 
   {
     SCOPED_TRACE("two counter blocks");

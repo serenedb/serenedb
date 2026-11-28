@@ -33,6 +33,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/planner/extension_callback.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/log.hpp"
@@ -107,12 +109,21 @@ void DuckDBEngine::Configure(duckdb::DBConfig& config) {
 }
 
 void DuckDBEngine::Initialize(DBConfigMutator mutator) {
+  struct UntrackOnShutdown final : duckdb::ExtensionCallback {
+    void OnDatabaseShutdown(duckdb::DatabaseInstance&) final {
+      gBufferManager.store(nullptr, std::memory_order_release);
+    }
+  };
   SDB_ASSERT(!_instance);
   duckdb::DBConfig config;
   Configure(config);
   mutator(config);
 
   _instance = duckdb::DuckDB::CreateEmpty(&config)->instance;
+  gBufferManager.store(&duckdb::BufferManager::GetBufferManager(*_instance),
+                       std::memory_order_release);
+  duckdb::ExtensionCallback::Register(
+    _instance->config, duckdb::make_shared_ptr<UntrackOnShutdown>());
   // Attached iceberg tables read CURRENT metadata: the default txn-start
   // time travel errors out any catalog enumeration that walks a table
   // created after the reader's transaction began.

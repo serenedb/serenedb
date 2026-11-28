@@ -233,8 +233,10 @@ TEST_P(ScoreConstantTest, folds_only_what_reads_nothing_per_document) {
       ASSERT_NE(nullptr, reader);
       ASSERT_NE(nullptr, irs::detail::DocOf(*reader));
 
+      irs::PlanMemory memory;
       irs::ColumnArgsFetcher fetcher;
-      const irs::detail::ScoreArgs args{.scorer = scorer.get(),
+      const irs::detail::ScoreArgs args{.memory = &memory,
+                                        .scorer = scorer.get(),
                                         .stats = prepared.Stats().stats,
                                         .fetcher = &fetcher,
                                         .boost = irs::kNoBoost};
@@ -316,8 +318,10 @@ TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
                     irs::doc_limits::kScoresSlack>
         scores;
       {
+        irs::PlanMemory plan_memory;
         irs::ColumnArgsFetcher fetcher;
-        auto plan = query->PlanScored({.scorer = *scorer, .fetcher = fetcher});
+        auto plan = query->PlanScored(
+          {.memory = plan_memory, .scorer = *scorer, .fetcher = fetcher});
         ASSERT_NE(nullptr, plan);
         size_t seen = 0;
         constexpr auto kWindow = irs::doc_limits::kMinCapacity;
@@ -335,9 +339,12 @@ TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
         EXPECT_EQ(2, seen);
       }
       {
+        irs::PlanMemory plan_memory;
         irs::ColumnArgsFetcher fetcher;
-        auto plan =
-          query->PlanTop({.scorer = *scorer, .fetcher = fetcher, .k = 10});
+        auto plan = query->PlanTop({.memory = plan_memory,
+                                    .scorer = *scorer,
+                                    .fetcher = fetcher,
+                                    .k = 10});
         ASSERT_NE(nullptr, plan);
       }
     }
@@ -415,8 +422,10 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   ASSERT_NE(nullptr, reader);
   ASSERT_NE(nullptr, irs::detail::DocOf(*reader));
 
+  irs::PlanMemory memory;
   irs::ColumnArgsFetcher fetcher;
-  const irs::detail::ScoreArgs args{.scorer = scorer.get(),
+  const irs::detail::ScoreArgs args{.memory = &memory,
+                                    .scorer = scorer.get(),
                                     .stats = prepared.Stats().stats,
                                     .fetcher = &fetcher,
                                     .boost = irs::kNoBoost};
@@ -434,6 +443,7 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   uint32_t one = 1;
   provider.freq.value = &one;
   auto expected = scorer->PrepareScorer({
+    .memory = memory,
     .segment = segment,
     .field = reader->meta(),
     .doc_attrs = provider,

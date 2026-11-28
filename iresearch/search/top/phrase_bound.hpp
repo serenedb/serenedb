@@ -38,7 +38,8 @@ class PhraseBound {
               const irs::detail::ScoreArgs& args, bool stored)
     : _stored{stored} {
     SDB_ASSERT(args.scorer != nullptr);
-    if (auto source = args.scorer->PrepareScoreBoundSource()) {
+    SDB_ASSERT(args.memory != nullptr);
+    if (auto source = args.scorer->PrepareScoreBoundSource(*args.memory)) {
       _func = irs::detail::PrepareScore(args, segment, field.meta(), *source);
       _source = std::move(source);
     }

@@ -49,9 +49,9 @@ auto ScoringFor(const SubReader& segment, const Ctx& ctx, ScoreMergeType merge,
 }
 
 template<typename Family, typename Ctx>
-auto ScoreFor(ScoreMergeType merge, score_t absorbed) {
+auto ScoreFor(const Ctx& ctx, ScoreMergeType merge, score_t absorbed) {
   if constexpr (kScoredPlan<Family, Ctx>) {
-    return Scored{merge, absorbed};
+    return Scored{&Family::MemoryOf(ctx), merge, absorbed};
   } else {
     return utils::Empty{};
   }
@@ -69,7 +69,7 @@ Result<Family> MakeConjunction(
   const bool optional = (!should.empty() || !should_filters.empty()) &&
                         (kScoredPlan<Family, Ctx> || min_match != 0);
   SDB_ASSERT(!no_must || optional);
-  const auto score = ScoreFor<Family, Ctx>(merge, absorbed);
+  const auto score = ScoreFor<Family>(ctx, merge, absorbed);
   const auto conjunction = [&]<typename Make>(Make&& make) -> Result<Family> {
     return BuildSparseConjunction<Family, P>(
       must, must_filters, segment, ctx,
@@ -97,7 +97,7 @@ Result<Family> MakeConjunction(
       }
       const auto recipe = RecipeOf<Family>(segment, ctx);
       return BuildProbeLeaves<Result<Family>, P>(
-        should, should_filters, nullptr, segment,
+        Family::MemoryOf(ctx), should, should_filters, nullptr, segment,
         IncludeCandidates(must, must_filters, segment), ProbeOrder::Densest,
         TermScoring{.scorer = nullptr,
                     .boost = kNoBoost,
@@ -109,9 +109,11 @@ Result<Family> MakeConjunction(
             size, [&]<size_t N> -> Result<Family> {
               using Boost = probe::BoostLeaves<Leaf, N>;
               const auto boost =
-                std::forward_as_tuple(size, std::forward<decltype(init)>(init));
+                std::forward_as_tuple(Family::MemoryOf(ctx), size,
+                                      std::forward<decltype(init)>(init));
               if (no_must) {
-                auto all = lead::MakeAllScored(segment, 0);
+                auto all =
+                  lead::MakeAllScored(Family::MemoryOf(ctx), segment, 0);
                 if (!all) {
                   return {};
                 }
@@ -161,10 +163,13 @@ Result<Family> MakeConjunction(
     });
   }
   const auto candidates = IncludeCandidates(must, must_filters, segment);
-  ScoredCtx child;
-  if constexpr (kScoredPlan<Family, Ctx>) {
-    child = Family::Scoring(ctx);
-  }
+  const ScoredCtx child = [&] -> ScoredCtx {
+    if constexpr (kScoredPlan<Family, Ctx>) {
+      return Family::Scoring(ctx);
+    } else {
+      return {.memory = Family::MemoryOf(ctx)};
+    }
+  }();
   auto held = probe::MakeOptional(
     should, should_filters, min_match, segment, candidates,
     ScoringFor<Family>(segment, ctx, merge, uniformity), child, score_t{0});
@@ -174,7 +179,8 @@ Result<Family> MakeConjunction(
   if constexpr (!kScoredPlan<Family, Ctx>) {
     if (must.size() + must_filters.size() > 1) {
       if (auto folded = MakeConjunctionBitset<LeadNode::ptr, P>(
-            must, must_filters, nullptr, segment, nullptr)) {
+            Family::MemoryOf(ctx), must, must_filters, nullptr, segment,
+            nullptr)) {
         return Family::template MakeSparse<lead::Erased, utils::Empty,
                                            probe::Erased, utils::Empty>(
           ctx, merge, score, std::forward_as_tuple(std::move(folded)),

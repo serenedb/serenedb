@@ -34,6 +34,7 @@
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -41,9 +42,11 @@ class ColReader;
 
 class ReadContext final : public BlockManager {
  public:
-  explicit ReadContext(duckdb::DatabaseInstance& db);
-  explicit ReadContext(const ColReader& reader, bool random_access = false);
-  ReadContext(duckdb::DatabaseInstance& db, const duckdb::InputFile* file);
+  ReadContext(duckdb::DatabaseInstance& db, TrackedAllocator<> alloc);
+  ReadContext(const ColReader& reader, TrackedAllocator<> alloc,
+              bool random_access = false);
+  ReadContext(duckdb::DatabaseInstance& db, const duckdb::InputFile* file,
+              TrackedAllocator<> alloc);
   ~ReadContext() final;
 
   ReadContext(const ReadContext&) = delete;
@@ -56,6 +59,7 @@ class ReadContext final : public BlockManager {
   const duckdb::InputFile* File() const noexcept { return _in.File().get(); }
   bool RandomAccess() const noexcept { return _random_access; }
   duckdb::ObjectCache* Cache() const noexcept { return _cache; }
+  TrackedAllocator<> Allocator() const noexcept { return _alloc; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset);
@@ -104,6 +108,7 @@ class ReadContext final : public BlockManager {
   containers::FlatHashMap<uint64_t, uint64_t> _sizes;
   bool _random_access = false;
   duckdb::ObjectCache* _cache;
+  TrackedAllocator<> _alloc;
 };
 
 inline bool Touched(const ReadContext::CacheSlot& slot) noexcept {

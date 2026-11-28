@@ -119,7 +119,7 @@ class ColCodecCorruptionTest : public TestBase {
              uint64_t& size) {
     tests::IndexDir dir{Db(), path.string()};
     {
-      irs::ColWriter w{Db(), dir.Tracker(kSeg), irs::WriteTier::Flush};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg), TestAlloc(), irs::WriteTier::Flush};
       auto& cw = w.OpenColumn(
         kField, c.type, {.row_group_size = kRgSize, .compression = c.codec});
       for (uint64_t pos = 0; pos < c.rows;) {
@@ -199,7 +199,7 @@ class ColCodecCorruptionTest : public TestBase {
                                        /*whole_output=*/true);
     });
     Guarded(messages, [&] {
-      irs::ColumnReader::PointReader reader{r, *col};
+      irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
       duckdb::Vector out{c.type, 1};
       for (const uint64_t g : {uint64_t{0}, uint64_t{1}, uint64_t{777},
                                uint64_t{2050}, c.rows - 1, uint64_t{5}}) {
@@ -208,7 +208,7 @@ class ColCodecCorruptionTest : public TestBase {
       }
     });
     Guarded(messages, [&] {
-      irs::ColumnReader::PointReader reader{r, *col};
+      irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
       std::vector<uint32_t> batch;
       for (uint32_t g = 2; g < c.rows; g += 97) {
         batch.push_back(g);
@@ -241,7 +241,7 @@ class ColCodecCorruptionTest : public TestBase {
     });
     Guarded(messages, [&] {
       const auto& described = c.validity ? *col->Validity() : *col;
-      irs::ReadContext ctx{r};
+      irs::ReadContext ctx{r, TestAlloc()};
       const auto segment = described.OpenSegment(0, ctx);
       if (segment->function.get_segment_info) {
         segment->function.get_segment_info(*segment);
@@ -251,7 +251,7 @@ class ColCodecCorruptionTest : public TestBase {
       return;
     }
     Guarded(messages, [&] {
-      irs::ColumnReader::PointReader reader{r, *col};
+      irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
       duckdb::Vector out{c.type, 1};
       for (uint64_t g = 0; g < c.rows; ++g) {
         if (g >= 128 && g % 16 != 15 && g + 1 != c.rows) {
@@ -262,7 +262,7 @@ class ColCodecCorruptionTest : public TestBase {
       }
     });
     Guarded(messages, [&] {
-      irs::ColumnReader::PointReader reader{r, *col};
+      irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
       duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
       for (uint32_t g = 0; g + 3 < c.rows; g += 37) {
         const std::vector<uint32_t> batch{g, g + 1, g + 3};
@@ -1180,7 +1180,7 @@ TEST_F(ColCodecCorruptionTest,
       col->Scan(state, out, STANDARD_VECTOR_SIZE);
     });
     Guarded(messages, [&] {
-      irs::ColumnReader::PointReader reader{r, *col};
+      irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
       duckdb::Vector out{c.type, 1};
       reader.FetchRow(1, out, 0);
     });
@@ -1227,7 +1227,7 @@ TEST_F(ColCodecCorruptionTest,
     ASSERT_NE(col, nullptr);
     std::set<std::string> messages;
     Guarded(messages, [&] {
-      irs::ColumnReader::PointReader reader{r, *col};
+      irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
       duckdb::Vector out{c.type, 1};
       reader.FetchRow(row, out, 0);
     });
@@ -1278,7 +1278,7 @@ TEST_F(ColCodecCorruptionTest, OnpairFramesShorterThanTheirPaddingAreRefused) {
     col->Scan(state, out, STANDARD_VECTOR_SIZE);
   });
   Guarded(messages, [&] {
-    irs::ColumnReader::PointReader reader{r, *col};
+    irs::ColumnReader::PointReader reader{r, *col, TestAlloc()};
     duckdb::Vector out{c.type, 1};
     reader.FetchRow(1, out, 0);
   });
@@ -1417,7 +1417,7 @@ TEST_F(ColCodecCorruptionTest,
     out->Close();
   }
   const auto file = dir.Open("tiny", duckdb::MappedFileAccess::SEQUENTIAL);
-  irs::ReadContext ctx{Db(), file.get()};
+  irs::ReadContext ctx{Db(), file.get(), TestAlloc()};
   duckdb::Vector result{LogicalType::VARCHAR, 1};
   try {
     ctx.ReadString(result, 0, 0);

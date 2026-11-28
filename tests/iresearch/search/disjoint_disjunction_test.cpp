@@ -80,8 +80,8 @@ std::vector<doc_id_t> Merged(const Lists& lists) {
 
 class Union : public irs::lead::DisjointDisjunction<ListLead> {
  public:
-  explicit Union(const Lists& lists)
-    : DisjointDisjunction{lists.size(), [&](ListLead& lead, size_t i) {
+  Union(irs::PlanMemory& memory, const Lists& lists)
+    : DisjointDisjunction{memory, lists.size(), [&](ListLead& lead, size_t i) {
                             lead.Reset(lists[i]);
                           }} {}
 };
@@ -130,7 +130,8 @@ TEST(disjoint_disjunction_test, next_walks_the_merged_lists) {
   for (const auto& lists : Cases()) {
     SCOPED_TRACE(lists.size());
     const auto expected = Merged(lists);
-    Union docs{lists};
+    irs::PlanMemory memory;
+    Union docs{memory, lists};
     for (const auto doc : expected) {
       ASSERT_EQ(doc, docs.Next());
     }
@@ -147,7 +148,8 @@ TEST(disjoint_disjunction_test,
     const auto expected = Merged(lists);
     for (const doc_id_t step : {1, 3, 97, 4096}) {
       SCOPED_TRACE(testing::Message() << lists.size() << ' ' << step);
-      Union docs{lists};
+      irs::PlanMemory memory;
+      Union docs{memory, lists};
       doc_id_t current = doc_limits::invalid();
       for (doc_id_t target = 1; target < 21000; target += 1 + rng() % step) {
         const auto it = absl::c_lower_bound(expected, target);
@@ -179,7 +181,8 @@ TEST(disjoint_disjunction_test, gather_fills_each_window) {
     const auto expected = Merged(lists);
     for (const doc_id_t window : {1, 7, 64, 4096}) {
       SCOPED_TRACE(testing::Message() << lists.size() << ' ' << window);
-      Union docs{lists};
+      irs::PlanMemory memory;
+      Union docs{memory, lists};
       std::vector<doc_id_t> buf(window);
       std::vector<doc_id_t> actual;
       auto min = doc_limits::min();

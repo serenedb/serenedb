@@ -52,9 +52,8 @@ QueryBuilder::ptr PrepareExactVectors(
   if (radius != std::numeric_limits<float>::max()) {
     threshold = RadiusThreshold(metric, radius);
   }
-  auto built = memory::make_tracked<ExactVectorQuery>(
-    ctx.memory, segment, *column, *columns,
-    std::vector<float>{query.begin(), query.end()}, metric, ctx.boost * boost,
+  auto built = ctx.memory.Make<ExactVectorQuery>(
+    ctx.memory, segment, *column, *columns, query, metric, ctx.boost * boost,
     PrefilterOf(std::move(inner), index_part, has_column_part, segment, ctx),
     std::move(codes), threshold, inclusive);
   built->SetStats(ctx.Record());

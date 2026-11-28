@@ -32,8 +32,16 @@
 
 namespace irs::term_dict {
 
-DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks)
-  : _prefix_size{static_cast<uint32_t>(prefix.size())},
+DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
+                     TrackedAllocator<> alloc, Root root, PrefixTrie trie)
+  : _min_key{alloc},
+    _max_key{alloc},
+    _root{std::move(root)},
+    _trie{std::move(trie)},
+    _link_nodes{alloc},
+    _link_depths{alloc},
+    _masks{alloc},
+    _prefix_size{static_cast<uint32_t>(prefix.size())},
     _blocks{blocks},
     _gated{GatesTerms(head.member, head.width)} {
   _min_key.assign(prefix);
@@ -46,16 +54,22 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks)
 }
 
 DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-                     const Separators& separators, duckdb::ReadStream& in)
-  : DictIndex{head, prefix, blocks} {
-  if (blocks == 1) {
+                     const Separators& separators, duckdb::ReadStream& in,
+                     TrackedAllocator<> alloc)
+  : DictIndex{head,
+              prefix,
+              blocks,
+              alloc,
+              blocks == 1
+                ? Root{alloc}
+                : Root{Slice(separators, head.first_block, blocks - 1), in,
+                       alloc},
+              blocks != 1 && GatesTerms(head.member, head.width)
+                ? PrefixTrie{in, alloc}
+                : PrefixTrie{alloc}} {
+  if (blocks == 1 || !_gated) {
     return;
   }
-  _root = Root{Slice(separators, head.first_block, blocks - 1), in};
-  if (!_gated) {
-    return;
-  }
-  _trie = PrefixTrie{in};
   ReadArray(in, _link_nodes);
   ReadArray(in, _link_depths);
   ReadArray(in, _masks);
@@ -85,24 +99,31 @@ void DictIndex::Write(duckdb::WriteStream& out) const {
 }
 
 DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-                     const Separators& separators, DictSections sections)
-  : DictIndex{head, prefix, blocks} {
-  if (blocks == 1) {
+                     const Separators& separators, DictSections sections,
+                     TrackedAllocator<> alloc)
+  : DictIndex{head,
+              prefix,
+              blocks,
+              alloc,
+              blocks == 1
+                ? Root{alloc}
+                : Root{Slice(separators, head.first_block, blocks - 1),
+                       head.width != 0, alloc},
+              blocks != 1 && GatesTerms(head.member, head.width)
+                ? std::move(sections.trie)
+                : PrefixTrie{alloc}} {
+  SDB_ASSERT(blocks == 1 ||
+             size_t{head.first_block} + blocks <= separators.offsets.size());
+  if (blocks == 1 || !_gated) {
     return;
   }
-  SDB_ASSERT(size_t{head.first_block} + blocks <= separators.offsets.size());
-  _root =
-    Root{Slice(separators, head.first_block, blocks - 1), head.width != 0};
-  if (!_gated) {
-    return;
-  }
-  _trie = std::move(sections.trie);
   SDB_ASSERT(!_trie.Empty());
   _link_nodes.reserve(blocks);
   _link_depths.reserve(blocks);
   const size_t chain = _trie.Chain().size();
-  std::vector<uint32_t> path{_trie.Root()};
-  bstring previous;
+  TrackedVector<uint32_t> path{alloc};
+  path.push_back(_trie.Root());
+  TrackedBstring previous{alloc};
   for (uint32_t block = 0; block != blocks; ++block) {
     const auto term = BlockPrefix(block).substr(prefix.size());
     const size_t keep =
@@ -210,7 +231,12 @@ void DictIndexBuilder::FinishMasks(DictSections& sections) const {
 
 DictSections DictIndexBuilder::Finish() {
   SDB_ASSERT(_gated);
-  DictSections sections{.trie = _trie.Finish()};
+  const TrackedAllocator<> alloc = _seen.get_allocator();
+  DictSections sections{
+    .trie = _trie.Finish(),
+    .selected = TrackedVector<byte_type>{alloc},
+    .masks = TrackedVector<uint64_t>{alloc},
+  };
   FinishMasks(sections);
   _seen.clear();
   return sections;

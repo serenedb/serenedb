@@ -27,6 +27,7 @@
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,7 @@
 #include "iresearch/formats/index/term_dict_block_format.hpp"
 #include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -48,11 +50,14 @@ inline constexpr uint32_t kNoBase = std::numeric_limits<uint32_t>::max();
 using Misfits = std::array<uint32_t, kLenSplits>;
 
 struct VarColumns {
-  std::vector<uint32_t> lcps;
-  std::vector<uint32_t> lens;
-  bstring suffixes;
+  explicit VarColumns(TrackedAllocator<> alloc)
+    : lcps{alloc}, lens{alloc}, suffixes{alloc}, restarts{alloc} {}
+
+  TrackedVector<uint32_t> lcps;
+  TrackedVector<uint32_t> lens;
+  TrackedBstring suffixes;
   uint64_t suffix_bytes = 0;
-  std::vector<uint32_t> restarts;
+  TrackedVector<uint32_t> restarts;
   Misfits misfits{};
   uint32_t base = kNoBase;
   uint32_t max_lcp = 0;
@@ -67,8 +72,11 @@ struct VarEntry {
 };
 
 struct BlockBuilder {
-  bstring keys;
-  std::vector<uint32_t> ends;
+  explicit BlockBuilder(TrackedAllocator<> alloc)
+    : keys{alloc}, ends{alloc}, columns{alloc} {}
+
+  TrackedBstring keys;
+  TrackedVector<uint32_t> ends;
   VarColumns columns;
   uint64_t size = 0;
   uint64_t deferred = 0;
@@ -81,6 +89,11 @@ struct BlockBuilder {
 
 class BlockEncoder {
  public:
+  explicit BlockEncoder(TrackedAllocator<> alloc)
+    : _block{alloc}, _scratch{alloc} {}
+
+  static uint64_t Bound() noexcept;
+
   void StartField(const BasicTermReader& reader, uint32_t width) noexcept;
   std::string TakeFsstTable() noexcept;
   void EndField() noexcept;
@@ -99,6 +112,7 @@ class BlockEncoder {
 
  private:
   struct Fsst {
+    std::optional<MemoryCharge> charge;
     FsstEncoder encoder;
     std::string table;
     const BasicTermReader* reader = nullptr;
@@ -107,13 +121,22 @@ class BlockEncoder {
   };
 
   struct Scratch {
-    bstring coded;
+    explicit Scratch(TrackedAllocator<> alloc)
+      : coded{alloc},
+        encoded{alloc},
+        entries{alloc},
+        lengths{alloc},
+        starts{alloc},
+        coded_lengths{alloc},
+        coded_starts{alloc} {}
+
+    TrackedBstring coded;
     VarColumns encoded;
-    std::vector<VarEntry> entries;
-    std::vector<size_t> lengths;
-    std::vector<unsigned char*> starts;
-    std::vector<size_t> coded_lengths;
-    std::vector<unsigned char*> coded_starts;
+    TrackedVector<VarEntry> entries;
+    TrackedVector<size_t> lengths;
+    TrackedVector<unsigned char*> starts;
+    TrackedVector<size_t> coded_lengths;
+    TrackedVector<unsigned char*> coded_starts;
   };
 
   duckdb_fsst_encoder_t* Encoder();

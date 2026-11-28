@@ -29,6 +29,7 @@
 #include <duckdb/main/connection.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -232,6 +233,8 @@ class ConnectionContext final : public duckdb::ClientContext {
     ++_internal_statements;
     return absl::Cleanup{[this] { --_internal_statements; }};
   }
+  irs::MemoryBudget& Memory();
+  duckdb::shared_ptr<duckdb::MemoryAccount> GetMemoryAccount() final;
   pg::ProgressMetrics& Progress() const noexcept { return _progress->metrics; }
   const std::shared_ptr<pg::ProgressSource>& ProgressSource() const noexcept {
     return _progress;
@@ -309,6 +312,8 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::shared_ptr<pg::ProgressSource> _progress;
   uint64_t _catalog_epoch = 0;
   uint64_t _settings_version = 0;
+  duckdb::shared_ptr<irs::MemoryBudget> _memory{
+    duckdb::make_shared_ptr<irs::MemoryBudget>()};
   irs::containers::NodeHashMap<std::string, TxnVariable> _variables;
   catalog::SessionSlot& _slot;
   absl::Mutex _transaction_mutex;

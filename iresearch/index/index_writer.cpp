@@ -161,6 +161,7 @@ IndexWriter::Transaction::FlushSegments(bool sync) {
 std::shared_ptr<const SegmentReaderImpl> IndexWriter::Transaction::SealPiece(
   uint64_t id) {
   SDB_ASSERT(_segment && _hot);
+  _segment->writer->AdmitFlush();
   return _segment->writer->SealPiece(id);
 }
 
@@ -169,6 +170,7 @@ void IndexWriter::Transaction::Abort() noexcept {
     return;
   }
   _segment->Reset();
+  _segment->writer->ReturnMemory();
   _segment.reset();
 }
 
@@ -176,6 +178,7 @@ void IndexWriter::Transaction::Flush() {
   if (!_segment) {
     return;
   }
+  _segment->writer->AdmitFlush();
   absl::Cleanup reset = [&] { _segment->Reset(); };
   _segment->Flush();
   std::move(reset).Cancel();
@@ -185,6 +188,7 @@ void IndexWriter::Transaction::UpdateSegment(doc_id_t batch_size) {
   SDB_ASSERT(Valid());
   if (!_segment) {
     _segment = _writer->GetSegmentContext();
+    _segment->writer->BindMemory(*_memory);
   }
   auto& writer = *_segment->writer;
   if (writer.initialized()) [[likely]] {
@@ -226,7 +230,6 @@ bool IndexWriter::FlushRequired(const SegmentWriter& segment,
 IndexWriter::SegmentContext::SegmentContext(IndexWriter& owner,
                                             const SegmentWriterOptions& options)
   : owner{owner},
-    flushed{{IResourceManager::gNoop}},
     writer{SegmentWriter::make(owner._db, owner._fs, owner._root, options)} {}
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
@@ -434,8 +437,10 @@ IndexWriter::Merged IndexWriter::MergePieces(
   }
   SegmentMeta meta;
   meta.name = FileName(id);
+  LocalBudget budget{gRootBudget};
   MergeWriter merger{_db, _fs, _root,
-                     GetSegmentWriterOptions(true, field_options)};
+                     GetSegmentWriterOptions(true, field_options),
+                     TrackedAllocator<>{budget}};
   merger.Reset(candidates.begin(), candidates.end());
   merged.reader = merger.FlushPiece(meta, id);
   if (merged.reader) {
@@ -451,8 +456,10 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   const auto& candidates = merged.claim.candidates;
   SegmentMeta meta;
   meta.name = FileName(id);
+  LocalBudget budget{gRootBudget};
   MergeWriter merger{_db, _fs, _root,
-                     GetSegmentWriterOptions(true, field_options)};
+                     GetSegmentWriterOptions(true, field_options),
+                     TrackedAllocator<>{budget}};
   merger.Reset(candidates.begin(), candidates.end());
   auto files = co_await merger.Flush(meta, progress, env);
   if (!files) {

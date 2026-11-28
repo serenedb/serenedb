@@ -50,9 +50,10 @@
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/system_compiler.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::numeric {
 
@@ -152,6 +153,7 @@ struct WidePart {
             values.size()},
       data{
         .type = type,
+        .alloc = outer.alloc,
         .flush = keep,
         .params = outer.params,
         .tuning = tuning,
@@ -173,7 +175,11 @@ template<typename W>
 struct WideValues final : State {
   static constexpr StateId kId = StateId::WideValues;
 
-  explicit WideValues(ColumnDataCheckpointData&) {}
+  explicit WideValues(ColumnDataCheckpointData& data)
+    : sample{data.Allocator()},
+      lows{data.Allocator()},
+      highs{data.Allocator()},
+      out{data.Allocator()} {}
 
   bool Offers(bool halves, Shape shape, ColumnDataCheckpointData& data) {
     if (!started) {
@@ -225,12 +231,12 @@ struct WideValues final : State {
   absl::uint128 base = 0;
   absl::uint128 least = 0;
   absl::uint128 most = 0;
-  ScratchVector<absl::uint128> sample;
-  ScratchVector<uint64_t> lows;
-  ScratchVector<uint64_t> highs;
+  TrackedScratchVector<absl::uint128> sample;
+  TrackedScratchVector<uint64_t> lows;
+  TrackedScratchVector<uint64_t> highs;
   std::optional<WidePart> low;
   std::optional<WidePart> high;
-  std::string out;
+  TrackedString out;
 
   bool WithoutRuns(ColumnDataCheckpointData& data) {
     if (runs_checked) {
@@ -271,7 +277,7 @@ struct WideValues final : State {
         return sample_repeats * 2 >= sample_pairs;
       case Shape::Dictionary:
         if (!counted) {
-          containers::FlatHashSet<absl::uint128> distinct;
+          containers::TrackedFlatHashSet<absl::uint128> distinct{data.alloc};
           distinct.reserve(sample.size());
           for (const auto key : sample) {
             distinct.insert(key);
@@ -293,8 +299,8 @@ struct WideValues final : State {
 
   bool ReadRuns(ColumnDataCheckpointData& data) {
     const size_t limit = data.rows.count / kWideRunRows * 2;
-    ScratchVector<absl::uint128> keys(limit);
-    ScratchVector<uint32_t> rows(limit);
+    TrackedScratchVector<absl::uint128> keys(limit, data.Allocator());
+    TrackedScratchVector<uint32_t> rows(limit, data.Allocator());
     absl::uint128 last = 0;
     size_t count = 0;
     size_t row = 0;
@@ -333,7 +339,7 @@ struct WideValues final : State {
              : least;
     lows.resize(data.rows.count);
     low.emplace(data, lows);
-    ScratchVector<uint64_t> values(count);
+    TrackedScratchVector<uint64_t> values(count, data.Allocator());
     rows.resize(count);
     for (size_t r = 0; r < count; ++r) {
       const uint64_t value = absl::Uint128Low64(keys[r] - base);

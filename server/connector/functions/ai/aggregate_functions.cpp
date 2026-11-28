@@ -104,7 +104,7 @@ struct AggOperation {
   template<class INPUT_TYPE, class STATE, class OP>
   static void Operation(STATE& state, const INPUT_TYPE& input,
                         duckdb::AggregateUnaryInput&) {
-    if (state.values == nullptr) {
+    if (!state.values) {
       state.values = new std::vector<std::string>();
     }
     state.values->emplace_back(input.GetData(), input.GetSize());
@@ -125,7 +125,7 @@ struct AggOperation {
     if (source.values == nullptr) {
       return;
     }
-    if (target.values == nullptr) {
+    if (!target.values) {
       target.values = new std::vector<std::string>();
     }
     auto& values = *source.values;

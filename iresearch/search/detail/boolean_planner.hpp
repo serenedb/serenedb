@@ -105,7 +105,7 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
   if constexpr (kScoredPlan<Family, Ctx>) {
     const auto& scored = Family::Scoring(ctx);
     SDB_ASSERT(scored.fetcher);
-    absorbed = query.Absorbed(*scored.fetcher);
+    absorbed = query.Absorbed(Family::MemoryOf(ctx), *scored.fetcher);
   }
   if (!query.Terms(Occur::MustNot).empty() ||
       !query.Queries(Occur::MustNot).empty()) {
@@ -118,7 +118,8 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
         if (!child) {
           return {};
         }
-        return Family::WrapMerge(merge, std::move(child));
+        return Family::WrapMerge(Family::MemoryOf(ctx), merge,
+                                 std::move(child));
       }
     }
   }
@@ -142,16 +143,17 @@ typename Family::Result BooleanMaker<Family, Ctx>::Make(
   if constexpr (kProbePlan<Family>) {
     if constexpr (kScoredPlan<Family, Ctx>) {
       const auto& segment = query.Segment();
-      return probe::MakeBoolean(
-        query, Family::Interrogations(ctx),
-        TermScoring{
-          .recipe = {.segment = &segment, .fetcher = ctx.scored.fetcher},
-          .merge = query.MergeType(),
-        },
-        ctx.scored);
+      return probe::MakeBoolean(query, Family::Interrogations(ctx),
+                                TermScoring{
+                                  .recipe = {.memory = &ctx.scored.memory,
+                                             .segment = &segment,
+                                             .fetcher = ctx.scored.fetcher},
+                                  .merge = query.MergeType(),
+                                },
+                                ctx.scored);
     } else {
       return probe::MakeBoolean(query, Family::Interrogations(ctx), NoScoring{},
-                                ScoredCtx{});
+                                ScoredCtx{.memory = Family::MemoryOf(ctx)});
     }
   } else {
     return builder::Make<Family>(query, ctx, MergeOf(query, ctx));

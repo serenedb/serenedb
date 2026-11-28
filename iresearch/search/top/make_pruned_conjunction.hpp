@@ -67,10 +67,10 @@ Root::ptr PrunedConjunctionMaker<P>::Make(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own, posting.Args(&ctx.fetcher));
+                   segment, own, posting.Args(ctx.memory, &ctx.fetcher));
     };
     const auto docs = static_cast<doc_id_t>(segment.docs_count());
-    std::vector<size_t> joined;
+    memory::ArenaVector<size_t> joined{ctx.memory.Scratch()};
     joined.reserve(size - 1);
     for (size_t i = 1; i != size; ++i) {
       if (!irs::detail::DensePosting(terms[i].state.cookie.docs_count, docs)) {
@@ -85,16 +85,16 @@ Root::ptr PrunedConjunctionMaker<P>::Make(
                         const auto& joined_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
         return MakeShape<PrunedConjunction, Lead, Others, Joined, utils::Empty>(
-          ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
-          std::forward_as_tuple());
+          ctx, ctx.memory, ctx.fetcher, !PruneByBounds(ctx), size, init,
+          joined_args, std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
       return irs::detail::BuildBlockExcludes<Root::ptr, P>(
-        excludes, exclude_filters, nullptr, segment, lead, lead,
+        ctx.memory, excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Joined, Exclude>(
-            ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
-            std::forward<decltype(negated)>(negated));
+            ctx, ctx.memory, ctx.fetcher, !PruneByBounds(ctx), size, init,
+            joined_args, std::forward<decltype(negated)>(negated));
         });
     };
     using Fill = irs::detail::PostingFill<Input>;
@@ -104,7 +104,7 @@ Root::ptr PrunedConjunctionMaker<P>::Make(
       if (windowed) {
         return make.template
         operator()<PrunedLeaves<Clause, N>, fill::AndLeaves<Fill, N>>(
-          std::forward_as_tuple(joined.size(), prepare_joined));
+          std::forward_as_tuple(ctx.memory, joined.size(), prepare_joined));
       }
       return make.template operator()<PrunedLeaves<Clause, N>, utils::Empty>(
         std::tuple<>{});

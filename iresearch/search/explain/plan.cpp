@@ -108,6 +108,7 @@ struct Constant {
 uint32_t ConstantFreq(const SubReader& segment, const TermReader& field,
                       const detail::ScoreArgs& args) {
   if (args.scorer->Constant({
+        .memory = *args.memory,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = detail::NoAttributes(),
@@ -188,6 +189,7 @@ class LeafPart {
       SDB_ASSERT(recipe.args.stats == _args.stats);
       Describe(
         {
+          .memory = *recipe.args.memory,
           .segment = *recipe.segment,
           .field = recipe.field->meta(),
           .doc_attrs = *inputs,
@@ -216,6 +218,7 @@ class LeafPart {
     const AttributeProvider& attrs =
       freq != 0 ? provider : detail::NoAttributes();
     const ScoreContext ctx{
+      .memory = *_args.memory,
       .segment = _segment,
       .field = _constant.field ? _constant.field->meta() : detail::NoField(),
       .doc_attrs = attrs,
@@ -310,9 +313,11 @@ Outcome GroupPart::Explain(doc_id_t doc, Node& out) {
 
 class Builder {
  public:
-  Builder(const Scorer& scorer, const StatsIndex& stats, const Filter& filter,
-          const SubReader& segment, ColumnArgsFetcher& fetcher) noexcept
-    : _scorer{scorer},
+  Builder(PlanMemory& memory, const Scorer& scorer, const StatsIndex& stats,
+          const Filter& filter, const SubReader& segment,
+          ColumnArgsFetcher& fetcher) noexcept
+    : _memory{memory},
+      _scorer{scorer},
       _stats{stats},
       _filter{filter},
       _segment{segment},
@@ -339,7 +344,7 @@ class Builder {
 
  private:
   detail::ScoredCtx Scoring() const noexcept {
-    return {.scorer = &_scorer, .fetcher = &_fetcher};
+    return {.memory = _memory, .scorer = &_scorer, .fetcher = &_fetcher};
   }
 
   const TermNames& Names() {
@@ -353,7 +358,7 @@ class Builder {
   LeafPart MakeClause(const detail::PostingClause& clause) {
     SDB_ASSERT(clause.state.reader);
     const auto& field = *clause.state.reader;
-    const auto args = clause.Args(&_fetcher);
+    const auto args = clause.Args(_memory, &_fetcher);
     const bool scored = args.stats != nullptr;
     const auto* stats = StatsOf(_stats, args.stats);
     auto subject = SubjectOf(stats, &field);
@@ -373,7 +378,8 @@ class Builder {
                       }
                       return probe::Family::MakePosting(
                         clause, *segment,
-                        probe::Family::DocsContext{.interrogations = 1},
+                        probe::Family::DocsContext{.memory = scoring.memory,
+                                                   .interrogations = 1},
                         ScoreMergeType::Noop);
                     },
                     _segment,
@@ -386,6 +392,7 @@ class Builder {
   LeafPart MakeLeaf(const QueryBuilder& query) {
     const auto record = query.Stats(Scoring());
     const detail::ScoreArgs args{
+      .memory = &_memory,
       .scorer = record.scorer,
       .stats = record.stats,
       .fetcher = &_fetcher,
@@ -430,15 +437,16 @@ class Builder {
                   .freq = ConstantFreq(_segment, *reader, args),
                   .scale = scale};
     }
-    return LeafPart{[&query, scoring = Scoring(), scored] {
-                      return query.PlanProbe(
-                        scored ? scoring : detail::ScoredCtx{}, 1);
-                    },
-                    _segment,
-                    args,
-                    stats,
-                    std::move(subject),
-                    constant};
+    return LeafPart{
+      [&query, scoring = Scoring(), scored] {
+        return query.PlanProbe(
+          scored ? scoring : detail::ScoredCtx{.memory = scoring.memory}, 1);
+      },
+      _segment,
+      args,
+      stats,
+      std::move(subject),
+      constant};
   }
 
   GroupPart MakeTerms(const MultiTermQuery& query) {
@@ -462,11 +470,13 @@ class Builder {
     std::optional<score_t> absorbed;
     if (scores_all(query.Bucket(Occur::Must)) ||
         scores_all(query.Bucket(Occur::Should))) {
-      absorbed = query.Absorbed(_fetcher);
+      absorbed = query.Absorbed(_memory, _fetcher);
     }
-    GroupPart group{
-      [&query] { return query.PlanProbe(detail::ScoredCtx{}, 1); },
-      query.MergeType() == ScoreMergeType::Max, absorbed};
+    GroupPart group{[&query, &memory = _memory] {
+                      return query.PlanProbe(
+                        detail::ScoredCtx{.memory = memory}, 1);
+                    },
+                    query.MergeType() == ScoreMergeType::Max, absorbed};
     for (const auto occur : {Occur::Must, Occur::Should}) {
       const auto& bucket = query.Bucket(occur);
       for (const auto& clause : bucket.postings) {
@@ -479,6 +489,7 @@ class Builder {
     return group;
   }
 
+  PlanMemory& _memory;
   const Scorer& _scorer;
   const StatsIndex& _stats;
   const Filter& _filter;
@@ -489,11 +500,14 @@ class Builder {
 
 class Plan final : public Explainer {
  public:
-  Plan(const QueryBuilder& query, const Scorer& scorer, const StatsIndex& stats,
-       const Filter& filter) {
+  explicit Plan(MemoryBudget& memory, const QueryBuilder& query,
+                const Scorer& scorer, const StatsIndex& stats,
+                const Filter& filter)
+    : _memory{memory} {
     if (!QueryBuilder::IsEmpty(query)) {
       _root.emplace(
-        Builder{scorer, stats, filter, query.Segment(), _fetcher}.Make(query));
+        Builder{_memory, scorer, stats, filter, query.Segment(), _fetcher}.Make(
+          query));
     }
   }
 
@@ -512,17 +526,19 @@ class Plan final : public Explainer {
   }
 
  private:
+  PlanMemory _memory;
   ColumnArgsFetcher _fetcher;
   std::optional<Part> _root;
 };
 
 }  // namespace
 
-std::unique_ptr<Explainer> MakePlan(const QueryBuilder& query,
+std::unique_ptr<Explainer> MakePlan(MemoryBudget& memory,
+                                    const QueryBuilder& query,
                                     const Scorer& scorer,
                                     const StatsIndex& stats,
                                     const Filter& filter) {
-  return std::make_unique<Plan>(query, scorer, stats, filter);
+  return std::make_unique<Plan>(memory, query, scorer, stats, filter);
 }
 
 }  // namespace irs::explain

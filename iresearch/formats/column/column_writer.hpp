@@ -72,6 +72,11 @@ struct ColumnWriterOptions {
   bool operator==(const ColumnWriterOptions&) const = default;
 };
 
+uint64_t SealBoundOf(const duckdb::LogicalType& type,
+                     std::span<const ColumnReader* const> columns,
+                     uint64_t rows, codecs::CodecType forced,
+                     const ColCodecParams& params, TrackedAllocator<> alloc);
+
 struct ColumnWriteState {
   codecs::ColumnTuning tuning;
   uint64_t list_running = 0;
@@ -110,6 +115,8 @@ class ColumnWriter final {
 
   void PadNullsTo(uint64_t target_row);
 
+  void Finish();
+
   bool CopyableFrom(const ColumnReader& column) const;
   [[nodiscard]] bool CopyBlocks(const ColumnReader& column, ReadContext& source,
                                 absl::FunctionRef<bool()> progress);
@@ -118,8 +125,7 @@ class ColumnWriter final {
 
   std::vector<WriteChunk> Snapshot(uint64_t rows) const;
   size_t StagedBytes() const noexcept;
-
-  void Finish() { SealRowGroup(); }
+  uint64_t PendingSealBound() const;
 
   void SetDistinct(duckdb::shared_ptr<duckdb::DistinctStatistics> distinct);
 
@@ -196,6 +202,9 @@ class ColumnWriter final {
                   std::span<const std::unique_ptr<ListIngest>> ingest = {});
 
   WriteContext& WriteCtx() const noexcept;
+  TrackedAllocator<> SealAllocator() const noexcept;
+  codecs::CodecType SealMethod() const;
+  uint64_t SealBound(const WriteRows& rows) const;
 
   ColWriter* _owner;
   field_id _id;
@@ -204,8 +213,10 @@ class ColumnWriter final {
   codecs::CodecType _method = codecs::CodecType::Auto;
   codecs::CodecType _global_method = codecs::CodecType::Auto;
   codecs::CodecSet _disabled;
+  MemoryCharge _staged_charge;
   std::vector<WriteChunk> _staged;
   std::vector<duckdb::VectorCache> _staged_caches;
+  MemoryCharge _null_pad_charge;
   std::unique_ptr<duckdb::Vector> _null_pad;
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
@@ -215,6 +226,7 @@ class ColumnWriter final {
   uint64_t _shared_from = 0;
   uint64_t _shared_to = 0;
   bool _deferred = false;
+  MemoryCharge _distinct_charge;
   duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;

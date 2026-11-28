@@ -47,6 +47,7 @@
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
@@ -126,6 +127,9 @@ inline uint32_t FrameOfEntry(duckdb::const_data_ptr_t table, uint32_t hi,
 
 class ChainGroups {
  public:
+  explicit ChainGroups(TrackedAllocator<> alloc)
+    : _base{alloc}, _known{alloc}, _offsets{alloc} {}
+
   template<typename Entries>
   void Reset(uint32_t frame_count, Entries entries) {
     _base.resize(frame_count + 1);
@@ -171,9 +175,9 @@ class ChainGroups {
   }
 
  private:
-  std::vector<uint32_t> _base;
-  std::vector<uint32_t> _known;
-  ScratchVector<uint64_t> _offsets;
+  TrackedVector<uint32_t> _base;
+  TrackedVector<uint32_t> _known;
+  TrackedScratchVector<uint64_t> _offsets;
 };
 
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
@@ -186,7 +190,8 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
                      ByteCodec codec);
 
 std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
-                             duckdb::const_data_ptr_t base, std::string& copy);
+                             duckdb::const_data_ptr_t base,
+                             TrackedString& copy);
 
 struct EntryRange {
   uint32_t lo;
@@ -212,7 +217,7 @@ inline std::string_view View(const duckdb::string_t& s) noexcept {
   return {s.GetData(), s.GetSize()};
 }
 
-inline char* Reserve(std::string& scratch, uint64_t bytes) {
+inline char* Reserve(TrackedString& scratch, uint64_t bytes) {
   if (scratch.size() < bytes) {
     scratch.resize(std::max<uint64_t>(bytes, scratch.size() * 2));
   }

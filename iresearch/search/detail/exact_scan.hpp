@@ -39,13 +39,15 @@ class ExactScanner {
  public:
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
 
-  ExactScanner(const ExactVectorQuery& query, bool admits_missing)
-    : ExactScanner{query, query.Inner(), admits_missing} {}
-
-  ExactScanner(const ExactVectorQuery& query, const QueryBuilder* prefilter,
+  ExactScanner(PlanMemory& memory, const ExactVectorQuery& query,
                bool admits_missing)
+    : ExactScanner{memory, query, query.Inner(), admits_missing} {}
+
+  ExactScanner(PlanMemory& memory, const ExactVectorQuery& query,
+               const QueryBuilder* prefilter, bool admits_missing)
     : _reader{query.Column(), query.Columns(),
-              static_cast<uint32_t>(query.Column().ArraySize())},
+              static_cast<uint32_t>(query.Column().ArraySize()),
+              memory.Allocator()},
       _threshold{query.Threshold()},
       _inclusive{query.Inclusive()},
       _keep_missing{admits_missing && !_threshold} {
@@ -55,10 +57,10 @@ class ExactScanner {
     _doc = _last;
     _end = _last;
     if (prefilter) {
-      _matches = docs::MakeRoot(*prefilter, {});
+      _matches = docs::MakeRoot(*prefilter, {.memory = memory});
     }
     if (const auto& column = query.Column(); MayHaveNullRows(column)) {
-      _validity.emplace(query.Columns(), column);
+      _validity.emplace(query.Columns(), column, memory.Allocator());
     }
   }
 
@@ -163,8 +165,9 @@ class ExactScanner {
   };
 
   struct Validity {
-    Validity(const ColReader& columns, const ColumnReader& column)
-      : reader{columns, column, true} {}
+    Validity(const ColReader& columns, const ColumnReader& column,
+             TrackedAllocator<> alloc)
+      : reader{columns, column, alloc, true} {}
 
     ColumnReader::PointReader reader;
     duckdb::Vector scratch{duckdb::LogicalType::BOOLEAN, 1};

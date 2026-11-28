@@ -50,7 +50,7 @@ class ByNestedQuery : public QueryBuilderImpl<ByNestedQuery> {
 
   score_t Boost() const noexcept final { return kNoBoost; }
 
-  ParentDocs::ptr Parents() const;
+  ParentDocs::ptr Parents(PlanMemory& memory) const;
 
   const QueryBuilder& Child() const noexcept { return *_child; }
 

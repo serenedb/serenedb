@@ -47,6 +47,8 @@
 #include <string_view>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 enum class Corpus {
@@ -166,7 +168,7 @@ struct Seg {
 
 uint64_t Build(irs::FileTracker& tracker, Corpus corpus, const Arm& arm,
                uint64_t rows) {
-  irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
+  irs::ColWriter w{CsDb(), tracker, TestAlloc(), irs::WriteTier::Merge};
   auto& cw = w.OpenColumn(
     kField, duckdb::LogicalType::VARCHAR,
     {.compression = arm.codec,
@@ -245,7 +247,7 @@ void Seal(benchmark::State& state, Corpus corpus, size_t arm) {
 
 void FullScan(benchmark::State& state, Corpus corpus, size_t arm) {
   const auto& seg = GetSeg(corpus, arm);
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   for (auto _ : state) {
     state.PauseTiming();
     auto st = seg.col->InitScan(ctx);
@@ -272,7 +274,7 @@ void FullScan(benchmark::State& state, Corpus corpus, size_t arm) {
 void SparseGather(benchmark::State& state, Corpus corpus, size_t arm) {
   const auto& seg = GetSeg(corpus, arm);
   const auto& rows = ScatteredRows();
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   for (auto _ : state) {
     state.PauseTiming();
     auto st = seg.col->InitScan(ctx);
@@ -300,7 +302,7 @@ void PointLookup(benchmark::State& state, Corpus corpus, size_t arm) {
   const auto& rows = ScatteredRows();
   for (auto _ : state) {
     state.PauseTiming();
-    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col};
+    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col, TestAlloc()};
     duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
     state.ResumeTiming();
     for (const auto r : rows) {
@@ -320,7 +322,8 @@ struct FsstFrames {
   std::vector<duckdb::string_t> views;
   std::string encoded;
   std::vector<uint32_t> lengths;
-  irs::codecs::text::fsst::Encoder<irs::codecs::text::fsst::Fsst8> encoder;
+  irs::codecs::text::fsst::Encoder<irs::codecs::text::fsst::Fsst8> encoder{
+    TestAlloc()};
   irs::codecs::text::fsst::Decoder<irs::codecs::text::fsst::Fsst8> decoder;
   size_t raw = 0;
   static constexpr size_t kPerFrame = 400;

@@ -35,6 +35,7 @@
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
@@ -195,37 +196,38 @@ class QueryProfile {
                              doc_id_t max) noexcept;
 
   template<typename Wrapper, typename Ptr>
-  Ptr WrapAs(Ptr node, uint32_t id) {
+  Ptr WrapAs(PlanMemory& memory, Ptr node, uint32_t id) {
     if (id == 0 || !_nested) {
       return node;
     }
     auto& slot = Plan(id, typeid(*node));
-    return memory::make_managed<Wrapper>(std::move(node), slot);
+    return memory.Make<Wrapper>(std::move(node), slot);
   }
 
-  lead::Node::ptr Wrap(lead::Node::ptr node, uint32_t id);
-  probe::Node::ptr Wrap(probe::Node::ptr node, uint32_t id);
-  fill::Node::ptr Wrap(fill::Node::ptr node, uint32_t id);
+  lead::Node::ptr Wrap(PlanMemory& memory, lead::Node::ptr node, uint32_t id);
+  probe::Node::ptr Wrap(PlanMemory& memory, probe::Node::ptr node, uint32_t id);
+  fill::Node::ptr Wrap(PlanMemory& memory, fill::Node::ptr node, uint32_t id);
 
-  docs::Root::ptr WrapRoot(docs::Root::ptr root, uint32_t id, uint64_t ticks,
-                           OwnedChecks checks);
-  hits::Root::ptr WrapRoot(hits::Root::ptr root, uint32_t id, uint64_t ticks,
-                           OwnedChecks checks);
-  count::Root::ptr WrapRoot(count::Root::ptr root, uint32_t id, uint64_t ticks,
-                            OwnedChecks checks);
-  top::Root::ptr WrapRoot(top::Root::ptr root, uint32_t id, uint64_t ticks,
-                          OwnedChecks checks);
-  ann::Root::ptr WrapRoot(ann::Root::ptr root, uint32_t id, uint64_t ticks,
-                          OwnedChecks checks);
-  fill::Node::ptr WrapRoot(fill::Node::ptr root, uint32_t id, uint64_t ticks,
-                           OwnedChecks checks);
+  docs::Root::ptr WrapRoot(PlanMemory& memory, docs::Root::ptr root,
+                           uint32_t id, uint64_t ticks, OwnedChecks checks);
+  hits::Root::ptr WrapRoot(PlanMemory& memory, hits::Root::ptr root,
+                           uint32_t id, uint64_t ticks, OwnedChecks checks);
+  count::Root::ptr WrapRoot(PlanMemory& memory, count::Root::ptr root,
+                            uint32_t id, uint64_t ticks, OwnedChecks checks);
+  top::Root::ptr WrapRoot(PlanMemory& memory, top::Root::ptr root, uint32_t id,
+                          uint64_t ticks, OwnedChecks checks);
+  ann::Root::ptr WrapRoot(PlanMemory& memory, ann::Root::ptr root, uint32_t id,
+                          uint64_t ticks, OwnedChecks checks);
+  fill::Node::ptr WrapRoot(PlanMemory& memory, fill::Node::ptr root,
+                           uint32_t id, uint64_t ticks, OwnedChecks checks);
 
  private:
   std::unique_ptr<detail::TableFilter> WrapChecks(detail::TableFilter*& checks,
                                                   CheckCounts& counts);
 
   template<typename Wrapper, typename Ptr>
-  Ptr WrapRootAs(Ptr root, uint32_t id, uint64_t ticks, OwnedChecks checks);
+  Ptr WrapRootAs(PlanMemory& memory, Ptr root, uint32_t id, uint64_t ticks,
+                 OwnedChecks checks);
 
   containers::FlatHashMap<const Filter*, uint32_t> _ids;
   std::unique_ptr<Prepared[]> _nodes;
@@ -247,13 +249,13 @@ inline QueryBuilder::ptr PrepareFilter(const Filter& filter,
 }
 
 template<typename Ptr>
-Ptr ProfilePlan(const QueryBuilder& query, Ptr node) {
+Ptr ProfilePlan(PlanMemory& memory, const QueryBuilder& query, Ptr node) {
   if constexpr (requires(QueryProfile& profile, Ptr part) {
-                  profile.Wrap(std::move(part), uint32_t{});
+                  profile.Wrap(memory, std::move(part), uint32_t{});
                 }) {
     if (auto* profile = query.Profile()) [[unlikely]] {
       if (node) {
-        return profile->Wrap(std::move(node), query.ProfileNode());
+        return profile->Wrap(memory, std::move(node), query.ProfileNode());
       }
     }
   }
@@ -261,7 +263,8 @@ Ptr ProfilePlan(const QueryBuilder& query, Ptr node) {
 }
 
 template<typename Context, typename Make>
-auto ProfileRoot(const QueryBuilder& query, const Context& ctx, Make&& make) {
+auto ProfileRoot(PlanMemory& memory, const QueryBuilder& query,
+                 const Context& ctx, Make&& make) {
   auto* profile = query.Profile();
   if (!profile) [[likely]] {
     return make(ctx);
@@ -280,13 +283,19 @@ auto ProfileRoot(const QueryBuilder& query, const Context& ctx, Make&& make) {
   const auto start = duckdb::TimePoint::Now();
   auto root = make(profiled);
   const auto ticks = static_cast<uint64_t>(duckdb::TimePoint::Now() - start);
-  return profile->WrapRoot(std::move(root), node, ticks, std::move(checks));
+  return profile->WrapRoot(memory, std::move(root), node, ticks,
+                           std::move(checks));
+}
+
+template<typename Context, typename Make>
+auto ProfileRoot(const QueryBuilder& query, const Context& ctx, Make&& make) {
+  return ProfileRoot(ctx.memory, query, ctx, std::forward<Make>(make));
 }
 
 template<typename Make>
-auto ProfileRoot(const QueryBuilder& query, Make&& make) {
+auto ProfileRoot(PlanMemory& memory, const QueryBuilder& query, Make&& make) {
   struct NoContext {};
-  return ProfileRoot(query, NoContext{},
+  return ProfileRoot(memory, query, NoContext{},
                      [&](const NoContext&) { return make(); });
 }
 

@@ -162,7 +162,8 @@ bool Opened(const ColumnReader::ScanState& s) noexcept {
 duckdb::Vector& Scratch(ColumnReader::ScanState& s,
                         const duckdb::LogicalType& type) {
   if (!s.scanned || s.scanned->vector.GetType() != type) {
-    s.scanned = std::make_unique<ColumnReader::VectorScratch>(type);
+    s.scanned =
+      std::make_unique<ColumnReader::VectorScratch>(type, s.ctx->Allocator());
   }
   return s.scanned->Reset();
 }
@@ -175,6 +176,8 @@ struct ListRun {
 };
 
 struct ListDictionary {
+  explicit ListDictionary(TrackedAllocator<> alloc) : ends{alloc} {}
+
   uint64_t begin = 0;
   uint64_t end = 0;
   uint64_t missed_block = 0;
@@ -187,10 +190,12 @@ struct ListDictionary {
   bitset decoded;
   std::vector<uint32_t> ranks;
   std::vector<ListRun> runs;
-  ScratchVector<uint64_t> ends;
+  TrackedScratchVector<uint64_t> ends;
 };
 
 struct ListScanState {
+  explicit ListScanState(TrackedAllocator<> alloc) : dictionary{alloc} {}
+
   std::unique_ptr<ColumnReader::VectorScratch> codes;
   std::unique_ptr<ColumnReader::VectorScratch> ends;
   ListDictionary dictionary;
@@ -1114,8 +1119,8 @@ class ListColumnReader final : public ColumnReader {
     if (at == 0) {
       NewOutputVector(s);
     }
-    auto& codes_vec =
-      ResetScratch(List(s).codes, duckdb::LogicalType::UBIGINT, hits);
+    auto& codes_vec = ResetScratch(List(s).codes, duckdb::LogicalType::UBIGINT,
+                                   s.ctx->Allocator(), hits);
     uint64_t pos = GatherCursor(s);
     for (duckdb::idx_t i = 0; i < hits;) {
       const uint64_t target = anchor + sel.get_index(i);
@@ -1152,7 +1157,7 @@ class ListColumnReader final : public ColumnReader {
   }
 
   IRS_NO_INLINE static void NewListState(ScanState& s) {
-    s.list = std::make_unique<ListScanState>();
+    s.list = std::make_unique<ListScanState>(s.ctx->Allocator());
   }
 
   static ListScanState& List(ScanState& s) {
@@ -1220,8 +1225,8 @@ class ListColumnReader final : public ColumnReader {
     const uint64_t from = chained ? first : first - 1;
     SeekChild(s, 1, from);
     const uint64_t end_count = first + count - from;
-    auto& ends_vec =
-      ResetScratch(list.ends, duckdb::LogicalType::UBIGINT, end_count);
+    auto& ends_vec = ResetScratch(list.ends, duckdb::LogicalType::UBIGINT,
+                                  s.ctx->Allocator(), end_count);
     _children[1]->ScanCount(s.child_states[2], ends_vec,
                             static_cast<duckdb::idx_t>(end_count), 0);
     const auto* ends = duckdb::FlatVector::GetData<uint64_t>(ends_vec);
@@ -1247,7 +1252,8 @@ class ListColumnReader final : public ColumnReader {
     for (uint64_t pos = 0; pos < d.ends.size();) {
       const auto take =
         std::min<uint64_t>(d.ends.size() - pos, STANDARD_VECTOR_SIZE);
-      auto& chunk = ResetScratch(scratch, duckdb::LogicalType::UBIGINT);
+      auto& chunk = ResetScratch(scratch, duckdb::LogicalType::UBIGINT,
+                                 s.ctx->Allocator());
       _children[1]->ScanCount(s.child_states[2], chunk,
                               static_cast<duckdb::idx_t>(take), 0);
       std::copy_n(duckdb::FlatVector::GetData<uint64_t>(chunk), take,
@@ -1447,8 +1453,8 @@ class ListColumnReader final : public ColumnReader {
     if (count == 0) {
       return 0;
     }
-    auto& codes_vec =
-      ResetScratch(List(s).codes, duckdb::LogicalType::UBIGINT, count);
+    auto& codes_vec = ResetScratch(List(s).codes, duckdb::LogicalType::UBIGINT,
+                                   s.ctx->Allocator(), count);
     const auto scan_count =
       ScanVector(s, codes_vec, count, duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
     SDB_ASSERT(scan_count > 0);

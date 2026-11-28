@@ -53,6 +53,7 @@
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -174,6 +175,7 @@ class IndexWriter : private util::Noncopyable {
     Transaction(Transaction&& other) noexcept
       : _writer{std::exchange(other._writer, nullptr)},
         _segment{std::move(other._segment)},
+        _memory{other._memory},
         _hot_segment{other._hot_segment},
         _field_options{std::move(other._field_options)},
         _hot{other._hot} {}
@@ -182,12 +184,15 @@ class IndexWriter : private util::Noncopyable {
         Abort();
         _writer = std::exchange(other._writer, nullptr);
         _segment = std::move(other._segment);
+        _memory = other._memory;
         _hot_segment = other._hot_segment;
         _field_options = std::move(other._field_options);
         _hot = other._hot;
       }
       return *this;
     }
+
+    void SetMemory(MemoryBudget& memory) noexcept { _memory = &memory; }
 
     ~Transaction() { Abort(); }
 
@@ -232,6 +237,7 @@ class IndexWriter : private util::Noncopyable {
 
     IndexWriter* _writer{nullptr};
     std::shared_ptr<SegmentContext> _segment;
+    MemoryBudget* _memory{&gRootBudget};
     uint64_t _hot_segment{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
     bool _hot{false};
@@ -345,7 +351,7 @@ class IndexWriter : private util::Noncopyable {
     using ptr = std::unique_ptr<SegmentContext>;
 
     IndexWriter& owner;
-    ManagedVector<FlushedSegment> flushed;
+    std::vector<FlushedSegment> flushed;
     std::unique_ptr<SegmentWriter> writer;
     SegmentMeta writer_meta;
 

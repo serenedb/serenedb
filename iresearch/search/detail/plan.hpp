@@ -189,11 +189,12 @@ using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,
                                       probe::Erased, lead::Erased>;
 
 template<typename Result>
-auto PlanApprox(const QueryBuilder& approx, uint64_t interrogations) {
+auto PlanApprox(PlanMemory& memory, const QueryBuilder& approx,
+                uint64_t interrogations) {
   if constexpr (std::is_same_v<Result, ProbeNode::ptr>) {
-    return approx.PlanProbe({}, interrogations);
+    return approx.PlanProbe({.memory = memory}, interrogations);
   } else {
-    return approx.PlanLead({});
+    return approx.PlanLead({.memory = memory});
   }
 }
 
@@ -201,7 +202,8 @@ template<typename Family, typename Ctx>
 typename Family::Result PlanConstant(const QueryBuilder& matches, score_t value,
                                      const Ctx& ctx) {
   using Result = typename Family::Result;
-  auto node = PlanApprox<Result>(matches, Family::Interrogations(ctx));
+  auto node = PlanApprox<Result>(Family::MemoryOf(ctx), matches,
+                                 Family::Interrogations(ctx));
   if (!node) {
     return {};
   }

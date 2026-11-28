@@ -38,7 +38,7 @@ template<template<typename...> typename Shape, typename... Parts,
          typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   return detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
-    return memory::make_managed<Shape<Parts..., decltype(table)>>(
+    return ctx.memory.Make<Shape<Parts..., decltype(table)>>(
       table, std::forward<Args>(args)...);
   });
 }

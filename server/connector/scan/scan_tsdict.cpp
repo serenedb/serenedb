@@ -32,6 +32,8 @@
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/query_memory.hpp>
+#include <optional>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -60,6 +62,12 @@ struct TsDictLocalState final : public ScanLocalState {
   uint32_t LiveDocs(irs::TermIterator& it, bool count_all,
                     uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
 
+  void BindMemory(irs::MemoryBudget& memory) final {
+    ScanLocalState::BindMemory(memory);
+    _query_memory.Bind(memory);
+    _term_memory.Bind(memory);
+  }
+
   void ReleasePlans() final {
     _live.reset();
     _term_counts = nullptr;
@@ -85,7 +93,9 @@ struct TsDictLocalState final : public ScanLocalState {
   const irs::SubReader* _seg = nullptr;
   const irs::TermReader* _reader = nullptr;
   ColFilterVerify _col_verify;
-  std::unique_ptr<irs::detail::LazyBitset> _live;
+  irs::QueryMemory _query_memory;
+  irs::PlanMemory _term_memory;
+  std::optional<irs::detail::LazyBitset> _live;
   irs::count::TermCounts* _term_counts = nullptr;
   std::vector<irs::count::TermCounts::ptr> _term_counts_cache;
   irs::QueryBuilder::ptr _all_query;
@@ -224,6 +234,8 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
   _seg = &seg;
   ReleasePlans();
   _all_query = {};
+  plan_memory.Rewind();
+  _query_memory.Rewind();
   _segment_live = false;
   Classify(g, seg_idx);
   if (seg_cls.segment_dead) {
@@ -248,7 +260,8 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
     count_mode = CountMode::Masked;
   }
   if (count_mode != CountMode::Meta && !where_query) {
-    _all_query = MatchAllFilter().PrepareSegment(seg, {});
+    _all_query =
+      MatchAllFilter().PrepareSegment(seg, {.memory = _query_memory});
   }
 }
 
@@ -266,7 +279,8 @@ void TsDictLocalState::BindTermCounts(const irs::TermReader& reader) {
   }
   auto& slot = _term_counts_cache[field];
   if (!slot) {
-    slot = irs::count::MakeTermCounts(Live(), reader, reader.size());
+    slot =
+      irs::count::MakeTermCounts(plan_memory, Live(), reader, reader.size());
   }
   _term_counts = slot.get();
 }
@@ -275,15 +289,13 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
-    auto node = irs::fill::MakeRoot(query);
+    auto node = irs::fill::MakeRoot(plan_memory, query);
     EnsurePlanned(node != nullptr);
     if (auto* folded = node->Folded()) {
-      _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(*folded), irs::MakeGenericDocsMask(*_seg));
+      _live.emplace(std::move(*folded), irs::MakeGenericDocsMask(*_seg));
     } else {
-      _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(node), _seg->Meta().docs_count,
-        irs::MakeGenericDocsMask(*_seg));
+      _live.emplace(plan_memory, std::move(node), _seg->Meta().docs_count,
+                    irs::MakeGenericDocsMask(*_seg));
     }
   }
   return *_live;
@@ -291,9 +303,10 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
 
 uint32_t TsDictLocalState::WalkLive(const irs::TermReader& reader,
                                     irs::TermIterator& it, bool count_all) {
+  _term_memory.Rewind();
   auto postings = irs::docs::Family::MakePosting(
-    irs::detail::PostingClause{irs::TermState{&reader, it.cookie()}}, *_seg, {},
-    irs::ScoreMergeType::Noop);
+    irs::detail::PostingClause{irs::TermState{&reader, it.cookie()}}, *_seg,
+    {.memory = _term_memory}, irs::ScoreMergeType::Noop);
   SDB_ASSERT(postings);
   _col_verify.Rewind();
   auto& live = Live();
@@ -333,8 +346,9 @@ uint32_t TsDictLocalState::NullDocs(const irs::TermReader& reader,
     return 0;
   }
   if (_col_verify.Empty() && irs::detail::DocOf(reader)) {
-    if (auto counts =
-          irs::count::MakeTermCounts(Live(), reader, reader.size())) {
+    _term_memory.Rewind();
+    if (auto counts = irs::count::MakeTermCounts(_term_memory, Live(), reader,
+                                                 reader.size())) {
       const auto& term = it->cookie();
       if (count_all) {
         return static_cast<uint32_t>(
@@ -432,6 +446,7 @@ void TsDictLocalState::BeginEmit(ScanGlobalState& g) {
   counting = false;
   _range = {};
   ReleasePlans();
+  plan_memory.Rewind();
   _cursor.reset();
   _field = nullptr;
   _next_field = _emit_fields;
@@ -696,12 +711,13 @@ void BuildTsDictCounts(ScanGlobalState& g) {
       continue;
     }
     auto& per_field = g.ts_dict_counts[seg];
-    per_field.resize(reqs.size());
+    per_field.reserve(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {
       const auto* terms = reader[seg].field(
         reqs[i].field_id,
         {.layout = reqs[i].layout, .member = irs::DictMember::Strings});
-      per_field[i].Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
+      per_field.emplace_back(irs::TrackedAllocator<>{g.shared_budget})
+        .Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
     }
   }
 }

@@ -32,6 +32,7 @@
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -103,9 +104,9 @@ class PrefixTrie {
     uint32_t _node = kNoNode;
   };
 
-  PrefixTrie() = default;
-  explicit PrefixTrie(const TrieShape& shape);
-  explicit PrefixTrie(duckdb::ReadStream& in);
+  explicit PrefixTrie(TrackedAllocator<> alloc);
+  explicit PrefixTrie(const TrieShape& shape, TrackedAllocator<> alloc);
+  PrefixTrie(duckdb::ReadStream& in, TrackedAllocator<> alloc);
 
   void Write(duckdb::WriteStream& out) const;
 
@@ -188,7 +189,7 @@ class PrefixTrie {
   }
 
  private:
-  static bool Bit(const std::vector<uint64_t>& bits, uint32_t at) noexcept {
+  static bool Bit(std::span<const uint64_t> bits, uint32_t at) noexcept {
     return (bits[at / 64] >> (at % 64) & 1) != 0;
   }
   const uint64_t* DenseWords(uint32_t node) const noexcept {
@@ -210,21 +211,28 @@ class PrefixTrie {
            static_cast<uint32_t>(std::popcount(_inner[sparse / 64] & mask));
   }
 
-  std::vector<uint64_t> _dense_words;
-  std::vector<uint32_t> _dense_first;
-  bstring _chain;
-  bstring _labels;
-  std::vector<uint64_t> _inner;
-  std::vector<uint32_t> _inner_rank;
-  std::vector<uint32_t> _first;
-  std::vector<uint64_t> _terminal;
-  std::vector<uint64_t> _open;
+  TrackedVector<uint64_t> _dense_words;
+  TrackedVector<uint32_t> _dense_first;
+  TrackedBstring _chain;
+  TrackedBstring _labels;
+  TrackedVector<uint64_t> _inner;
+  TrackedVector<uint32_t> _inner_rank;
+  TrackedVector<uint32_t> _first;
+  TrackedVector<uint64_t> _terminal;
+  TrackedVector<uint64_t> _open;
   uint32_t _nodes = 0;
   uint32_t _dense = 0;
 };
 
 class PrefixTrieBuilder {
  public:
+  explicit PrefixTrieBuilder(TrackedAllocator<> alloc)
+    : _nodes{alloc},
+      _open{alloc},
+      _window{alloc},
+      _window_bytes{alloc},
+      _first{alloc} {}
+
   void Add(bytes_view term);
   void SetSpan(uint32_t span) noexcept { _span = span; }
   PrefixTrie Finish();
@@ -242,17 +250,27 @@ class PrefixTrieBuilder {
     bool expanded = false;
   };
 
+  struct Recent {
+    size_t origin = 0;
+    size_t size = 0;
+  };
+
   uint32_t AppendChild(uint32_t parent, byte_type label);
   void Expand(uint32_t node, size_t from, size_t to);
   void Descend(bytes_view term);
   bool Expands(const Node& node) const noexcept {
     return node.expanded || node.depth < _origin + kTrieFull;
   }
+  bytes_view Stored(size_t slot) const noexcept;
+  byte_type LabelAt(size_t slot, size_t depth) const noexcept;
+  size_t SharedWithLast(bytes_view term, size_t shared) const noexcept;
+  void Remember(bytes_view term);
 
-  std::vector<Node> _nodes;
-  std::vector<uint32_t> _open;
-  std::vector<bstring> _window;
-  bstring _first;
+  TrackedVector<Node> _nodes;
+  TrackedVector<uint32_t> _open;
+  TrackedVector<Recent> _window;
+  TrackedVector<byte_type> _window_bytes;
+  TrackedBstring _first;
   size_t _origin = 0;
   size_t _added = 0;
   uint32_t _span = kTrieSpan;

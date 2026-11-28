@@ -33,6 +33,7 @@
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -105,8 +106,10 @@ class ConjunctionLeaves {
 
  public:
   template<typename Estimate, typename Make, typename Emit>
-  ConjunctionLeaves(size_t size, Estimate&& estimate, Make&& make, Emit&& emit)
-    : ConjunctionLeaves{SortBy(Order{size,
+  ConjunctionLeaves(PlanMemory& memory, size_t size, Estimate&& estimate,
+                    Make&& make, Emit&& emit)
+    : ConjunctionLeaves{memory,
+                        SortBy(Order{memory.Scratch(), size,
                                      [](uint32_t& j, size_t i) noexcept {
                                        j = static_cast<uint32_t>(i);
                                      }},
@@ -114,10 +117,11 @@ class ConjunctionLeaves {
                         make, emit} {}
 
   template<typename Estimate, typename Make, typename Emit>
-  ConjunctionLeaves(std::span<const uint32_t> indices, Estimate&& estimate,
-                    Make&& make, Emit&& emit)
+  ConjunctionLeaves(PlanMemory& memory, std::span<const uint32_t> indices,
+                    Estimate&& estimate, Make&& make, Emit&& emit)
     : ConjunctionLeaves{
-        SortBy(Order{indices.size(),
+        memory,
+        SortBy(Order{memory.Scratch(), indices.size(),
                      [&](uint32_t& j, size_t i) noexcept { j = indices[i]; }},
                estimate),
         make, emit} {}
@@ -171,8 +175,9 @@ class ConjunctionLeaves {
   }
 
   template<typename Make, typename Emit>
-  ConjunctionLeaves(const Order& order, Make& make, Emit& emit)
-    : _leaves{order.size(), std::piecewise_construct,
+  ConjunctionLeaves(PlanMemory& memory, const Order& order, Make& make,
+                    Emit& emit)
+    : _leaves{memory.Arena(), order.size(), std::piecewise_construct,
               [&](size_t i) { return make(order[i]); }} {
     SDB_ASSERT(!_leaves.empty());
     for (size_t i = 0; i != _leaves.size(); ++i) {

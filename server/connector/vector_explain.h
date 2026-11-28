@@ -25,6 +25,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/explain/explanation.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -50,7 +51,7 @@ irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
 
 class DistanceExplainer final : public irs::explain::Explainer {
  public:
-  DistanceExplainer(const irs::SubReader& segment,
+  DistanceExplainer(irs::MemoryBudget& parent, const irs::SubReader& segment,
                     const VectorScorerOptions& vs, std::string_view column);
 
   irs::explain::Node Explain(irs::doc_id_t doc,
@@ -59,6 +60,7 @@ class DistanceExplainer final : public irs::explain::Explainer {
  private:
   std::optional<irs::score_t> Stored(irs::doc_id_t doc);
 
+  irs::LocalBudget _budget;
   const VectorScorerOptions& _vs;
   DistanceText _text;
   irs::detail::RawVectorReader _reader;

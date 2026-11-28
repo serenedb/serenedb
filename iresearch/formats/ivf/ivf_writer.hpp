@@ -39,6 +39,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace duckdb {
 
@@ -54,9 +55,12 @@ class IdxWriter;
 class IvfTermIterator;
 
 struct BuiltIvf {
+  explicit BuiltIvf(TrackedAllocator<> alloc)
+    : cluster_docs{alloc}, centroids{alloc} {}
+
   bool empty = true;
   uint32_t d = 0;
-  std::vector<doc_id_t> cluster_docs;
+  TrackedVector<doc_id_t> cluster_docs;
   std::vector<uint64_t> cluster_offsets;
   irs::containers::FlatHashMap<uint32_t, std::span<const float>>
     cluster_centroids;
@@ -67,13 +71,17 @@ class QuantizerWriter;
 
 class IvfBuilder {
  public:
-  explicit IvfBuilder(AnnInfo info) : _info{std::move(info)} {}
+  IvfBuilder(AnnInfo info, TrackedAllocator<> alloc)
+    : _info{std::move(info)}, _alloc{alloc} {}
+
+  static AnnFlushBound Bound(const AnnInfo& info, uint64_t rows);
 
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
                    QuantizerWriter* qw) const;
 
  private:
   AnnInfo _info;
+  TrackedAllocator<> _alloc;
 };
 
 class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
@@ -128,7 +136,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
 
 class IvfWriter final : public AnnWriter {
  public:
-  explicit IvfWriter(AnnInfo info);
+  IvfWriter(AnnInfo info, TrackedAllocator<> alloc);
 
   ~IvfWriter() final;
 

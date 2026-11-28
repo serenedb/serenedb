@@ -128,7 +128,7 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
       return ScoreFunction::Default();
     }
 
-    return ScoreFunction::Constant(ctx.boost);
+    return ScoreFunction::Constant(ctx.memory, ctx.boost);
   }
 
   const auto* scale = ScaleOf(ctx);
@@ -139,7 +139,7 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
     return Resolve(scale, [&]<bool HasScale>() {
       const auto* stats = stats_cast(ctx.stats);
       return ScoreFunction::Make<TfIdfScore<HasNorms, HasScale>>(
-        norm, ctx.boost, *stats, freq, scale);
+        ctx.memory, norm, ctx.boost, *stats, freq, scale);
     });
   });
 }
@@ -153,14 +153,13 @@ ScoreBoundWriter::ptr TFIDF::PrepareScoreBoundWriter() const {
   return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>();
 }
 
-ScoreBoundSource::ptr TFIDF::PrepareScoreBoundSource() const {
+ScoreBoundSource::ptr TFIDF::PrepareScoreBoundSource(PlanMemory& memory) const {
   if (_normalize) {
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
-    return std::make_unique<
-      FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+    return memory.Make<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
   }
   SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
-  return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
+  return memory.Make<FreqNormSource<kScoreBoundFreq>>();
 }
 
 bool TFIDF::Compatible(const ScorerOptions& persisted) const noexcept {

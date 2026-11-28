@@ -109,6 +109,8 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     void Set(uint32_t, uint32_t) noexcept final {}
   };
 
+  inline static NoBoundSource gNoBoundSource;
+
  public:
   bool PrepareCommon(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                      IndexFeatures layout, const SubReader& segment,
@@ -120,15 +122,16 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     this->SetRecipe(segment, field, args);
     _cost = meta.docs_count;
 
-    auto source = args.scorer->PrepareScoreBoundSource();
-    if (source) {
+    SDB_ASSERT(args.memory != nullptr);
+    _own_bound_source = args.scorer->PrepareScoreBoundSource(*args.memory);
+    if (_own_bound_source) {
+      _bound_source = _own_bound_source.get();
       _bound_func =
-        irs::detail::PrepareScore(args, segment, field.meta(), *source);
-      _bound_source = std::move(source);
+        irs::detail::PrepareScore(args, segment, field.meta(), *_bound_source);
     } else {
-      _bound_func =
-        ScoreFunction::Constant(std::numeric_limits<score_t>::max());
-      _bound_source = std::make_unique<NoBoundSource>();
+      _bound_source = &gNoBoundSource;
+      _bound_func = ScoreFunction::Constant(
+        *args.memory, std::numeric_limits<score_t>::max());
     }
 
     this->MakeScore(segment, field, args);
@@ -430,7 +433,8 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   }
 
   ScoreFunction _bound_func;
-  ScoreBoundSource::ptr _bound_source;
+  ScoreBoundSource::ptr _own_bound_source;
+  ScoreBoundSource* _bound_source = nullptr;
   std::array<uint32_t, kCachedBlocks> _cached;
   std::array<score_t, kCachedBlocks> _cached_scores;
   std::array<uint32_t, kCachedRuns> _cached_runs;

@@ -35,20 +35,23 @@
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/query_memory.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
 class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  public:
-  HnswQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,
+  HnswQuery(QueryMemory& memory, const SubReader& segment,
+            std::shared_ptr<const HnswData> data,
             const VectorFilterOptions& opts, uint32_t record_size,
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
             QueryBuilder::ptr&& index_part, AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch(
-    detail::TableFilter* table = nullptr,
+  memory::ArenaVector<ScoreDoc> RunSearch(
+    PlanMemory& memory, detail::TableFilter* table = nullptr,
     detail::TableFilter* columns = nullptr,
-    std::vector<score_t>* spreads = nullptr) const;
+    memory::ArenaVector<score_t>* spreads = nullptr) const;
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
@@ -60,27 +63,27 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
  private:
   template<typename Dist>
-  void RunRadius(Dist& dist, detail::TableFilter* table,
+  void RunRadius(PlanMemory& memory, Dist& dist, detail::TableFilter* table,
                  HnswSearchScratch& scratch) const;
 
   template<typename Dist>
-  void RunFiltered(Dist& dist, detail::TableFilter* table,
+  void RunFiltered(PlanMemory& memory, Dist& dist, detail::TableFilter* table,
                    detail::TableFilter* columns,
                    HnswSearchScratch& scratch) const;
 
-  void PrepareDistance() const;
-
   bool ScansByColumn() const;
 
-  void ScanColumn(HnswSearchScratch& scratch) const;
+  void PrepareDistance() const;
+
+  void ScanColumn(PlanMemory& memory, HnswSearchScratch& scratch) const;
 
   void Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-             std::vector<score_t>& spreads) const;
+             memory::ArenaVector<score_t>& spreads) const;
 
   std::shared_ptr<const HnswData> _data;
+  mutable BlockingOnce _prepared;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;
   mutable std::shared_ptr<const PanoramaQuery> _panorama;
-  mutable BlockingOnce _distance_prepared;
   AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
   QueryBuilder::ptr _index_part;

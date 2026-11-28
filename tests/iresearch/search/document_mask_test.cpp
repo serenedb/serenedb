@@ -33,6 +33,7 @@
 #include <iresearch/search/detail/with_mask.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <iterator>
 #include <memory>
 #include <new>
@@ -864,6 +865,19 @@ TEST(document_mask_test, builder_counts_the_docs_ranges_add) {
       ASSERT_EQ(model[doc], mask.Contains(doc)) << doc;
     }
   }
+}
+
+TEST(document_mask_test, read_frozen_charges_its_copy) {
+  const auto blob = FrozenBlob(Build(Every(1, 1 << 20, 2)));
+  duckdb::MemoryStream in{
+    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(blob.data())),
+    blob.size()};
+  const auto base = TrackedMemory();
+  {
+    const auto mask = irs::DocumentMask::ReadFrozen(in, blob.size());
+    EXPECT_LE(base + static_cast<int64_t>(blob.size()), TrackedMemory());
+  }
+  EXPECT_EQ(base, TrackedMemory());
 }
 
 TEST(document_mask_test, read_frozen_rejects_corruption) {

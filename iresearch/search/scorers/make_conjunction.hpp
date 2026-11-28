@@ -20,15 +20,15 @@
 
 #pragma once
 
+#include <span>
 #include <utility>
-#include <vector>
 
 #include "iresearch/search/scorers/score_function.hpp"
 
 namespace irs::detail {
 
-ScoreFunction MakeConjunctionScore(ScoreMergeType inner,
-                                   std::vector<ScoreFunction>&& children,
+ScoreFunction MakeConjunctionScore(PlanMemory& memory, ScoreMergeType inner,
+                                   std::span<ScoreFunction> children,
                                    score_t constant = 0);
 
 }  // namespace irs::detail

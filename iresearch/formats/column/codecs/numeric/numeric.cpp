@@ -58,7 +58,7 @@
 #include "iresearch/formats/column/codecs/numeric/wide.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/enum_name.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -121,7 +121,8 @@ class Delta {
 
   Delta(ColumnDataCheckpointData& data, double)
     : _values{data.Get<Values<T>>()},
-      _steps{_values.Usable() ? &data.Get<Steps<T>>() : nullptr} {}
+      _steps{_values.Usable() ? &data.Get<Steps<T>>() : nullptr},
+      _deltas{data.Allocator()} {}
 
   Items GetItems() const noexcept {
     return {
@@ -131,7 +132,7 @@ class Delta {
   }
 
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
-                                 ScratchVector<uint8_t>&) {
+                                 TrackedScratchVector<uint8_t>&) {
     const auto stored = _steps->stored;
     if (_deltas.empty()) {
       const auto rows = _values.Get();
@@ -158,7 +159,7 @@ class Delta {
  private:
   Values<T>& _values;
   const Steps<T>* _steps;
-  ScratchVector<uint8_t> _deltas;
+  TrackedScratchVector<uint8_t> _deltas;
 };
 
 template<typename T>
@@ -171,7 +172,7 @@ class DeltaBitpacking {
   using U = Bits<sizeof(T)>;
 
   DeltaBitpacking(ColumnDataCheckpointData& data, double bound)
-    : _values{data.Get<Values<T>>()} {
+    : _values{data.Get<Values<T>>()}, _blocks{data.alloc} {
     if (!_values.Usable()) {
       return;
     }
@@ -198,7 +199,7 @@ class DeltaBitpacking {
   uint64_t Bytes() { return SteppedBytes<T>(_blocks, _values); }
 
   void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
-              std::string& out) {
+              TrackedString& out) {
     AppendStepped<T>(_blocks, _values, m, begin, count, out);
   }
 
@@ -227,8 +228,9 @@ class DeltaReader final : public FrameReader<T> {
   static constexpr bool kPacks = !std::is_floating_point_v<T>;
 
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-              CodecType codec, const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, codec, slot},
+              CodecType codec, TrackedAllocator<> alloc,
+              const ReadContext::CacheSlot& slot = {})
+    : Base{base, frames, codec, alloc, slot},
       _own{duckdb::Load<DeltaHeader>(base + OwnHeaderOffset(frames.flags))} {
     if constexpr (!kPacks) {
       if (this->Packed()) [[unlikely]] {
@@ -406,7 +408,7 @@ bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
     return true;
   }
   absl::c_sort(keys);
-  ScratchVector<uint32_t> ranks(values.size());
+  TrackedScratchVector<uint32_t> ranks(values.size(), codes.get_allocator());
   for (uint32_t k = 0; k < values.size(); ++k) {
     ranks[entries.index.find(values[k])->second] = k;
   }
@@ -421,7 +423,8 @@ struct Entries final : State {
   static_assert(sizeof(T) > 1);
   static constexpr StateId kId = StateId::Entries;
 
-  Entries(ColumnDataCheckpointData& data, double bound) {
+  Entries(ColumnDataCheckpointData& data, double bound)
+    : values{data.alloc}, index{data.alloc}, codes{data.alloc} {
     auto& input = data.Get<Values<T>>();
     if (!input.Usable()) {
       return;
@@ -448,9 +451,9 @@ struct Entries final : State {
     }
   }
 
-  std::vector<Bits<sizeof(T)>> values;
-  containers::FlatHashMap<Bits<sizeof(T)>, uint32_t> index;
-  ScratchVector<uint32_t> codes;
+  TrackedVector<Bits<sizeof(T)>> values;
+  containers::TrackedFlatHashMap<Bits<sizeof(T)>, uint32_t> index;
+  TrackedScratchVector<uint32_t> codes;
   bool fits = false;
 };
 
@@ -478,7 +481,7 @@ class Dict {
   using Value = T;
 
   Dict(ColumnDataCheckpointData& data, double bound)
-    : _entries{data.Get<Entries<T>>(bound)} {
+    : _entries{data.Get<Entries<T>>(bound)}, _codes{data.Allocator()} {
     if (_entries.fits) {
       const auto width = BytesFor(_entries.values.size() - 1);
       _stored = width <= kDictionaryCodeBytes<T> ? width : uint8_t{0};
@@ -497,7 +500,7 @@ class Dict {
   }
 
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
-                                 ScratchVector<uint8_t>&) {
+                                 TrackedScratchVector<uint8_t>&) {
     if (_codes.empty()) {
       const auto& wide = _entries.codes;
       _codes.resize(wide.size() * _stored);
@@ -516,7 +519,7 @@ class Dict {
 
  private:
   const Entries<T>& _entries;
-  ScratchVector<uint8_t> _codes;
+  TrackedScratchVector<uint8_t> _codes;
   uint8_t _stored = 0;
 };
 
@@ -530,7 +533,9 @@ class DictBitpacking {
   using U = Bits<sizeof(T)>;
 
   DictBitpacking(ColumnDataCheckpointData& data, double bound)
-    : _values{data.Get<Values<T>>()}, _entries{data.Get<Entries<T>>(bound)} {
+    : _values{data.Get<Values<T>>()},
+      _entries{data.Get<Entries<T>>(bound)},
+      _blocks{data.alloc} {
     if (_entries.fits) {
       _blocks.template Plan<false>(Codes());
     }
@@ -552,7 +557,7 @@ class DictBitpacking {
   }
 
   void Append(NumericFrameMeta&, uint32_t begin, uint32_t count,
-              std::string& out) {
+              TrackedString& out) {
     _blocks.Append(Codes(), begin / kBlockValues,
                    (size_t{count} + kBlockValues - 1) / kBlockValues, Stored(),
                    out);
@@ -589,10 +594,12 @@ class DictionaryReader final : public FrameReader<T> {
 
  public:
   DictionaryReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-                   CodecType codec, const ReadContext::CacheSlot& slot = {})
-    : Base{base, frames, codec, slot},
+                   CodecType codec, TrackedAllocator<> alloc,
+                   const ReadContext::CacheSlot& slot = {})
+    : Base{base, frames, codec, alloc, slot},
       _own{
-        duckdb::Load<DictionaryHeader>(base + OwnHeaderOffset(frames.flags))} {
+        duckdb::Load<DictionaryHeader>(base + OwnHeaderOffset(frames.flags))},
+      _codes{alloc} {
     if (!(_own.count != 0 && _own.count <= kNumericDictMax &&
           (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
           uint64_t{frames.off_frames} +
@@ -762,7 +769,7 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   DictionaryHeader _own;
-  ScratchVector<uint32_t> _codes;
+  TrackedScratchVector<uint32_t> _codes;
 };
 
 using duckdb::const_data_ptr_t;
@@ -796,7 +803,7 @@ R OpenReader(const_data_ptr_t base, const ColumnSegment& segment) {
     return R{base, segment};
   } else {
     return R{base, SegmentFrames(base, segment), segment.codec,
-             segment.cache_slot};
+             segment.ctx.Allocator(), segment.cache_slot};
   }
 }
 
@@ -812,28 +819,32 @@ struct RangeVerdict {
 template<typename R>
 struct ScanState final : SegmentScanState {
   ScanState(const ColumnSegment& segment, duckdb::BufferHandle handle_p)
-    : handle{std::move(handle_p)},
+    : alloc{segment.ctx.Allocator()},
+      handle{std::move(handle_p)},
       frames{OpenReader<R>(handle.Ptr(), segment)} {}
 
   EntryBatch<typename R::Value>& Batch(const duckdb::LogicalType& type) {
     if (!batch) [[unlikely]] {
-      batch = std::make_unique<EntryBatch<typename R::Value>>(type);
+      batch = MakeTrackedUnique<EntryBatch<typename R::Value>>(alloc, type);
     }
     return *batch;
   }
+
+  TrackedAllocator<> alloc;
 
   duckdb::BufferHandle handle;
   R frames;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_stats;
   RangeVerdict<typename R::Value> frame_verdict;
   RangeVerdict<typename R::Value> value_verdict;
-  std::unique_ptr<EntryBatch<typename R::Value>> batch;
+  TrackedUniquePtr<EntryBatch<typename R::Value>> batch;
   [[no_unique_address]] typename R::Matches matches;
 };
 
 template<typename R>
-std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
-  return std::make_unique<ScanState<R>>(segment, segment.Pin());
+SegmentScanStatePtr InitScan(const ColumnSegment& segment) {
+  return MakeScanState<ScanState<R>>(segment.ctx.Allocator(), segment,
+                                     segment.Pin());
 }
 
 template<typename R>
@@ -1150,7 +1161,8 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
   auto& frames = state
                    .GetOrCreateSegmentState<FetchCache<R>>([&] {
-                     return std::make_unique<FetchCache<R>>(
+                     return MakeScanState<FetchCache<R>>(
+                       segment.ctx.Allocator(),
                        state.GetOrInsertHandle(segment).Ptr(), segment);
                    })
                    .frames;
@@ -1308,7 +1320,9 @@ class WideReader {
                            : segment.size - sizeof(WideHeader),
                          segment.count, segment.codec)},
       _low{base + sizeof(WideHeader), _low_frames, segment.codec,
-           segment.cache_slot} {
+           segment.ctx.Allocator(), segment.cache_slot},
+      _lows{segment.ctx.Allocator()},
+      _highs{segment.ctx.Allocator()} {
     if (_header.form == WideForm::Halves) {
       const auto at = HighOffset(_header);
       auto high_slot = segment.cache_slot;
@@ -1316,7 +1330,7 @@ class WideReader {
       _high.emplace(
         base + at,
         Frames(base + at, segment.size - at, segment.count, segment.codec),
-        segment.codec, high_slot);
+        segment.codec, segment.ctx.Allocator(), high_slot);
     }
   }
 
@@ -1495,8 +1509,8 @@ class WideReader {
   FrameHeader _low_frames;
   R _low;
   std::optional<R> _high;
-  ScratchVector<uint64_t> _lows;
-  ScratchVector<uint64_t> _highs;
+  TrackedScratchVector<uint64_t> _lows;
+  TrackedScratchVector<uint64_t> _highs;
 };
 
 template<typename R>

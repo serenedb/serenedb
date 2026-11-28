@@ -36,10 +36,10 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  const auto args = posting.Args(&ctx.fetcher);
+  const auto args = posting.Args(ctx.memory, &ctx.fetcher);
   if (meta.docs_count == 1) {
     return irs::detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
-      auto root = memory::make_managed<SinglePosting<decltype(table)>>(table);
+      auto root = ctx.memory.Make<SinglePosting<decltype(table)>>(table);
       root->Prepare(meta, segment, own, args);
       return root;
     });
@@ -55,7 +55,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
   return Resolve(*doc, [&]<typename Input> -> Root::ptr {
     return irs::detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
       auto root =
-        memory::make_managed<Posting<Input, utils::Empty, decltype(table)>>(
+        ctx.memory.Make<Posting<Input, utils::Empty, decltype(table)>>(
           table, std::piecewise_construct, std::forward_as_tuple());
       root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
                     irs::detail::BoundsOf(own));

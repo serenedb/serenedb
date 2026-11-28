@@ -38,19 +38,21 @@
 #include "iresearch/search/detail/token_phrase.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
-class AnchorFreqs {
+class AnchorFreqs : public memory::Managed, public memory::ArenaOnly {
  public:
-  virtual ~AnchorFreqs() = default;
+  using ptr = memory::managed_ptr<AnchorFreqs>;
 
   virtual uint32_t At(doc_id_t doc) = 0;
 };
 
 template<typename Input>
-class AnchorFreqsOf final : public AnchorFreqs {
+class AnchorFreqsOf : public AnchorFreqs {
  public:
   AnchorFreqsOf(const PostingMeta& meta, const SubReader& segment,
                 const TermReader& field)
@@ -64,28 +66,28 @@ class AnchorFreqsOf final : public AnchorFreqs {
   PostingProbeScored<Input> _posting;
 };
 
-inline std::unique_ptr<AnchorFreqs> MakeAnchorFreqs(
-  const TokenPhraseQuery& query) {
+inline AnchorFreqs::ptr MakeAnchorFreqs(PlanMemory& memory,
+                                        const TokenPhraseQuery& query) {
   const auto* meta = query.Anchor();
   if (!meta) {
     return nullptr;
   }
   const auto& field = query.Reader();
-  return Resolve(*DocOf(field),
-                 [&]<typename Input> -> std::unique_ptr<AnchorFreqs> {
-                   return std::make_unique<AnchorFreqsOf<Input>>(
-                     *meta, query.Segment(), field);
-                 });
+  return Resolve(*DocOf(field), [&]<typename Input> -> AnchorFreqs::ptr {
+    return memory.Make<AnchorFreqs, AnchorFreqsOf<Input>>(
+      *meta, query.Segment(), field);
+  });
 }
 
 class PhraseRows {
  public:
-  PhraseRows(const TokenPhraseQuery& query, bool count)
+  PhraseRows(const TokenPhraseQuery& query, bool count,
+             TrackedAllocator<> alloc)
     : _col_reader{query.Segment().GetColReader()},
-      _ctx{*_col_reader},
+      _ctx{*_col_reader, alloc},
       _column{&query.Column()},
       _state{_column->InitScan(_ctx)},
-      _out{_column->Type()},
+      _out{_column->Type(), alloc},
       _check{query.Compiled(), query.Tokenizer(), count} {}
 
   PhraseRows(PhraseRows&&) = delete;
@@ -102,7 +104,8 @@ class PhraseRows {
     auto& out = _out.Reset();
     const auto span = hits[n - 1] - hits[0] + 1;
     if (!column_internal::FetchSparse(_point, *_col_reader, *_column,
-                                      hits.first(n), span, out, 0)) {
+                                      _ctx.Allocator(), hits.first(n), span,
+                                      out, 0)) {
       column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
                                   0);
     }
@@ -131,10 +134,14 @@ class TokenPhraseSlots {
 
   template<typename ApproxArgs>
   TokenPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
-                   const TokenPhraseQuery& query, bool count)
+                   PlanMemory& memory, const TokenPhraseQuery& query,
+                   bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _rows{query, count},
-      _anchors{MakeAnchorFreqs(query)} {}
+      _rows{query, count, memory.Allocator()},
+      _anchors{MakeAnchorFreqs(memory, query)},
+      _hits{memory.Scratch()} {
+    _hits.reserve(kMaxBatch);
+  }
 
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;
   TokenPhraseSlots& operator=(TokenPhraseSlots&&) = delete;
@@ -206,9 +213,9 @@ class TokenPhraseSlots {
 
   Approx _approx;
   PhraseRows _rows;
-  std::unique_ptr<AnchorFreqs> _anchors;
+  AnchorFreqs::ptr _anchors;
   PhraseVerdict _verdict;
-  std::vector<doc_id_t> _hits;
+  memory::ArenaVector<doc_id_t> _hits;
   size_t _pos = 0;
   size_t _gathered = 0;
   size_t _batch = 1;

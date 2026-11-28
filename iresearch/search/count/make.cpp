@@ -55,7 +55,7 @@ Root::ptr PlanTerms(const MultiTermQuery& query, const Context& ctx) {
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
-    return MakeConstant(0);
+    return MakeConstant(ctx.memory, 0);
   }
   const detail::FoldReachScope reach{ctx.span};
   return ProfileRoot(query, ctx, [&](const Context& profiled) {

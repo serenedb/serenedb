@@ -40,6 +40,7 @@
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -112,6 +113,8 @@ struct PayBuffer {
 
 class BlockGroup {
  public:
+  explicit BlockGroup(TrackedAllocator<> alloc) : _data{alloc} {}
+
   bool Empty() const noexcept { return _blocks == 0; }
 
   uint32_t Blocks() const noexcept { return _blocks; }
@@ -151,7 +154,7 @@ class BlockGroup {
   }
 
  private:
-  std::vector<byte_type> _data;
+  TrackedVector<byte_type> _data;
   uint16_t _ends[PosGroup::kBlocks]{};
   uint32_t _blocks = 0;
 };
@@ -165,7 +168,7 @@ inline ScoreBoundWriter::ptr PrepareScoreBoundWriter(ScorerPtr scorer) {
 }
 
 struct DocTee {
-  std::vector<doc_id_t>* docs = nullptr;
+  TrackedVector<doc_id_t>* docs = nullptr;
   size_t limit = 0;
 };
 
@@ -179,6 +182,13 @@ class PostingsWriter final {
     bool has_score_bounds;
     doc_id_t docs_count;
   };
+
+  explicit PostingsWriter(TrackedAllocator<> alloc)
+    : _index{alloc},
+      _docs_charge{alloc},
+      _pos_group{alloc},
+      _pay_group{alloc},
+      _term_docs{alloc} {}
 
   void Prepare(const FlushState& state);
   void BeginField(const FieldProperties& meta);
@@ -274,7 +284,9 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   PostingMeta _last_state;  // Last final term state
-  bitset _docs;             // Set of all processed documents
+  // Set of all processed documents
+  bitset _docs;
+  MemoryCharge _docs_charge;
   size_t _docs_first_word = std::numeric_limits<size_t>::max();
   size_t _docs_end_word = 0;
   FileTracker* _tracker = nullptr;
@@ -295,7 +307,7 @@ class PostingsWriter final {
   TermPayloadWriter* _term_pay{};
   // Scratch list of the current term's document ids (collected when
   // HasVector).
-  std::vector<doc_id_t> _term_docs;
+  TrackedVector<doc_id_t> _term_docs;
 };
 
 inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
@@ -371,6 +383,7 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
 
   // Prepare documents bitset
   _docs.reset(doc_limits::min() + state.doc_count);
+  _docs_charge.Resize(_docs.capacity() / BitsRequired<byte_type>());
   ForgetDocs();
 }
 

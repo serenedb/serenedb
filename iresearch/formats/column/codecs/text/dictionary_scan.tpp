@@ -65,16 +65,16 @@ namespace irs::codecs::text {
 
 class RowCodes {
  public:
-  RowCodes(const_data_ptr_t base, const Header& h) {
+  RowCodes(const_data_ptr_t base, const Header& h, TrackedAllocator<> alloc) {
     const auto* codes = base + h.off_codes;
     const auto frames =
       ParseFrames(codes, h.off_symtab - h.off_codes, h.row_count, h.codes);
     _shape = ShapeOf(h.codes);
     Resolve<CodesAxis>(_shape, [&]<Shape S>() {
       if constexpr (S == Shape::Plain) {
-        _plain.emplace(codes, frames, h.codes);
+        _plain.emplace(codes, frames, h.codes, alloc);
       } else {
-        _runs.emplace(codes, frames, h.codes);
+        _runs.emplace(codes, frames, h.codes, alloc);
       }
     });
   }
@@ -103,6 +103,8 @@ class RowCodes {
 
 template<typename Leaf>
 struct DictionaryFetch final : SegmentScanState {
+  explicit DictionaryFetch(TrackedAllocator<> alloc) : frames{alloc} {}
+
   void Reset(const ColumnSegment& segment) {
     code_frames.reset();
     frames.decoded = CachedDictionary(segment.cache_slot);
@@ -152,7 +154,8 @@ struct DictionaryFetch final : SegmentScanState {
 
   RowCodes& Numeric(data_ptr_t base) {
     if (!code_frames) {
-      code_frames.emplace(base, frames.header);
+      code_frames.emplace(base, frames.header,
+                          TrackedAllocator<>{frames.order.get_allocator()});
     }
     return *code_frames;
   }
@@ -197,6 +200,9 @@ struct DictionaryFetch final : SegmentScanState {
 
 class FilterVerdicts {
  public:
+  explicit FilterVerdicts(TrackedAllocator<> alloc)
+    : _verdicts{alloc}, _pending{alloc} {}
+
   bool Empty() const noexcept { return _verdicts.empty(); }
   bool Lazy() const noexcept { return _lazy; }
   idx_t Matches() const noexcept { return _matches; }
@@ -277,8 +283,8 @@ class FilterVerdicts {
   static constexpr uint8_t kAccepted = 2;
   static constexpr uint8_t kPending = 3;
 
-  std::vector<uint8_t> _verdicts;
-  std::vector<uint32_t> _pending;
+  TrackedVector<uint8_t> _verdicts;
+  TrackedVector<uint32_t> _pending;
   idx_t _matches = 0;
   uint64_t _filtered = 0;
   bool _lazy = false;
@@ -305,7 +311,8 @@ struct DictionaryScan final : SegmentScanState {
       nullable{segment.stats.CanHaveNull()},
       cache_slot{segment.cache_slot},
       room{HasRoom(segment.cache_slot, DictionaryBytes(entries.header))},
-      code_frames{entries.base, entries.header} {
+      code_frames{entries.base, entries.header, segment.ctx.Allocator()},
+      verdicts{segment.ctx.Allocator()} {
     if (cached) {
       AdoptDictionary(*cached);
       return;

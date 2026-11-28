@@ -30,14 +30,14 @@
 
 namespace irs::fill {
 
-Node::ptr MakeAllDocs(const SubReader& segment) {
-  return memory::make_managed<Impl<AllDocs>>(segment);
+Node::ptr MakeAllDocs(PlanMemory& memory, const SubReader& segment) {
+  return memory.Make<Impl<AllDocs>>(segment);
 }
 
-Node::ptr Family::MakeLiveDocs(const SubReader& segment) {
+Node::ptr Family::MakeLiveDocs(PlanMemory& memory, const SubReader& segment) {
   return ResolveDocsMask(segment,
                          [&]<DocsMaskType Mask>(Mask docs_mask) -> Node::ptr {
-                           return memory::make_managed<Impl<LiveDocs<Mask>>>(
+                           return memory.Make<Impl<LiveDocs<Mask>>>(
                              std::move(docs_mask), LiveEnd(segment));
                          });
 }

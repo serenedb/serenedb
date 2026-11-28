@@ -33,6 +33,8 @@
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -116,7 +118,7 @@ void WriteVectorColumn(const ::tests::IndexDir& dir,
                        std::span<const float> data) {
   const uint64_t n = data.size() / d;
   const auto atype = duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, d);
-  ColWriter w{db, dir.Tracker("seg")};
+  ColWriter w{db, dir.Tracker("seg"), TestAlloc()};
   auto& cw = w.OpenColumn(id, atype, {.row_group_size = 4096});
   uint64_t pos = 0;
   while (pos < n) {
@@ -164,7 +166,7 @@ size_t BuiltRootSize(const CentroidsBuilder& builder) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  return CentroidsTree::Deserialize(in, byte_size).RootSize();
+  return CentroidsTree::Deserialize(in, byte_size, TestAlloc()).RootSize();
 }
 
 void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
@@ -193,7 +195,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
 
   for (size_t q = 0; q < n; ++q) {
     const std::span<const float> query{data.data() + q * d, d};
@@ -212,7 +214,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
       }
     }
 
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(query, in, /*nprobe=*/8, ids, nullptr);
     ASSERT_FALSE(ids.empty()) << "query " << q;
     const bool hit =
@@ -233,7 +235,8 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
   const size_t n = data.size() / d;
 
   auto builder = CentroidsBuilder::CreateFromSample(
-    data, d, VectorMetric::L2Sqr, DeepParams());
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, DeepParams());
   const size_t n_clusters = builder.NumClusters();
 
   // Build-side assignment (reorders a copy; perm maps back to original rows).
@@ -275,11 +278,11 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
 
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
@@ -294,7 +297,8 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
   const size_t n = data.size() / d;
 
   auto builder = CentroidsBuilder::CreateFromSample(
-    data, d, VectorMetric::L2Sqr, DeepParams());
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, DeepParams());
 
   auto reordered = data;
   std::vector<std::span<const float>> gathered(n);
@@ -313,13 +317,13 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
 
   for (size_t j = 0; j < n; ++j) {
     ASSERT_EQ(gathered[j].size(), d);
     const std::span<const float> q{data.data() + assigned.perm[j] * d, d};
-    std::vector<uint32_t> ids;
-    std::vector<float> cens;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
+    irs::TrackedVector<float> cens{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, &cens);
     ASSERT_EQ(ids.size(), 1u);
     ASSERT_EQ(cens.size(), d);
@@ -337,11 +341,11 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   constexpr uint32_t d = 1;
   // Root row 0 is a leaf (window [0,0)); row 1 has two children in the leaf
   // layer. Global ids: root layer base 0 (rows 0,1), leaf layer base 2.
-  CentroidsNode root{1, d};
+  CentroidsNode root{1, d, TestAlloc()};
   root.centroids = {0.f, 10.5f};
   root.child_offsets = {0, 0, 2};
   root.size = 2;
-  CentroidsNode leaf{0, d};
+  CentroidsNode leaf{0, d, TestAlloc()};
   leaf.centroids = {10.f, 11.f};
   leaf.size = 2;
 
@@ -360,12 +364,12 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
 
   // Query near the early leaf (root row 0) -> its global id 0.
   {
     const std::vector<float> q{0.2f};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u);
     EXPECT_EQ(ids[0], 0u);
@@ -373,14 +377,14 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   // Query near the leaf-layer cells -> ids 2 / 3, never the early leaf.
   {
     const std::vector<float> q{10.1f};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u);
     EXPECT_EQ(ids[0], 2u);
   }
   {
     const std::vector<float> q{11.1f};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u);
     EXPECT_EQ(ids[0], 3u);
@@ -388,7 +392,7 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   // Large nprobe surfaces every leaf (early leaf included).
   {
     const std::vector<float> q{5.f};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/100, ids, nullptr);
     EXPECT_EQ(ids.size(), 3u);
   }
@@ -420,7 +424,8 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
   }
 
   auto builder = CentroidsBuilder::CreateFromSample(
-    data, d, VectorMetric::L2Sqr, {.posting_size = 1024});
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, {.posting_size = 1024});
   EXPECT_EQ(builder.NumClusters(), 1u);
 
   auto reordered = data;
@@ -447,9 +452,9 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
   const std::span<const float> q{data.data(), d};
-  std::vector<uint32_t> ids;
+  irs::TrackedVector<uint32_t> ids{TestAlloc()};
   tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
   ASSERT_EQ(ids.size(), 1u);
   EXPECT_EQ(ids[0], 0u);
@@ -461,9 +466,9 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   constexpr field_id kVec = 1;
   const auto data = MakeRowMajor(d, n);
 
-  duckdb::DuckDB db;
-  ::tests::IndexDir dir{*db.instance, TestEnv::MemoryRoot()};
-  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+  auto& db = DuckDBEngine::Instance().instance();
+  ::tests::IndexDir dir{db, TestEnv::MemoryRoot()};
+  WriteVectorColumn(dir, db, kVec, d, data);
 
   ColReader r{dir.Db(), dir.Fs(), dir.Root(),
               "seg",    true,     duckdb::MappedFileAccess::SEQUENTIAL};
@@ -471,7 +476,8 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   ASSERT_NE(col, nullptr);
 
   auto builder = CentroidsBuilder::Create(*col, r.Ctx(), n, VectorMetric::L2Sqr,
-                                          d, {.posting_size = 1024});
+                                          d, {.posting_size = 1024},
+                                          TestAlloc());
   EXPECT_EQ(builder.NumClusters(), 1u);
   EXPECT_EQ(BuiltRootSize(builder), 0u);
   ExpectQueriesRouteToTrueNn(builder, data, d);
@@ -484,9 +490,9 @@ TEST(centroids_builder_test,
   constexpr field_id kVec = 1;
   const auto data = MakeRowMajor(d, n);
 
-  duckdb::DuckDB db;
-  ::tests::IndexDir dir{*db.instance, TestEnv::MemoryRoot()};
-  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+  auto& db = DuckDBEngine::Instance().instance();
+  ::tests::IndexDir dir{db, TestEnv::MemoryRoot()};
+  WriteVectorColumn(dir, db, kVec, d, data);
 
   ColReader r{dir.Db(), dir.Fs(), dir.Root(),
               "seg",    true,     duckdb::MappedFileAccess::SEQUENTIAL};
@@ -495,7 +501,8 @@ TEST(centroids_builder_test,
 
   auto builder =
     CentroidsBuilder::Create(*col, r.Ctx(), n, VectorMetric::L2Sqr, d,
-                             {.posting_size = 1024, .min_train_sample = 256});
+                             {.posting_size = 1024, .min_train_sample = 256},
+                             TestAlloc());
   EXPECT_EQ(builder.NumClusters(), 1u);
   EXPECT_GE(BuiltRootSize(builder), 1u);
   ExpectQueriesRouteToTrueNn(builder, data, d);
@@ -511,7 +518,8 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
   const size_t n = data.size() / d;
 
   auto builder = CentroidsBuilder::CreateFromSample(
-    data, d, VectorMetric::Cosine, DeepParams());
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::Cosine, DeepParams());
   const size_t n_clusters = builder.NumClusters();
 
   auto reordered = data;
@@ -536,11 +544,11 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
 
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
@@ -562,7 +570,7 @@ TEST(clustering_test, cosine_centroids_are_unit_norm) {
       x = g(rng);
     }
     NormalizeRows(data.data(), n, d);
-    auto centroids = TrainCentroids(VectorMetric::Cosine, data.data(), n, k, d,
+    auto centroids = TrainCentroids(TestAlloc(),VectorMetric::Cosine, data.data(), n, k, d,
                                     /*seed=*/1, /*niter=*/2);
     ASSERT_EQ(centroids.size(), static_cast<size_t>(k) * d);
     for (uint32_t c = 0; c < k; ++c) {
@@ -592,8 +600,9 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   const size_t n = data.size() / d;
 
   const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
-  auto builder =
-    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+  auto builder = CentroidsBuilder::CreateFromSample(
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, params);
   const size_t n_clusters = builder.NumClusters();
 
   auto reordered = data;
@@ -618,13 +627,13 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
   EXPECT_GE(tree.Levels(), 3u);
   EXPECT_LE(tree.RootSize(), 4u);
 
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
@@ -639,7 +648,8 @@ TEST(centroids_builder_test, open_reads_exactly_the_root_level) {
   const auto check = [&](const std::vector<float>& sample,
                          const CentroidsBuildParams& params) {
     const auto builder = CentroidsBuilder::CreateFromSample(
-      sample, d, VectorMetric::L2Sqr, params);
+      irs::TrackedVector<float>(sample.begin(), sample.end(), TestAlloc()), d,
+      VectorMetric::L2Sqr, params);
     duckdb::MemoryStream file;
     CentroidsSpan span;
     uint64_t tree_end = 0;
@@ -653,7 +663,7 @@ TEST(centroids_builder_test, open_reads_exactly_the_root_level) {
     const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
     duckdb::InputFileReader in{*input};
     in.Seek(span.offset);
-    const auto tree = CentroidsTree::Deserialize(in, span.root_byte_size);
+    const auto tree = CentroidsTree::Deserialize(in, span.root_byte_size, TestAlloc());
     levels = tree.Levels();
     root_size = tree.RootSize();
 
@@ -680,8 +690,9 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   const size_t n = data.size() / d;
 
   const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
-  auto builder =
-    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+  auto builder = CentroidsBuilder::CreateFromSample(
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, params);
 
   duckdb::MemoryStream file;
   uint64_t offset;
@@ -695,11 +706,11 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
 
   // Enumerate every leaf id + centroid via an all-covering probe.
-  std::vector<uint32_t> leaf_ids;
-  std::vector<float> leaf_cens;
+  irs::TrackedVector<uint32_t> leaf_ids{TestAlloc()};
+  irs::TrackedVector<float> leaf_cens{TestAlloc()};
   tree.Search(std::span<const float>{data.data(), d}, in,
               static_cast<uint32_t>(n), leaf_ids, &leaf_cens);
   const size_t n_leaves = leaf_ids.size();
@@ -729,7 +740,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
     }
     std::partial_sort(scored.begin(), scored.begin() + k, scored.end());
 
-    std::vector<uint32_t> got;
+    irs::TrackedVector<uint32_t> got{TestAlloc()};
     tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr);
     for (uint32_t t = 0; t < k; ++t) {
       if (std::find(got.begin(), got.end(), scored[t].second) != got.end()) {
@@ -863,15 +874,15 @@ namespace {
 // only the best child per node cannot reach it. Layers coarsest-first, global
 // ids: root 0-1, L1 2-5, leaves 6-13.
 std::vector<CentroidsNode> MakeGreedyTrapTree(uint32_t d) {
-  CentroidsNode root{2, d};
+  CentroidsNode root{2, d, TestAlloc()};
   root.centroids = {0.f, 10.f};
   root.child_offsets = {0, 2, 4};
   root.size = 2;
-  CentroidsNode mid{1, d};
+  CentroidsNode mid{1, d, TestAlloc()};
   mid.centroids = {0.f, 1.f, 10.f, 11.f};
   mid.child_offsets = {0, 2, 4, 6, 8};
   mid.size = 4;
-  CentroidsNode leaf{0, d};
+  CentroidsNode leaf{0, d, TestAlloc()};
   leaf.centroids = {0.f, 0.5f, 1.f, 1.5f, 5.f, 10.f, 11.f, 12.f};
   leaf.size = 8;
 
@@ -900,29 +911,29 @@ TEST(centroids_node_test, beam_escapes_greedy_trap) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
   ASSERT_EQ(tree.Levels(), 3u);
 
   const std::vector<float> q{4.9f};
   {
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, 1, ids, nullptr);
-    EXPECT_EQ(ids, (std::vector<uint32_t>{9}));
+    EXPECT_EQ(ids, (irs::TrackedVector<uint32_t>{{9}, TestAlloc()}));
   }
   {
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, 4, ids, nullptr);
-    EXPECT_EQ(ids, (std::vector<uint32_t>{10, 9, 8, 7}));
+    EXPECT_EQ(ids, (irs::TrackedVector<uint32_t>{{10, 9, 8, 7}, TestAlloc()}));
   }
   {
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, 1, ids, nullptr, 2);
-    EXPECT_EQ(ids, (std::vector<uint32_t>{9}));
+    EXPECT_EQ(ids, (irs::TrackedVector<uint32_t>{{9}, TestAlloc()}));
   }
   {
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, 1, ids, nullptr, 3);
-    EXPECT_EQ(ids, (std::vector<uint32_t>{10}));
+    EXPECT_EQ(ids, (irs::TrackedVector<uint32_t>{{10}, TestAlloc()}));
   }
 }
 
@@ -931,9 +942,9 @@ TEST(centroids_node_test, full_nprobe_reaches_every_leaf_under_wide_root) {
 
   constexpr uint32_t d = 1;
   constexpr size_t kRows = 32;
-  CentroidsNode root{2, d};
-  CentroidsNode mid{1, d};
-  CentroidsNode leaf{0, d};
+  CentroidsNode root{2, d, TestAlloc()};
+  CentroidsNode mid{1, d, TestAlloc()};
+  CentroidsNode leaf{0, d, TestAlloc()};
   root.child_offsets.push_back(0);
   mid.child_offsets.push_back(0);
   for (size_t i = 0; i < kRows; ++i) {
@@ -964,24 +975,26 @@ TEST(centroids_node_test, full_nprobe_reaches_every_leaf_under_wide_root) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
   ASSERT_EQ(tree.Levels(), 3u);
 
-  std::vector<uint32_t> all(2 * kRows);
+  irs::TrackedVector<uint32_t> all(2 * kRows, TestAlloc());
   std::iota(all.begin(), all.end(), static_cast<uint32_t>(2 * kRows));
   for (const float x : {0.f, 155.f, 310.f}) {
     const std::vector<float> q{x};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, static_cast<uint32_t>(2 * kRows), ids, nullptr);
     std::ranges::sort(ids);
     EXPECT_EQ(ids, all) << "query " << x;
   }
 
   const std::vector<float> q{155.f};
-  std::vector<uint32_t> ids;
+  irs::TrackedVector<uint32_t> ids{TestAlloc()};
   tree.Search(q, in, static_cast<uint32_t>(2 * kRows), ids, nullptr, 4);
   std::ranges::sort(ids);
-  EXPECT_EQ(ids, (std::vector<uint32_t>{92, 93, 94, 95, 96, 97, 98, 99}));
+  EXPECT_EQ(ids,
+            (irs::TrackedVector<uint32_t>{{92, 93, 94, 95, 96, 97, 98, 99},
+                                         TestAlloc()}));
 }
 
 TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
@@ -989,8 +1002,9 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
   const auto data = MakeClusters(d, 256, 1);
 
   const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
-  auto builder =
-    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+  auto builder = CentroidsBuilder::CreateFromSample(
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, params);
 
   duckdb::MemoryStream file;
   uint64_t offset;
@@ -1004,12 +1018,12 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
   ASSERT_GE(tree.Levels(), 3u);
 
   const auto n = static_cast<uint32_t>(data.size() / d);
-  std::vector<uint32_t> leaf_ids;
-  std::vector<float> leaf_cens;
+  irs::TrackedVector<uint32_t> leaf_ids{TestAlloc()};
+  irs::TrackedVector<float> leaf_cens{TestAlloc()};
   tree.Search(std::span<const float>{data.data(), d}, in, n, leaf_ids,
               &leaf_cens);
   const size_t n_leaves = leaf_ids.size();
@@ -1044,7 +1058,7 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
         scored.emplace_back(l2(q, leaf_cens.data() + l * d), leaf_ids[l]);
       }
       std::partial_sort(scored.begin(), scored.begin() + k, scored.end());
-      std::vector<uint32_t> got;
+      irs::TrackedVector<uint32_t> got{TestAlloc()};
       tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr, beam);
       for (size_t t = 0; t < k; ++t) {
         if (std::ranges::find(got, scored[t].second) != got.end()) {
@@ -1139,10 +1153,10 @@ TEST(clustering_test, superkmeans_matches_kmeans_quality_and_is_deterministic) {
   const size_t n = nclusters * per;
   const uint32_t k = 64;
 
-  auto skm = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d,
+  auto skm = TrainCentroids(TestAlloc(),VectorMetric::L2Sqr, data.data(), n, k, d,
                             /*seed=*/1234, /*niter=*/8, /*nredo=*/1,
                             ClusteringAlgo::FlatSuperKMeans);
-  auto lloyd = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d,
+  auto lloyd = TrainCentroids(TestAlloc(),VectorMetric::L2Sqr, data.data(), n, k, d,
                               /*seed=*/1234, /*niter=*/8, /*nredo=*/1,
                               ClusteringAlgo::Lloyd);
 
@@ -1156,7 +1170,7 @@ TEST(clustering_test, superkmeans_matches_kmeans_quality_and_is_deterministic) {
   EXPECT_LE(obj_skm, 1.5 * obj_lloyd)
     << "skm=" << obj_skm << " lloyd=" << obj_lloyd;
 
-  auto skm2 = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, 1234, 8,
+  auto skm2 = TrainCentroids(TestAlloc(),VectorMetric::L2Sqr, data.data(), n, k, d, 1234, 8,
                              1, ClusteringAlgo::FlatSuperKMeans);
   ASSERT_EQ(skm.size(), skm2.size());
   EXPECT_EQ(0,
@@ -1174,11 +1188,11 @@ TEST(clustering_test, superkmeans_injected_rotation_matches_self_init) {
   auto rotation = MakeRotation(d, seed);
   ASSERT_EQ(rotation.size(), static_cast<size_t>(d) * d);
 
-  auto injected = TrainCentroids(
+  auto injected = TrainCentroids(TestAlloc(),
     VectorMetric::L2Sqr, data.data(), n, k, d, seed,
     /*niter=*/8, /*nredo=*/1, ClusteringAlgo::FlatSuperKMeans, rotation.data());
   auto self_init =
-    TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, seed,
+    TrainCentroids(TestAlloc(),VectorMetric::L2Sqr, data.data(), n, k, d, seed,
                    /*niter=*/8, /*nredo=*/1, ClusteringAlgo::FlatSuperKMeans,
                    /*rotation=*/nullptr);
 
@@ -1200,8 +1214,9 @@ TEST(centroids_builder_test,
   const size_t target_leaves = 1024;  // ceil(n / posting_size)
 
   const CentroidsBuildParams params{.posting_size = 4, .max_fanout = 32};
-  auto builder =
-    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+  auto builder = CentroidsBuilder::CreateFromSample(
+    irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, params);
   const size_t n_clusters = builder.NumClusters();
   // A flat build would have exactly `target_leaves` centroids; the extra rows
   // are the interior layers, so this confirms the tree really went multi-level.
@@ -1229,12 +1244,12 @@ TEST(centroids_builder_test,
   const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
   duckdb::InputFileReader in{*input};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
 
   size_t matches = 0;
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
-    std::vector<uint32_t> ids;
+    irs::TrackedVector<uint32_t> ids{TestAlloc()};
     tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     ASSERT_LT(ids[0], n_clusters) << "row " << i;
@@ -1252,7 +1267,7 @@ TEST(clustering_test, superkmeans_angular_centroids_unit_norm) {
   const size_t n = 40 * 20;
   NormalizeRows(data.data(), n, d);
   const uint32_t k = 32;
-  auto c = TrainCentroids(VectorMetric::Cosine, data.data(), n, k, d,
+  auto c = TrainCentroids(TestAlloc(),VectorMetric::Cosine, data.data(), n, k, d,
                           /*seed=*/7, /*niter=*/8, /*nredo=*/1,
                           ClusteringAlgo::FlatSuperKMeans);
   ASSERT_EQ(c.size(), static_cast<size_t>(k) * d);
@@ -1276,8 +1291,9 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
   const auto build = [&](size_t max_fanout) {
     const CentroidsBuildParams params{.posting_size = 4,
                                       .max_fanout = max_fanout};
-    auto builder =
-      CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+    auto builder = CentroidsBuilder::CreateFromSample(
+      irs::TrackedVector<float>(data.begin(), data.end(), TestAlloc()), d,
+    VectorMetric::L2Sqr, params);
     duckdb::MemoryStream file;
     uint64_t offset;
     uint64_t byte_size;
@@ -1290,7 +1306,7 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
     const auto input = tests::OpenBytes({file.GetData(), file.GetPosition()});
     duckdb::InputFileReader in{*input};
     in.Seek(offset);
-    auto tree = CentroidsTree::Deserialize(in, byte_size);
+    auto tree = CentroidsTree::Deserialize(in, byte_size, TestAlloc());
     return std::pair{tree.Levels(), tree.RootSize()};
   };
 

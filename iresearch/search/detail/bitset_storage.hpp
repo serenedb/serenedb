@@ -28,9 +28,20 @@
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
+
+struct BitsetWordsFree {
+  bool on_arena = false;
+
+  void operator()(uint64_t* p) const noexcept {
+    if (!on_arena) {
+      delete[] p;
+    }
+  }
+};
 
 class BitsetStorage {
  public:
@@ -45,16 +56,29 @@ class BitsetStorage {
   BitsetStorage() = default;
 
   explicit BitsetStorage(doc_id_t docs_count)
-    : _end{kMin + docs_count},
-      _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
-      _alloc{_words + kWindowDocs / kBits + 1},
-      _bits{std::make_unique<uint64_t[]>(_alloc + 1)} {}
+    : BitsetStorage{docs_count, memory::kAllocateOnly} {
+    std::fill_n(_bits.get(), _alloc + 1, uint64_t{0});
+  }
 
   BitsetStorage(doc_id_t docs_count, memory::AllocateOnlyTag)
     : _end{kMin + docs_count},
       _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
       _alloc{_words + kWindowDocs / kBits + 1},
-      _bits{std::make_unique_for_overwrite<uint64_t[]>(_alloc + 1)} {
+      _bits{new uint64_t[_alloc + 1], Free{}} {
+    _bits[0] = 0;
+  }
+
+  BitsetStorage(MemoryArena& arena, doc_id_t docs_count)
+    : BitsetStorage{arena, docs_count, memory::kAllocateOnly} {
+    std::fill_n(_bits.get(), _alloc + 1, uint64_t{0});
+  }
+
+  BitsetStorage(MemoryArena& arena, doc_id_t docs_count,
+                memory::AllocateOnlyTag)
+    : _end{kMin + docs_count},
+      _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
+      _alloc{_words + kWindowDocs / kBits + 1},
+      _bits{arena.Allocate<uint64_t>(_alloc + 1), Free{.on_arena = true}} {
     _bits[0] = 0;
   }
 
@@ -76,10 +100,12 @@ class BitsetStorage {
   }
 
  private:
+  using Free = BitsetWordsFree;
+
   doc_id_t _end = 0;
   uint32_t _words = 0;
   uint32_t _alloc = 0;
-  std::unique_ptr<uint64_t[]> _bits;
+  std::unique_ptr<uint64_t[], Free> _bits;
 };
 
 inline uint64_t CountBits(const BitsetStorage& set) noexcept {

@@ -44,6 +44,7 @@ inline duckdb::SelectionVector& Allocated(duckdb::SelectionVector& sel) {
 
 inline bool FetchSparse(std::unique_ptr<ColumnReader::PointReader>& point,
                         const ColReader& col_reader, const ColumnReader& column,
+                        TrackedAllocator<> alloc,
                         std::span<const doc_id_t> docs, duckdb::idx_t span,
                         duckdb::Vector& out, duckdb::idx_t at) {
   const auto hits = static_cast<duckdb::idx_t>(docs.size());
@@ -51,7 +52,8 @@ inline bool FetchSparse(std::unique_ptr<ColumnReader::PointReader>& point,
     return false;
   }
   if (!point) {
-    point = std::make_unique<ColumnReader::PointReader>(col_reader, column);
+    point =
+      std::make_unique<ColumnReader::PointReader>(col_reader, column, alloc);
   }
   point->FetchRows(docs, doc_limits::min(), out, at);
   return true;

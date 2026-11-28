@@ -21,6 +21,7 @@
 #include "connector/duckdb_vacuum_function.h"
 
 #include <absl/functional/function_ref.h>
+#include <absl/status/status.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
@@ -466,7 +467,9 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
         context, GetIntSetting(context, "sdb_compact_target_segments"));
       if (!status.ok()) {
         context.InterruptCheck();
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        THROW_SQL_ERROR(ERR_CODE(absl::IsResourceExhausted(status)
+                                   ? ERRCODE_OUT_OF_MEMORY
+                                   : ERRCODE_INTERNAL_ERROR),
                         ERR_MSG("failed to compact table \"", step.name,
                                 "\": ", status.message()));
       }

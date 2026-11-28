@@ -40,8 +40,9 @@
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
@@ -72,13 +73,13 @@ class Values final : public State {
 
   uint64_t null_count = 0;
   uint64_t raw = 0;
-  std::vector<const duckdb::string_t*> distinct;
-  ScratchVector<uint32_t> codes;
+  TrackedVector<const duckdb::string_t*> distinct;
+  TrackedScratchVector<uint32_t> codes;
 
  private:
   static constexpr uint64_t kMinRepeat = 2;
 
-  using Distinct = std::vector<const duckdb::string_t*>;
+  using Distinct = TrackedVector<const duckdb::string_t*>;
 
   void Add(const duckdb::Vector& input);
 
@@ -112,8 +113,7 @@ class Values final : public State {
     const Distinct* distinct;
   };
 
-  containers::FlatHashSet<uint32_t, Hash, Eq> _codes{0, Hash{&distinct},
-                                                     Eq{&distinct}};
+  containers::TrackedFlatHashSet<uint32_t, Hash, Eq> _codes;
   uint32_t _last_code = 0;
   const duckdb::string_t* _last = nullptr;
 };

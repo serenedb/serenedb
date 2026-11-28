@@ -54,6 +54,7 @@
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -123,15 +124,16 @@ struct RawRecipe {
 class RawVectorReader {
  public:
   RawVectorReader(const ColumnReader& vector_column,
-                  const ColReader& col_reader, uint32_t d)
-    : _read_ctx{col_reader, true},
+                  const ColReader& col_reader, uint32_t d,
+                  TrackedAllocator<> alloc)
+    : _read_ctx{col_reader, alloc, true},
       _vreader{vector_column, _read_ctx},
       _column{&vector_column},
       _d{d},
       _in_memory{vector_column.InMemory()} {}
 
-  explicit RawVectorReader(const RawRecipe& recipe)
-    : RawVectorReader{*recipe.column, *recipe.reader, recipe.d} {
+  RawVectorReader(const RawRecipe& recipe, TrackedAllocator<> alloc)
+    : RawVectorReader{*recipe.column, *recipe.reader, recipe.d, alloc} {
     SetQuery(recipe.query, recipe.metric);
   }
 
@@ -341,9 +343,10 @@ class VectorCluster {
  public:
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
 
-  VectorCluster(const PostingMeta& meta, const duckdb::InputFile& doc_in,
-                std::unique_ptr<QuantizerReader>&& quantizer,
-                VectorBlockReader&& payload, uint32_t lane)
+  VectorCluster(PlanMemory& memory, const PostingMeta& meta,
+                const duckdb::InputFile& doc_in,
+                QuantizerReader::ptr&& quantizer, VectorBlockReader&& payload,
+                uint32_t lane)
     : _quantizer{std::move(quantizer)},
       _pay{std::move(payload)},
       _total{meta.docs_count},
@@ -351,7 +354,8 @@ class VectorCluster {
     SDB_ASSERT(_quantizer);
     _setting = _quantizer->BlockSetting();
     SDB_ASSERT(_setting.group_size != 0);
-    _cache.resize(2 * size_t{_setting.group_size});
+    _cache = containers::Fixed<score_t>{memory.Arena(),
+                                        2 * size_t{_setting.group_size}};
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
@@ -513,13 +517,13 @@ class VectorCluster {
     ServeGroup(lane, len, out, err);
   }
 
-  std::unique_ptr<QuantizerReader> _quantizer;
+  QuantizerReader::ptr _quantizer;
   VectorBlockReader _pay;
   detail::PostingLead<InputType> _list;
   std::array<doc_id_t, kRun> _docs;
   std::array<score_t, kRun> _dist;
   std::array<score_t, kRun> _err;
-  std::vector<score_t> _cache;
+  containers::Fixed<score_t> _cache;
   PayloadBlockSetting _setting;
   score_t _threshold = std::numeric_limits<score_t>::lowest();
   bool _errors = false;
@@ -538,10 +542,13 @@ template<typename Cluster>
 class VectorClusters {
  public:
   template<typename Args>
-  VectorClusters(size_t count, Args&& args)
-    : _clusters{count, std::piecewise_construct, std::forward<Args>(args)},
-      _order{count, [](uint32_t& slot,
-                       size_t i) noexcept { slot = static_cast<uint32_t>(i); }},
+  VectorClusters(PlanMemory& memory, size_t count, Args&& args)
+    : _clusters{memory.Arena(), count, std::piecewise_construct,
+                std::forward<Args>(args)},
+      _order{memory.Arena(), count,
+             [](uint32_t& slot, size_t i) noexcept {
+               slot = static_cast<uint32_t>(i);
+             }},
       _live{count} {}
 
   VectorClusters(VectorClusters&&) = delete;
@@ -633,11 +640,11 @@ template<typename Cluster, typename Gate, bool HasInner, bool Rescore>
 class VectorSlots {
  public:
   template<typename Args>
-  VectorSlots(size_t count, Args&& args, score_t edge, probe::Node::ptr&& inner,
-              const RawRecipe& raw)
-    : _clusters{count, std::forward<Args>(args)},
+  VectorSlots(PlanMemory& memory, size_t count, Args&& args, score_t edge,
+              probe::Node::ptr&& inner, const RawRecipe& raw)
+    : _clusters{memory, count, std::forward<Args>(args)},
       _inner{std::move(inner)},
-      _raw{raw},
+      _raw{raw, memory.Allocator()},
       _edge{edge} {
     _clusters.SetThreshold(edge);
     if (!Rescore && raw.rescore_width > 0.f) {

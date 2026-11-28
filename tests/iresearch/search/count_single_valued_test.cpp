@@ -26,7 +26,9 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/queries/boolean_query.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iterator>
 #include <memory>
@@ -158,16 +160,18 @@ class CountSingleValuedTest : public tests::IndexTestBase {
     auto reader = open_reader();
     ASSERT_EQ(1, reader.size());
     const auto& segment = reader[0];
-    auto query = irs::PrepareMasked(filter, segment, {});
+    irs::QueryMemory query_memory;
+    auto query = irs::PrepareMasked(filter, segment, {.memory = query_memory});
     ASSERT_NE(nullptr, query);
 
-    auto whole = query->PlanCount({});
+    irs::PlanMemory plan_memory;
+    auto whole = query->PlanCount({.memory = plan_memory});
     ASSERT_NE(nullptr, whole);
     ASSERT_EQ(expected,
               whole->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
                 whole->Finish());
 
-    auto split = query->PlanCount({.partial = true});
+    auto split = query->PlanCount({.memory = plan_memory, .partial = true});
     ASSERT_NE(nullptr, split);
     constexpr doc_id_t kBounds[]{
       irs::doc_limits::min(), 777, 9001, 16384, 20001, irs::doc_limits::eof()};
@@ -212,6 +216,29 @@ TEST_P(CountSingleValuedTest, ranges_count_from_term_statistics) {
     CheckCount(*Range(kMulti, lo, hi), MultiIn(lo, hi));
   }
   CheckDocs(*Range(kUnique, 100, 110), 11);
+}
+
+TEST_P(CountSingleValuedTest, prepared_queries_keep_disjoint_clauses) {
+  auto writer = open_writer(tests::kOmCreate);
+  Build(*writer);
+  irs::BooleanFilter filter;
+  for (const auto value : {1, 2, 3}) {
+    filter.Add(Term(kSingle, value), irs::Occur::Should);
+  }
+  for (const auto value : {4, 5}) {
+    filter.Add(Term(kSingle, value), irs::Occur::MustNot);
+  }
+  filter.SetMinShouldMatch(1);
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  irs::QueryMemory query_memory;
+  const auto query =
+    irs::PrepareMasked(filter, reader[0], {.memory = query_memory});
+  ASSERT_NE(nullptr, query);
+  ASSERT_EQ(irs::QueryKind::Boolean, query->Kind());
+  const auto& boolean = irs::utils::downCast<irs::BooleanQuery>(*query);
+  EXPECT_TRUE(boolean.Bucket(irs::Occur::Should).disjoint);
+  EXPECT_TRUE(boolean.Bucket(irs::Occur::MustNot).disjoint);
 }
 
 TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
@@ -367,7 +394,9 @@ TEST_P(CountSingleValuedTest, dense_ranges_estimate_their_exact_count) {
   constexpr std::pair<int64_t, int64_t> kRanges[]{{10, 8990}, {3000, 9000}};
   for (const auto [lo, hi] : kRanges) {
     SCOPED_TRACE(absl::StrCat(lo, "..", hi));
-    auto query = irs::PrepareMasked(*Range(kSingle, lo, hi), reader[0], {});
+    irs::QueryMemory query_memory;
+    auto query = irs::PrepareMasked(*Range(kSingle, lo, hi), reader[0],
+                                    {.memory = query_memory});
     ASSERT_NE(nullptr, query);
     ASSERT_EQ(irs::QueryKind::Boolean, query->Kind());
     const auto expected = SingleIn(lo, hi);
@@ -394,7 +423,9 @@ TEST_P(CountSingleValuedTest,
   for (const auto& [lo, kind] : kRanges) {
     SCOPED_TRACE(lo);
     const auto range = Range(kSingle, lo, kValues - 1);
-    auto query = irs::PrepareMasked(*range, reader[0], {});
+    irs::QueryMemory query_memory;
+    auto query =
+      irs::PrepareMasked(*range, reader[0], {.memory = query_memory});
     ASSERT_NE(nullptr, query);
     EXPECT_EQ(kind, query->Kind());
     CheckDocs(*range, SingleIn(lo, kValues - 1));
@@ -417,10 +448,14 @@ TEST_P(CountSingleValuedTest, split_counts_fill_their_range_of_many_terms) {
   };
   for (const auto& [lo, hi] : kRanges) {
     SCOPED_TRACE(absl::StrCat(lo, "..", hi));
-    auto query = irs::PrepareMasked(*Range(kMulti, lo, hi), reader[0], {});
+    irs::QueryMemory query_memory;
+    auto query = irs::PrepareMasked(*Range(kMulti, lo, hi), reader[0],
+                                    {.memory = query_memory});
     ASSERT_NE(nullptr, query);
     ASSERT_EQ(irs::QueryKind::Terms, query->Kind());
-    auto count = irs::count::MakeRoot(*query, {.span = 10000, .partial = true});
+    irs::PlanMemory plan_memory;
+    auto count = irs::count::MakeRoot(
+      *query, {.memory = plan_memory, .span = 10000, .partial = true});
     ASSERT_NE(nullptr, count);
     constexpr doc_id_t kBounds[]{
       irs::doc_limits::min(), 777, 9001, 16384, 20001, irs::doc_limits::eof()};

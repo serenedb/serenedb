@@ -49,7 +49,7 @@ namespace {
 using namespace irs;
 
 InverterMemory DefaultMemory() {
-  return {duckdb::Allocator::DefaultAllocator(), IResourceManager::gNoop};
+  return {duckdb::Allocator::DefaultAllocator()};
 }
 
 uint32_t BlockAt(uint32_t* const* blocks, uint64_t i) {
@@ -191,9 +191,8 @@ TEST(TermViewTest, CaseConvertTermViewAsciiMatchesAbsl) {
 }
 
 TEST(InverterTermDictionaryTest, ResolveDedupIntern) {
-  SimpleMemoryAccounter memory;
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  TermDictionary dict{arena, memory};
+  TermDictionary dict{arena, TestAlloc()};
 
   const auto id0 = dict.Insert(MakeTermView("quick"));
   const auto id1 = dict.Insert(MakeTermView("brown"));
@@ -213,9 +212,8 @@ TEST(InverterTermDictionaryTest, ResolveDedupIntern) {
 }
 
 TEST(InverterPostingLogTest, RunMerging) {
-  SimpleMemoryAccounter memory;
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PostingLog<TokenLayout::TermsPos> log{arena, memory};
+  PostingLog<TokenLayout::TermsPos> log{arena, TestAlloc()};
 
   log.PushOne(1, 0, 1);
   log.PushOne(1, 1, 2);
@@ -250,9 +248,8 @@ TEST(InverterPostingLogTest, RunMerging) {
 }
 
 TEST(InverterPostingLogTest, RunBridgingKnee) {
-  SimpleMemoryAccounter memory;
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PostingLog<TokenLayout::Terms> log{arena, memory};
+  PostingLog<TokenLayout::Terms> log{arena, TestAlloc()};
 
   log.PushOne(1, 0);
   log.PushOne(9, 0);
@@ -270,7 +267,7 @@ TEST(InverterPostingLogTest, RunBridgingKnee) {
 
 TEST(InverterPackedColumnTest, RoundtripAcrossSeals) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PackedU32Column col{arena, IResourceManager::gNoop};
+  PackedU32Column col{arena, TestAlloc()};
   std::vector<uint32_t> expect;
   uint32_t state = 12345;
   auto next = [&] {
@@ -319,8 +316,8 @@ TEST(InverterPackedColumnTest, RoundtripAcrossSeals) {
 
 TEST(InverterPackedColumnTest, SequentialIdsSharedArena) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PackedU32Column ids{arena, IResourceManager::gNoop};
-  PackedU32Column unused{arena, IResourceManager::gNoop};
+  PackedU32Column ids{arena, TestAlloc()};
+  PackedU32Column unused{arena, TestAlloc()};
   std::vector<uint32_t> expect;
   uint32_t buf[1024];
   uint32_t v = 0;
@@ -395,7 +392,7 @@ std::vector<ReadPosting> ReadTermPostings(const ScatteredField& scattered,
 void AssertField(const FieldInverter& field, InverterMemory& mem,
                  const std::vector<std::string>& expected_terms,
                  const std::vector<std::vector<ExpectedPosting>>& expected) {
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(field);
 
@@ -428,7 +425,7 @@ void AssertField(const FieldInverter& field, InverterMemory& mem,
 
 TEST(InverterPipelineTest, KernelToPostings) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   const auto features =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
   auto* field = inv.Emplace(42, StringLayout::kStrings, features);
@@ -466,7 +463,7 @@ TEST(InverterPipelineTest, KernelToPostings) {
 
 TEST(InverterPipelineTest, KeywordMultiValue) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
   auto* field = inv.Emplace(7, StringLayout::kStrings, features);
 
@@ -485,7 +482,7 @@ TEST(InverterPipelineTest, KeywordMultiValue) {
 
 TEST(InverterPipelineTest, KeywordBlockUvfDictionary) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   const auto features = IndexFeatures::Freq;
 
   duckdb::Vector vec{duckdb::LogicalType::VARCHAR};
@@ -537,10 +534,10 @@ TEST(InverterPipelineTest, KeywordBlockUvfDictionary) {
 
 void AssertSameScatter(const FieldInverter& a, const FieldInverter& b,
                        InverterMemory& mem) {
-  ScatterScratch sca{mem.rm};
+  ScatterScratch sca{TestAlloc()};
   ScatteredField sa{mem, sca};
   sa.Reset(a);
-  ScatterScratch scb{mem.rm};
+  ScatterScratch scb{TestAlloc()};
   ScatteredField sb{mem, scb};
   sb.Reset(b);
 
@@ -586,8 +583,8 @@ TEST(InverterColumnKeywordTest, MatchesPerValue) {
        {IndexFeatures::Freq, IndexFeatures::Freq | IndexFeatures::Pos,
         IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
     auto mem = DefaultMemory();
-    FieldsInverter inv_ref{mem};
-    FieldsInverter inv_col{mem};
+    FieldsInverter inv_ref{mem, TestAlloc()};
+    FieldsInverter inv_col{mem, TestAlloc()};
     auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, features);
     auto* col = inv_col.Emplace(1, StringLayout::kStrings, features);
 
@@ -628,8 +625,8 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
         IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
     for (const bool dense : {true, false}) {
       auto mem = DefaultMemory();
-      FieldsInverter inv_fast{mem};
-      FieldsInverter inv_gen{mem};
+      FieldsInverter inv_fast{mem, TestAlloc()};
+      FieldsInverter inv_gen{mem, TestAlloc()};
       auto* fast = inv_fast.Emplace(1, StringLayout::kStrings, features);
       auto* gen = inv_gen.Emplace(1, StringLayout::kStrings, features);
       fast->Configure({.unique = true, .explicit_pos = !dense});
@@ -666,7 +663,7 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
 
 TEST(InverterScatterTest, PresortedKeysTieBreak) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 4> vals{"aaaaaaaa2", "aaaaaaaa10",
@@ -676,7 +673,7 @@ TEST(InverterScatterTest, PresortedKeysTieBreak) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(4, scattered.TermCount());
@@ -688,7 +685,7 @@ TEST(InverterScatterTest, PresortedKeysTieBreak) {
 
 TEST(InverterScatterTest, SharedPrefixRekeyOrder) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 6> vals{
@@ -700,7 +697,7 @@ TEST(InverterScatterTest, SharedPrefixRekeyOrder) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(6, scattered.TermCount());
@@ -717,7 +714,7 @@ TEST(InverterScatterTest, SharedPrefixRekeyOrder) {
 
 TEST(InverterScatterTest, RekeyPrefixTermRanksFirst) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 3> vals{
@@ -727,7 +724,7 @@ TEST(InverterScatterTest, RekeyPrefixTermRanksFirst) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(3, scattered.TermCount());
@@ -738,7 +735,7 @@ TEST(InverterScatterTest, RekeyPrefixTermRanksFirst) {
 
 TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 3> vals{"za_anchor", "zz_abcdefgh_2",
@@ -748,7 +745,7 @@ TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(3, scattered.TermCount());
@@ -759,8 +756,8 @@ TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
 
 TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
-  ScatterScratch scratch{mem.rm};
+  FieldsInverter inv{mem, TestAlloc()};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   ColumnarTermReader reader;
   const auto check = [&](const FieldInverter& field, uint32_t width,
@@ -825,8 +822,8 @@ struct RejectFill {
 TEST(InverterRejectTest, NonMonotonicPosLeavesLogUntouched) {
   const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
   auto mem = DefaultMemory();
-  FieldsInverter inv_a{mem};
-  FieldsInverter inv_b{mem};
+  FieldsInverter inv_a{mem, TestAlloc()};
+  FieldsInverter inv_b{mem, TestAlloc()};
   auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
   auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
   a->Configure({.explicit_pos = true});
@@ -861,8 +858,8 @@ TEST(InverterRejectTest, NonMonotonicPosLeavesLogUntouched) {
 TEST(InverterRejectTest, ZeroPosLeavesLogUntouched) {
   const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
   auto mem = DefaultMemory();
-  FieldsInverter inv_a{mem};
-  FieldsInverter inv_b{mem};
+  FieldsInverter inv_a{mem, TestAlloc()};
+  FieldsInverter inv_b{mem, TestAlloc()};
   auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
   auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
   a->Configure({.explicit_pos = true});
@@ -898,8 +895,8 @@ TEST(InverterRejectTest, OffsetRegressionLeavesLogUntouched) {
   const auto features =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
   auto mem = DefaultMemory();
-  FieldsInverter inv_a{mem};
-  FieldsInverter inv_b{mem};
+  FieldsInverter inv_a{mem, TestAlloc()};
+  FieldsInverter inv_b{mem, TestAlloc()};
   auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
   auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
 
@@ -933,8 +930,8 @@ TEST(InverterRejectTest, OffsetWraparoundLeavesLogUntouched) {
   const auto features =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
   auto mem = DefaultMemory();
-  FieldsInverter inv_a{mem};
-  FieldsInverter inv_b{mem};
+  FieldsInverter inv_a{mem, TestAlloc()};
+  FieldsInverter inv_b{mem, TestAlloc()};
   auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
   auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
 
@@ -966,7 +963,7 @@ TEST(InverterRejectTest, OffsetWraparoundLeavesLogUntouched) {
 
 TEST(InverterPipelineTest, TermsLayoutKeywordPostings) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(3, StringLayout::kStrings, IndexFeatures::Freq);
 
   const auto d = doc_limits::min();
@@ -989,7 +986,7 @@ TEST(InverterPipelineTest, TermsLayoutKeywordPostings) {
 
 TEST(InverterPipelineTest, TermsLayoutRepeatedKeywords) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(5, StringLayout::kStrings, IndexFeatures::Freq);
 
   const auto d = doc_limits::min();
@@ -1022,7 +1019,7 @@ TEST(InverterPipelineTest, TermsLayoutRepeatedKeywords) {
 
 TEST(InverterPipelineTest, TermsLayoutDistinctKeywords) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(4, StringLayout::kStrings, IndexFeatures::Freq);
 
   const auto d = doc_limits::min();
@@ -1043,7 +1040,7 @@ TEST(InverterPipelineTest, TermsLayoutDistinctKeywords) {
 
 TEST(InverterPipelineTest, MultiBatchLongValue) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(1, StringLayout::kStrings,
                             IndexFeatures::Freq | IndexFeatures::Pos);
 
@@ -1068,7 +1065,7 @@ TEST(InverterPipelineTest, MultiBatchLongValue) {
   ASSERT_EQ(kTokens, field->Dictionary().Size());
   ASSERT_EQ(kTokens, field->Log().Size());
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(kTokens, scattered.TermCount());
@@ -1079,7 +1076,7 @@ TEST(InverterPipelineTest, MultiBatchLongValue) {
 
 TEST(InverterPipelineTest, MultiBatchOffsets) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   const auto features =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
   auto* field = inv.Emplace(1, StringLayout::kStrings, features);
@@ -1103,7 +1100,7 @@ TEST(InverterPipelineTest, MultiBatchOffsets) {
   } while (more);
   ASSERT_GT(rounds, 1);
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
 
@@ -1121,7 +1118,7 @@ TEST(InverterPipelineTest, MultiBatchOffsets) {
 
 TEST(InverterPipelineTest, DenseAfterExplicitDoc) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
   auto* field = inv.Emplace(1, StringLayout::kStrings, features);
   field->Configure({.explicit_pos = true});
@@ -1562,7 +1559,7 @@ struct DumpedTerm {
 
 std::vector<DumpedTerm> DumpField(const FieldInverter& field,
                                   InverterMemory& mem) {
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch{TestAlloc()};
   ScatteredField scattered{mem, scratch};
   scattered.Reset(field);
 
@@ -1592,7 +1589,7 @@ TEST(InverterDriverTest, SynonymOverlapsExactPostings) {
   };
 
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(1, StringLayout::kStrings, features);
 
   WhitespaceSyn analyzer;
@@ -1652,7 +1649,7 @@ TEST(InverterColumnFillTest, MatchesPerValue) {
   docs.push_back(std::move(long_value));
 
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* by_value = inv.Emplace(1, StringLayout::kStrings, features);
   auto* by_column = inv.Emplace(2, StringLayout::kStrings, features);
 
@@ -1715,7 +1712,7 @@ TEST(InverterBlockTextTest, MatchesPerValueTokens) {
   docs.push_back("tail,a");
 
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* per_value = inv.Emplace(1, StringLayout::kStrings, features);
   auto* block = inv.Emplace(2, StringLayout::kStrings, features);
 
@@ -1852,7 +1849,7 @@ void AssertDictionaryMatchesFlat(MakeAnalyzer make, IndexFeatures features) {
   const auto size = static_cast<uint32_t>(c.entries.size());
 
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* flat = inv.Emplace(1, StringLayout::kStrings, features);
   auto* dict = inv.Emplace(2, StringLayout::kStrings, features);
   auto flat_analyzer = make();
@@ -1913,7 +1910,7 @@ TEST(InverterDictionaryTest, KeywordMatchesFlat) {
        {IndexFeatures::Freq, IndexFeatures::Freq | IndexFeatures::Pos,
         IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
     auto mem = DefaultMemory();
-    FieldsInverter inv{mem};
+    FieldsInverter inv{mem, TestAlloc()};
     auto* flat = inv.Emplace(1, StringLayout::kStrings, features);
     auto* dict = inv.Emplace(2, StringLayout::kStrings, features);
 
@@ -1946,7 +1943,7 @@ TEST(InverterDictionaryTest, ConstantMatchesFlat) {
        {IndexFeatures::Freq, IndexFeatures::Freq | IndexFeatures::Pos,
         IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
     auto mem = DefaultMemory();
-    FieldsInverter inv{mem};
+    FieldsInverter inv{mem, TestAlloc()};
     auto* flat = inv.Emplace(1, StringLayout::kStrings, features);
     auto* dict = inv.Emplace(2, StringLayout::kStrings, features);
     auto flat_analyzer = MakeSpaceDelimited();
@@ -1974,8 +1971,8 @@ void NumericBlockMatchesPerValue(const std::vector<T>& vals) {
   const auto features = IndexFeatures::None;
 
   auto mem = DefaultMemory();
-  FieldsInverter inv_ref{mem};
-  FieldsInverter inv_blk{mem};
+  FieldsInverter inv_ref{mem, TestAlloc()};
+  FieldsInverter inv_blk{mem, TestAlloc()};
   auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, features);
   auto* blk = inv_blk.Emplace(1, StringLayout::kStrings, features);
 
@@ -2063,8 +2060,8 @@ TEST(InverterNumericBlockTest, BooleanMatchesPerValueStream) {
   }
 
   auto mem = DefaultMemory();
-  FieldsInverter inv_ref{mem};
-  FieldsInverter inv_blk{mem};
+  FieldsInverter inv_ref{mem, TestAlloc()};
+  FieldsInverter inv_blk{mem, TestAlloc()};
   auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, features);
   auto* blk = inv_blk.Emplace(1, StringLayout::kStrings, features);
 
@@ -2105,7 +2102,7 @@ TEST(InverterNumericBlockTest, BooleanMatchesPerValueStream) {
 
 TEST(InverterNumericTest, UvfBlockMatchesStagedPairs) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
 
   duckdb::Vector vec{duckdb::LogicalType::BIGINT};
   auto* slots = duckdb::FlatVector::GetDataMutable<int64_t>(vec);
@@ -2192,7 +2189,7 @@ TEST(InverterNumericTest, UvfBlockMatchesStagedPairs) {
 
 TEST(MemberDocsTest, PushesFollowValidityAndDropRepeats) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto docs_of = inv.Docs(1, DictLayout::Json);
 
   duckdb::Vector vec{duckdb::LogicalType::BOOLEAN};
@@ -2234,7 +2231,7 @@ TEST(MemberDocsTest, PushesFollowValidityAndDropRepeats) {
 
 TEST(MemberDocsTest, FieldsHoldTheirLayoutsMembers) {
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   for (size_t layout = 0; layout != kDictLayouts; ++layout) {
     const auto dict_layout = static_cast<DictLayout>(layout);
     auto docs = inv.Docs(layout + 1, dict_layout);
@@ -2261,7 +2258,7 @@ TEST(InverterFieldTest, MetaCarriesRequestedFeatures) {
   constexpr auto kFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
   auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
+  FieldsInverter inv{mem, TestAlloc()};
   auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
   EXPECT_EQ(kFeatures, field->Meta().index_features);
   EXPECT_EQ(IndexFeatures::None,

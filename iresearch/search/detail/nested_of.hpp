@@ -35,53 +35,56 @@
 namespace irs::detail {
 
 template<bool None, typename Visitor>
-auto ResolveRule(const SubReader& segment,
+auto ResolveRule(PlanMemory& memory, const SubReader& segment,
                  const ByNestedOptions::MatchType& match, Visitor&& visitor) {
-  return std::visit(absl::Overload{[&](Match v) {
-                                     if constexpr (None) {
-                                       if (v == kMatchNone) {
-                                         return visitor(NoneRule{});
-                                       }
-                                     } else {
-                                       SDB_ASSERT(v != kMatchNone);
-                                     }
-                                     if (v == kMatchAny) {
-                                       return visitor(AnyRule{});
-                                     }
-                                     if (v.IsMinMatch()) {
-                                       return visitor(MinRule{v.min});
-                                     }
-                                     return visitor(RangeRule{v});
-                                   },
-                                   [&](const MatchProvider& v) {
-                                     auto pred = v(segment);
-                                     if (!pred) {
-                                       return visitor(PredRule{
-                                         SubReader::empty().docs_iterator()});
-                                     }
-                                     return visitor(PredRule{std::move(pred)});
-                                   }},
-                    match);
+  return std::visit(
+    absl::Overload{[&](Match v) {
+                     if constexpr (None) {
+                       if (v == kMatchNone) {
+                         return visitor(NoneRule{});
+                       }
+                     } else {
+                       SDB_ASSERT(v != kMatchNone);
+                     }
+                     if (v == kMatchAny) {
+                       return visitor(AnyRule{});
+                     }
+                     if (v.IsMinMatch()) {
+                       return visitor(MinRule{v.min});
+                     }
+                     return visitor(RangeRule{v});
+                   },
+                   [&](const MatchProvider& v) {
+                     auto pred = v(memory, segment);
+                     if (!pred) {
+                       return visitor(
+                         PredRule{SubReader::empty().docs_iterator(memory)});
+                     }
+                     return visitor(PredRule{std::move(pred)});
+                   }},
+    match);
 }
 
-inline lead::Node::ptr ChildDocs(const ByNestedQuery& query) {
-  auto child = query.Child().PlanLead({});
+inline lead::Node::ptr ChildDocs(PlanMemory& memory,
+                                 const ByNestedQuery& query) {
+  auto child = query.Child().PlanLead({.memory = memory});
   if (!child && QueryBuilder::IsEmpty(query.Child())) {
-    return SubReader::empty().docs_iterator();
+    return SubReader::empty().docs_iterator(memory);
   }
   return child;
 }
 
 template<typename Family, typename Make>
-typename Family::Result PlanNestedDocs(const ByNestedQuery& query,
+typename Family::Result PlanNestedDocs(PlanMemory& memory,
+                                       const ByNestedQuery& query,
                                        Make&& make) {
-  auto child = ChildDocs(query);
+  auto child = ChildDocs(memory, query);
   if (!child) {
     return {};
   }
-  auto parent = query.Parents();
+  auto parent = query.Parents(memory);
   return ResolveRule<true>(
-    query.Segment(), query.MatchKind(),
+    memory, query.Segment(), query.MatchKind(),
     [&]<typename Rule>(Rule rule) -> typename Family::Result {
       using Node =
         typename Family::template TwoPhaseDocs<NestedSlots<PlainChild, Rule>>;
@@ -93,36 +96,40 @@ typename Family::Result PlanNestedDocs(const ByNestedQuery& query,
 
 template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const ByNestedQuery& query, const Ctx& ctx) {
+  auto& memory = Family::MemoryOf(ctx);
   if constexpr (!kScoredPlan<Family, Ctx>) {
     return PlanNestedDocs<Family>(
-      query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
+      memory, query,
+      [&]<typename Node>(auto&&... args) -> typename Family::Result {
         return Family::template Docs<Node>(
           ctx, std::forward<decltype(args)>(args)...);
       });
   } else {
     if (!query.ScoresChildren()) {
       return PlanNestedDocs<Family>(
-        query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
+        memory, query,
+        [&]<typename Node>(auto&&... args) -> typename Family::Result {
           return Family::template Constant<Node>(
             ctx, query.Constant(), std::forward<decltype(args)>(args)...);
         });
     }
-    auto fetcher = std::make_unique<ColumnArgsFetcher>();
+    auto fetcher = MakeArenaFetcher(memory);
     ScoredCtx scoring = Family::Scoring(ctx);
     scoring.fetcher = fetcher.get();
     auto child = query.Child().PlanLead(scoring);
     if (!child) {
       return {};
     }
-    auto parent = query.Parents();
+    auto parent = query.Parents(memory);
     const auto merge = query.Merge();
     return ResolveRule<false>(
-      query.Segment(), query.MatchKind(),
+      memory, query.Segment(), query.MatchKind(),
       [&]<typename Rule>(Rule rule) -> typename Family::Result {
         using Node = NestedScored<NestedSlots<ScoredChild, Rule>>;
         return Family::template Scored<Node>(
           ctx, std::piecewise_construct, std::move(parent),
-          std::forward_as_tuple(std::move(child), std::move(fetcher), merge),
+          std::forward_as_tuple(memory, std::move(child), std::move(fetcher),
+                                merge),
           std::move(rule));
       });
   }

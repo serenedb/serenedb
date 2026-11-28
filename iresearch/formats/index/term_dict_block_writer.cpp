@@ -32,6 +32,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/text/fsst_footprint.hpp"
 #include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -42,6 +43,8 @@ namespace {
 
 constexpr uint64_t kFsstSampleBytes = 32 << 10;
 constexpr uint64_t kFsstMinRatioPct = 115;
+constexpr uint64_t kFsstScratchPerSampleByte = 48;
+constexpr uint64_t kBlockScratchPages = 16;
 
 struct Packing {
   uint32_t base;
@@ -282,9 +285,9 @@ void Clear(BlockBuilder& block) noexcept {
   block.kind = BlockKind::Var;
 }
 
-std::vector<unsigned char*> SampleStarts(bstring& arena,
-                                         std::span<const size_t> lengths) {
-  std::vector<unsigned char*> starts(lengths.size());
+TrackedVector<unsigned char*> SampleStarts(TrackedBstring& arena,
+                                           std::span<const size_t> lengths) {
+  TrackedVector<unsigned char*> starts(lengths.size(), arena.get_allocator());
   auto* start = arena.data();
   for (size_t i = 0; i != lengths.size(); ++i) {
     starts[i] = start;
@@ -293,13 +296,14 @@ std::vector<unsigned char*> SampleStarts(bstring& arena,
   return starts;
 }
 
-bool Compresses(duckdb_fsst_encoder_t* encoder, bstring& arena,
-                std::vector<size_t>& lengths, uint64_t table_size) {
+bool Compresses(duckdb_fsst_encoder_t* encoder, TrackedBstring& arena,
+                TrackedVector<size_t>& lengths, uint64_t table_size) {
+  const TrackedAllocator<> alloc = arena.get_allocator();
   auto starts = SampleStarts(arena, lengths);
   const uint64_t raw = arena.size();
-  bstring out(7 + 2 * raw, 0);
-  std::vector<size_t> out_lengths(lengths.size());
-  std::vector<unsigned char*> out_starts(lengths.size());
+  TrackedBstring out(7 + 2 * raw, 0, alloc);
+  TrackedVector<size_t> out_lengths(lengths.size(), alloc);
+  TrackedVector<unsigned char*> out_starts(lengths.size(), alloc);
   const size_t done = duckdb_fsst_compress(
     encoder, lengths.size(), lengths.data(), starts.data(), out.size(),
     out.data(), out_lengths.data(), out_starts.data());
@@ -521,6 +525,12 @@ void FsstEncoderDelete::operator()(
   duckdb_fsst_destroy(encoder);
 }
 
+uint64_t BlockEncoder::Bound() noexcept {
+  return codecs::text::fsst::Fsst8Footprint(0).build +
+         kFsstScratchPerSampleByte * kFsstSampleBytes +
+         kBlockScratchPages * kPage;
+}
+
 duckdb_fsst_encoder_t* BlockEncoder::Encoder() {
   if (!_fsst.trained) {
     _fsst.trained = true;
@@ -530,8 +540,9 @@ duckdb_fsst_encoder_t* BlockEncoder::Encoder() {
 }
 
 void BlockEncoder::TrainFsst() {
-  bstring arena;
-  std::vector<size_t> lengths;
+  const TrackedAllocator<> alloc = _block.keys.get_allocator();
+  TrackedBstring arena{alloc};
+  TrackedVector<size_t> lengths{alloc};
   _fsst.reader->SampleTerms(
     kFsstSampleBytes, [&](std::span<const bytes_view> run) {
       for (size_t i = 1; i < run.size(); ++i) {
@@ -547,13 +558,17 @@ void BlockEncoder::TrainFsst() {
     return;
   }
   auto starts = SampleStarts(arena, lengths);
+  const auto footprint = codecs::text::fsst::Fsst8Footprint(lengths.size());
+  MemoryCharge charge{alloc, footprint.build};
   FsstEncoder encoder{
     duckdb_fsst_create(lengths.size(), lengths.data(), starts.data(), 0)};
+  charge.Resize(footprint.kept);
   unsigned char table[FSST_MAXHEADER];
   const auto table_size = duckdb_fsst_export(encoder.get(), table);
   if (!Compresses(encoder.get(), arena, lengths, table_size)) {
     return;
   }
+  _fsst.charge = std::move(charge);
   _fsst.encoder = std::move(encoder);
   _fsst.table.assign(reinterpret_cast<const char*>(table), table_size);
 }

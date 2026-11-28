@@ -53,20 +53,23 @@ class Format10TestCase : public tests::FormatTestCase {
  protected:
   void PostingsSeek(const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
                     irs::IndexFeatures features) {
+    irs::PlanMemory memory;
     irs::FieldMeta field;
     field.index_features = features;
     auto dir = get_directory(*this);
 
     // attributes for term
-    irs::PostingsWriter writer;
+    irs::PostingsWriter writer{TestAlloc()};
     irs::PostingMeta posting_meta;
 
     // write postings for field
     {
+      irs::LocalBudget budget{irs::gRootBudget};
       irs::FlushState state{
         .tracker = dir->Tracker("segment_name"),
         .doc_count = docs.back().first + 1,
         .index_features = field.index_features,
+        .alloc = irs::TrackedAllocator<>{budget},
       };
 
       auto out = dir->Create("attributes");
@@ -140,7 +143,7 @@ class Format10TestCase : public tests::FormatTestCase {
         const auto handles = reader.Handles();
 
         auto assert_docs = [&](size_t seed, size_t inc) {
-          auto actual = tests::MakeSeekPostings(read_meta, handles,
+          auto actual = tests::MakeSeekPostings(memory, read_meta, handles,
                                                 field.index_features, features,
                                                 /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
@@ -172,9 +175,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // next + seek to eof
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
           ASSERT_EQ(docs.front().first, it->Value());
@@ -197,7 +201,7 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
             TestPostings expected(docs, field.index_features);
-            auto it = tests::MakeSeekPostings(read_meta, handles,
+            auto it = tests::MakeSeekPostings(memory, read_meta, handles,
                                               field.index_features, features,
                                               /*has_score_bounds=*/false);
             ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
@@ -219,9 +223,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::invalid()
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->Seek(irs::doc_limits::invalid())));
@@ -231,9 +236,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::eof()
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->Seek(irs::doc_limits::eof())));
           ASSERT_FALSE(!irs::doc_limits::eof(it->Next()));
@@ -254,15 +260,17 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // docs & attributes for term0
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{{6, 10}};
-  irs::PostingsWriter writer;
+  irs::PostingsWriter writer{TestAlloc()};
   irs::PostingMeta meta0, meta1;
 
   // write postings
   {
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 100,
       .index_features = field.index_features,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out = dir().Create("attributes");
@@ -410,15 +418,17 @@ TEST_P(Format10TestCase, postings_read_write) {
   // docs & attributes for term1
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
-  irs::PostingsWriter writer;
+  irs::PostingsWriter writer{TestAlloc()};
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
 
   // write postings
   {
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 150,
       .index_features = field.index_features,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out = dir().Create("attributes");
@@ -530,7 +540,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 }
 
 TEST_P(Format10TestCase, postings_writer_reuse) {
-  irs::PostingsWriter writer;
+  irs::PostingsWriter writer{TestAlloc()};
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs0;
   irs::doc_id_t i = (irs::doc_limits::min)();
@@ -554,11 +564,13 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("0"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -584,11 +596,13 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("1"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -613,11 +627,13 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("2"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -642,11 +658,13 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("3"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -670,11 +688,13 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("4"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -698,9 +718,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("5"),
       .doc_count = 10000,
+      .alloc = irs::TrackedAllocator<>{budget},
     };
 
     auto out =
@@ -741,16 +763,17 @@ TEST_P(Format10TestCase, ires336) {
   irs::FlushState flush_state{
     .tracker = dir->Tracker(segment_name),
     .doc_count = 10000,
+    .alloc = TestAlloc(),
   };
 
   irs::FieldMeta field_meta;
   field_meta.id = kFieldId;
   {
     tests::MockTermReader term_reader{trms, field_meta};
-    irs::IdxWriter idx{dir->Tracker(segment_name)};
-    irs::term_dict::FieldWriter fw{/*compaction=*/true};
+    irs::IdxWriter idx{dir->Tracker(segment_name), TestAlloc()};
+    irs::term_dict::FieldWriter fw{/*compaction=*/true, TestAlloc()};
     fw.SetIdxWriter(idx);
-    fw.prepare(flush_state, 1);
+    fw.prepare(flush_state, 1, 0);
     fw.write(irs::StringLayout::kStrings, term_reader);
     fw.end();
     idx.Commit(nullptr);
@@ -780,8 +803,9 @@ TEST_P(Format10TestCase, ires336) {
   const auto handles = field->Handles();
   const auto layout = field->meta().index_features;
   const bool bounds = field->HasScoreBounds();
+  irs::PlanMemory memory;
   auto make_docs = [&] {
-    return tests::MakeSeekPostings(term_meta, handles, layout,
+    return tests::MakeSeekPostings(memory, term_meta, handles, layout,
                                    irs::IndexFeatures::None, bounds);
   };
 
@@ -928,19 +952,22 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
   auto test_reset =
     [&](const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
         irs::IndexFeatures features) {
+      irs::PlanMemory memory;
       irs::FieldMeta field;
       field.index_features = features;
       auto dir = get_directory(*this);
 
-      irs::PostingsWriter writer;
+      irs::PostingsWriter writer{TestAlloc()};
       irs::PostingMeta posting_meta;
 
       // write postings
       {
+        irs::LocalBudget budget{irs::gRootBudget};
         irs::FlushState state{
           .tracker = dir->Tracker("segment_name"),
           .doc_count = docs.back().first + 1,
           .index_features = field.index_features,
+          .alloc = irs::TrackedAllocator<>{budget},
         };
 
         auto out = dir->Create("attributes");
@@ -992,7 +1019,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         for (size_t i = 0; i < docs.size();
              i += std::max<size_t>(1, docs.size() / 10)) {
-          auto actual = tests::MakeSeekPostings(read_meta, handles,
+          auto actual = tests::MakeSeekPostings(memory, read_meta, handles,
                                                 field.index_features, features,
                                                 /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
@@ -1091,7 +1118,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
       EXPECT_NE(nullptr, out);
       if (unknown_field) {
         irs::format_utils::WriteFooter(
-          *out, [](duckdb::BinarySerializer& footer) {
+          *out, TestAlloc(), [](duckdb::BinarySerializer& footer) {
             footer.WriteProperty<uint32_t>(0, "layout", 1);
           });
       } else {

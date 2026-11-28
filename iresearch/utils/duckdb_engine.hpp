@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb.hpp>
 #include <memory>
 
@@ -48,10 +49,16 @@ class DuckDBEngine {
   duckdb::DatabaseInstance& instance();
   duckdb::unique_ptr<duckdb::Connection> CreateConnection();
 
+  static duckdb::BufferManager* TrackingBufferManager() noexcept {
+    return gBufferManager.load(std::memory_order_acquire);
+  }
+
  private:
   DuckDBEngine() = default;
 
   duckdb::shared_ptr<duckdb::DatabaseInstance> _instance;
+  inline static constinit std::atomic<duckdb::BufferManager*> gBufferManager{
+    nullptr};
 };
 
 }  // namespace irs

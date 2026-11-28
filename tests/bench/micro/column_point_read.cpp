@@ -41,6 +41,8 @@
 #include <string>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 enum class Codec {
@@ -274,7 +276,7 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   const auto type = TypeOf(codec);
   {
     irs::FileTracker tracker{fs, root, kSeg};
-    irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
+    irs::ColWriter w{CsDb(), tracker, TestAlloc(), irs::WriteTier::Merge};
     auto& cw =
       w.OpenColumn(kField, type,
                    {.compression = CompressionOf(codec),
@@ -375,7 +377,7 @@ void Warm(benchmark::State& state, Codec codec,
           const std::vector<uint64_t>& (*rows_of)()) {
   const auto& seg = GetSeg(codec);
   const auto& rows = rows_of();
-  irs::ColumnReader::PointReader reader{*seg.reader, *seg.col};
+  irs::ColumnReader::PointReader reader{*seg.reader, *seg.col, TestAlloc()};
   duckdb::Vector out{TypeOf(codec), 1};
   FetchAll(reader, rows, 0, rows.size(), out);
   for (auto _ : state) {
@@ -391,7 +393,7 @@ void Cold(benchmark::State& state, Codec codec) {
   duckdb::Vector out{TypeOf(codec), 1};
   size_t begin = 0;
   for (auto _ : state) {
-    irs::ColumnReader::PointReader reader{*seg.reader, *seg.col};
+    irs::ColumnReader::PointReader reader{*seg.reader, *seg.col, TestAlloc()};
     FetchAll(reader, rows, begin, begin + kColdRows, out);
     begin = (begin + kColdRows) % (rows.size() - kColdRows);
   }

@@ -30,6 +30,7 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -38,12 +39,14 @@ class ReadContext;
 
 class HnswWriter final : public AnnWriter {
  public:
-  HnswWriter(AnnInfo info, HnswBases* bases);
+  HnswWriter(AnnInfo info, HnswBases* bases, TrackedAllocator<> alloc);
   ~HnswWriter() final;
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
   bool Empty() const noexcept final { return _graph.Empty(); }
+
+  static AnnFlushBound Bound(const AnnInfo& info, uint64_t rows);
 
   void SetMergeSources(std::span<const MergeSource> sources) noexcept final {
     _merge_sources = sources;
@@ -69,11 +72,11 @@ class HnswWriter final : public AnnWriter {
   const AnnBuildEnv* _env = nullptr;
   std::span<const MergeSource> _merge_sources;
   HnswGraphWriter _graph;
-  std::vector<float> _vectors;
+  TrackedVector<float> _vectors;
   std::vector<float> _rotation;
-  std::vector<float> _norms;
-  std::vector<float> _tails;
-  bstring _codes;
+  TrackedVector<float> _norms;
+  TrackedVector<float> _tails;
+  TrackedVector<byte_type> _codes;
   std::unique_ptr<QuantizerWriter> _qw;
   std::vector<float> _centroid;
   uint32_t _d = 0;

@@ -45,4 +45,24 @@ void FanOut(const AnnBuildEnv* env, size_t tasks,
   crew.Join();
 }
 
+void FanOut(const AnnBuildEnv* env, MemoryBudget& parent, size_t tasks,
+            absl::FunctionRef<void(size_t, TrackedAllocator<>)> task) {
+  std::atomic<size_t> next{0};
+  const auto work = [&](size_t) {
+    LocalBudget budget{parent};
+    for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
+      task(t, TrackedAllocator<>{budget});
+    }
+  };
+  AnnCrew crew{
+    env, static_cast<uint32_t>(std::clamp<size_t>(tasks, 1, kHnswMaxWorkers))};
+  crew.Spawn(work);
+  LocalBudget budget{parent};
+  for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
+    task(t, TrackedAllocator<>{budget});
+    crew.Grow(work);
+  }
+  crew.Join();
+}
+
 }  // namespace irs

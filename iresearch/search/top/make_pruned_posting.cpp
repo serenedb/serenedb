@@ -58,7 +58,7 @@ Root::ptr MakePrunedPosting(
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   const auto& doc = *irs::detail::DocOf(own);
-  const auto args = posting.Args(&ctx.fetcher);
+  const auto args = posting.Args(ctx.memory, &ctx.fetcher);
   return Resolve(doc, [&]<typename Input> -> Root::ptr {
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<PrunedPosting, Input, utils::Empty>(
@@ -66,7 +66,7 @@ Root::ptr MakePrunedPosting(
         segment, own, args);
     }
     return irs::detail::BuildBlockExcludesOf<Root::ptr, Input>(
-      excludes, exclude_filters, nullptr, segment,
+      ctx.memory, excludes, exclude_filters, nullptr, segment,
       PrunedCandidates(meta.docs_count, ctx), meta.docs_count,
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
         return MakeShape<PrunedPosting, Input, Exclude>(

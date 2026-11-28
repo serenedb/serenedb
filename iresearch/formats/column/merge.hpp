@@ -28,6 +28,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -51,6 +52,6 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
 std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
   duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,
-  const IndexFieldOptions* field_options);
+  const IndexFieldOptions* field_options, TrackedAllocator<> alloc);
 
 }  // namespace irs

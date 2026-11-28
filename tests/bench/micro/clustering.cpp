@@ -31,6 +31,8 @@
 #include <random>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 // Compares the clustering primitive (produce k centroids from n sample vectors)
 // across four strategies:
 //   - Lloyd            (flat k-means, main's baseline)
@@ -107,8 +109,8 @@ std::vector<float> RunHierarchical(const std::vector<float>& data, size_t n,
     static_cast<size_t>(std::lround(std::sqrt(static_cast<double>(k)))),
     size_t{2}, size_t{k}));
   auto meso =
-    irs::TrainCentroids(irs::VectorMetric::L2Sqr, data.data(), n, k_meso, d,
-                        seed, /*niter=*/8, /*nredo=*/1, meso_algo);
+    irs::TrainCentroids(TestAlloc(), irs::VectorMetric::L2Sqr, data.data(), n,
+                        k_meso, d, seed, /*niter=*/8, /*nredo=*/1, meso_algo);
   const uint32_t km = static_cast<uint32_t>(meso.size() / d);
 
   std::vector<uint32_t> label(n);
@@ -166,7 +168,7 @@ std::vector<float> RunHierarchical(const std::vector<float>& data, size_t n,
       continue;
     }
     auto c = irs::TrainCentroids(
-      irs::VectorMetric::L2Sqr, grouped.data() + offset[g] * d, counts[g],
+      TestAlloc(), irs::VectorMetric::L2Sqr, grouped.data() + offset[g] * d, counts[g],
       kg[g], d, seed, /*niter=*/5, /*nredo=*/1, irs::ClusteringAlgo::Lloyd);
     out.insert(out.end(), c.begin(), c.end());
   }
@@ -180,7 +182,7 @@ class ClusteringFixture : public benchmark::Fixture {
       data = MakeMixture(kN, kDim, kSeed);
     }
     auto warm = irs::TrainCentroids(
-      irs::VectorMetric::L2Sqr, data.data(), std::min<size_t>(kN, 4096),
+      TestAlloc(), irs::VectorMetric::L2Sqr, data.data(), std::min<size_t>(kN, 4096),
       /*k=*/64, kDim, kSeed, /*niter=*/3,
       /*nredo=*/1, irs::ClusteringAlgo::FlatSuperKMeans);
     benchmark::DoNotOptimize(warm.data());
@@ -194,8 +196,8 @@ void RunVariant(benchmark::State& state, irs::ClusteringAlgo algo,
   const uint32_t k = static_cast<uint32_t>(state.range(0));
   std::vector<float> c;
   for (auto _ : state) {
-    c = irs::TrainCentroids(irs::VectorMetric::L2Sqr, data.data(), kN, k, kDim,
-                            kSeed, /*niter=*/8, /*nredo=*/1, algo);
+    c = irs::TrainCentroids(TestAlloc(), irs::VectorMetric::L2Sqr, data.data(),
+                            kN, k, kDim, kSeed, /*niter=*/8, /*nredo=*/1, algo);
     benchmark::DoNotOptimize(c.data());
   }
   state.counters["k"] = static_cast<double>(k);

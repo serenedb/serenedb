@@ -30,6 +30,7 @@
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 #include "search/parallel.h"
 
 namespace sdb::connector {
@@ -38,9 +39,15 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
                                             uint32_t seg_idx) {
   g.Segment(seg_idx).prepare.Call([&] {
+    SDB_ASSERT(l);
+    if (!l->query_memory) {
+      absl::MutexLock lock{&g.query_memories_mutex};
+      l->query_memory = &g.query_memories.emplace_back(
+        ConnectionContext::Get(*g.client_context).Memory());
+    }
+    l->query_memory->Scratch().Rewind();
     irs::PrepareCollector* collector = nullptr;
     if (g.collector) {
-      SDB_ASSERT(l);
       if (l->thread_slot == std::numeric_limits<uint32_t>::max()) {
         l->thread_slot = g.thread_slots.fetch_add(1, std::memory_order_relaxed);
         SDB_ASSERT(l->thread_slot < g.collect_threads);
@@ -50,6 +57,7 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     const auto& segment = (*g.reader)[seg_idx];
     const auto parallel = search::ParallelOn(*g.client_context);
     const irs::PrepareContext ctx{
+      .memory = *l->query_memory,
       .collector = collector,
       .thread = collector != nullptr ? l->thread_slot : 0,
       .needs_terms = g.needs_terms,

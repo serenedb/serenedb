@@ -29,13 +29,45 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::term_dict {
+namespace {
+
+constexpr uint64_t kTermBytes = 64;
+constexpr uint64_t kDocBytes = 1;
+constexpr uint64_t kVecDocBytes = 2 * sizeof(doc_id_t);
+
+uint64_t DictBound(uint64_t terms, uint64_t docs, bool vec) noexcept {
+  return BlockEncoder::Bound() + kTermBytes * terms +
+         (kDocBytes + (vec ? kVecDocBytes : 0)) * docs;
+}
+
+}  // namespace
+
+FieldWriter::FieldWriter(bool compaction, TrackedAllocator<> alloc)
+  : _alloc{alloc},
+    _pw{alloc},
+    _encoder{alloc},
+    _records{alloc},
+    _ranges{alloc},
+    _index{alloc},
+    _key_prefix{alloc},
+    _min{alloc},
+    _last{alloc},
+    _separators{alloc},
+    _sections{alloc},
+    _compaction{compaction} {}
 
 bool FieldWriter::OwnsBlock() const noexcept {
   return _first_block != kNoBlock &&
          (_first_block != _blocks || _first_entry == 0);
 }
 
-void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
+uint64_t FieldWriter::Bound(uint64_t terms, uint64_t docs, bool ranges,
+                            bool vec) noexcept {
+  return DictBound(terms, docs, vec) + (ranges ? RangeWriter::Bound(docs) : 0);
+}
+
+void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
+                          uint64_t terms) {
   SDB_ASSERT(_idx);
   if (keyed_dicts > OrdinalLimit(kMaxOrdinalBytes)) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -44,6 +76,7 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
                             OrdinalLimit(kMaxOrdinalBytes)));
   }
   Reset();
+  SDB_ASSERT(state.alloc == _alloc);
   _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
   _out = &_idx->BlocksOut();
@@ -354,12 +387,13 @@ void FieldWriter::ResetField() noexcept {
 
 void FieldWriter::Reset() noexcept {
   ResetField();
+  _ranges.Shrink();
   _encoder.Reset();
   _records.Clear();
   _spans.clear();
   _heads.clear();
   _last.clear();
-  _separators = {};
+  _separators = Separators{_alloc};
   _sections.clear();
   _first_page = 0;
   _blocks = 0;
@@ -380,7 +414,7 @@ void FieldWriter::end() {
     const auto separators_size = out.Position() - blocks_end;
     uint32_t ordinal = 0;
     size_t gated = 0;
-    bstring prefix;
+    TrackedBstring prefix{_alloc};
     const auto write_index = [&](FieldHead& head) {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, _ordinal_bytes);
@@ -388,13 +422,12 @@ void FieldWriter::end() {
       if (blocks == 1) {
         return;
       }
-      DictSections sections;
-      if (GatesTerms(head.member, head.width)) {
-        sections = std::move(_sections[gated++]);
-      }
+      DictSections sections = GatesTerms(head.member, head.width)
+                                ? std::move(_sections[gated++])
+                                : EmptySections(_alloc);
       const auto at = out.Position();
-      DictIndex{head, prefix, blocks, _separators, std::move(sections)}.Write(
-        out);
+      DictIndex{head, prefix, blocks, _separators, std::move(sections), _alloc}
+        .Write(out);
       head.index.size = out.Position() - at;
     };
     for (auto& head : _heads) {
@@ -421,6 +454,7 @@ void FieldWriter::end() {
     _idx->SetTerms(std::move(terms));
   }
   Reset();
+  _alloc.Budget().Trim();
   _idx = nullptr;
   _out = nullptr;
 }

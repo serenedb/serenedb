@@ -30,7 +30,7 @@
 
 namespace irs::top {
 
-class UnionMember : public memory::Managed {
+class UnionMember : public memory::Managed, public memory::ArenaOnly {
  public:
   using ptr = memory::managed_ptr<UnionMember>;
   using Visit = absl::FunctionRef<void(doc_id_t*, uint32_t, score_t*)>;

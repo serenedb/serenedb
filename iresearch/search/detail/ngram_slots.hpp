@@ -29,6 +29,7 @@
 
 #include "iresearch/search/detail/ngram_matcher.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -40,12 +41,13 @@ class NGramSlots {
   static_assert(!Offs || Leaf::kOffsets);
 
   template<typename Init>
-  NGramSlots(size_t size, Init&& init, uint32_t min_match, size_t total_terms)
-    : _leaves{size, std::forward<Init>(init)},
-      _live{size,
+  NGramSlots(PlanMemory& memory, size_t size, Init&& init, uint32_t min_match,
+             size_t total_terms)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)},
+      _live{memory.Arena(), size,
             [this](Leaf*& slot, size_t i) noexcept { slot = &_leaves[i]; }},
       _live_count{size},
-      _matcher{size, total_terms, min_match},
+      _matcher{memory, size, total_terms, min_match},
       _min_match{min_match} {
     for (size_t i = 0; i != size; ++i) {
       _matcher.Slot(i) = {_leaves[i].ValueRef(), _leaves[i].Positions()};

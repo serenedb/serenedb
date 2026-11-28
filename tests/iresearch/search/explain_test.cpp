@@ -201,8 +201,7 @@ class ExplainTest : public IndexTestBase {
                                                  float tolerance) {
     auto& run = *_runs.emplace_back(std::make_unique<ExplainRun>());
     run.index = open_reader();
-    const auto& prepared =
-      run.prepared.emplace(filter, run.index, &scorer, run.counter);
+    const auto& prepared = run.prepared.emplace(filter, run.index, &scorer);
     filter.ExplainStats(prepared.Collector(), run.stats);
     const auto rows = Execute(prepared);
     EXPECT_FALSE(rows.empty());
@@ -212,7 +211,8 @@ class ExplainTest : public IndexTestBase {
         continue;
       }
       auto& plan = *run.plans.emplace_back(
-        irs::explain::MakePlan(*query, scorer, run.stats, filter));
+        irs::explain::MakePlan(irs::gRootBudget, *query, scorer, run.stats,
+                               filter));
       for (const auto& row : rows) {
         if (row.segment != segment) {
           continue;
@@ -232,7 +232,6 @@ class ExplainTest : public IndexTestBase {
  private:
   struct ExplainRun {
     irs::CompositeReader index;
-    MaxMemoryCounter counter;
     std::optional<tests::PreparedFilter> prepared;
     irs::explain::StatsIndex stats;
     std::vector<std::unique_ptr<irs::explain::Explainer>> plans;
@@ -610,14 +609,14 @@ TEST_P(ExplainTest, rows_in_any_order_are_explained) {
   irs::BM25 bm25;
   const auto filter = AnyOf({"quick", "fox"});
   auto index = open_reader();
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{*filter, index, &bm25, counter};
+  tests::PreparedFilter prepared{*filter, index, &bm25};
   irs::explain::StatsIndex stats;
   filter->ExplainStats(prepared.Collector(), stats);
   const auto rows = Execute(prepared);
   for (size_t segment = 0; segment != prepared.size(); ++segment) {
     const auto plan =
-      irs::explain::MakePlan(*prepared.Query(segment), bm25, stats, *filter);
+      irs::explain::MakePlan(irs::gRootBudget, *prepared.Query(segment), bm25,
+                             stats, *filter);
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
       if (it->segment != segment) {
         continue;

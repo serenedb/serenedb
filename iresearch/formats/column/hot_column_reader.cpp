@@ -242,7 +242,8 @@ std::unique_ptr<ColumnReader> HotColumnReader::Make(
 
 std::unique_ptr<ColumnReader> HotColumnReader::Concat(
   duckdb::DatabaseInstance& db, field_id id, const duckdb::LogicalType& type,
-  DistinctStats distinct, std::span<const HotColumnPart> parts) {
+  DistinctStats distinct, std::span<const HotColumnPart> parts,
+  TrackedAllocator<> alloc) {
   uint64_t left = 0;
   for (const auto& part : parts) {
     left += part.rows;
@@ -301,9 +302,9 @@ std::unique_ptr<ColumnReader> HotColumnReader::Concat(
     if (part.column->Patched()) {
       const auto rows = part.column->RowCount();
       SDB_ASSERT(part.column->Type() == type && rows <= part.rows);
-      ReadContext ctx{db};
+      ReadContext ctx{db, alloc};
       auto state = part.column->InitScan(ctx);
-      VectorScratch scratch{type};
+      VectorScratch scratch{type, alloc};
       for (uint64_t row = 0; row < rows;) {
         const auto take = static_cast<duckdb::idx_t>(
           std::min<uint64_t>(rows - row, STANDARD_VECTOR_SIZE));
@@ -410,15 +411,19 @@ HotColumnReader::HotColumnReader(
   std::vector<std::unique_ptr<ColumnReader>> children)
   : ColumnReader{id, std::move(type), std::move(blocks), nullptr,
                  std::move(children)},
+    _charge{TrackedAllocator<>{_budget}},
     _chunks{std::move(chunks)} {
   _in_memory = true;
   _starts.reserve(_chunks.size() + 1);
   uint64_t rows = 0;
+  uint64_t bytes = _starts.capacity() * sizeof(uint64_t);
   _starts.push_back(rows);
   for (const auto& chunk : _chunks) {
     rows += chunk.count;
+    bytes += chunk.data.GetAllocationSize();
     _starts.push_back(rows);
   }
+  _charge.Resize(bytes);
   _row_count = rows;
   if (DataBlocks().empty()) {
     _stats = duckdb::BaseStatistics::CreateUnknown(_type).ToUnique();

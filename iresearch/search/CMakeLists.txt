@@ -82,10 +82,10 @@ sdb_instantiation_axis(
     IRS_PLANS
     "count FAMILY=count::Family CTX=count::Context MAKER=DocsMaker INCLUDE=iresearch/search/count/family.hpp"
     "docs FAMILY=docs::Family CTX=docs::Context MAKER=DocsMaker INCLUDE=iresearch/search/docs/family.hpp"
-    "fill_docs FAMILY=fill::Family CTX=utils::Empty MAKER=DocsMaker INCLUDE=iresearch/search/fill/family.hpp"
+    "fill_docs FAMILY=fill::Family CTX=fill::Family::DocsContext MAKER=DocsMaker INCLUDE=iresearch/search/fill/family.hpp"
     "fill_scored FAMILY=fill::Family CTX=fill::Family::ScoredContext MAKER=ScoredMaker INCLUDE=iresearch/search/fill/family.hpp"
     "hits FAMILY=hits::Family CTX=hits::Context MAKER=ScoredMaker INCLUDE=iresearch/search/hits/family.hpp"
-    "lead_docs FAMILY=lead::Family CTX=utils::Empty MAKER=DocsMaker INCLUDE=iresearch/search/lead/family.hpp"
+    "lead_docs FAMILY=lead::Family CTX=lead::Family::DocsContext MAKER=DocsMaker INCLUDE=iresearch/search/lead/family.hpp"
     "lead_scored FAMILY=lead::Family CTX=ScoredCtx MAKER=ScoredMaker INCLUDE=iresearch/search/lead/family.hpp"
     "probe_docs FAMILY=probe::Family CTX=probe::Family::DocsContext MAKER=DocsMaker INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"
     "probe_scored FAMILY=probe::Family CTX=probe::Family::ScoredContext MAKER=ScoredMaker INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"

@@ -60,6 +60,8 @@
 #include <string>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 constexpr irs::field_id kField = 0;
@@ -117,7 +119,8 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
   const auto col_type = qr->GetTypes()[0];
   {
     irs::FileTracker tracker{blk->fs, kRoot, kSegName};
-    irs::ColWriter writer{CsDb(), tracker, irs::WriteTier::Merge};
+    irs::ColWriter writer{CsDb(), tracker, TestAlloc(),
+                          irs::WriteTier::Merge};
     auto& cw = writer.OpenColumn(kField, col_type);
     uint64_t pos = 0;
     while (auto chunk = qr->Fetch()) {
@@ -147,7 +150,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
     }
   }
   blk->type = col->Type();
-  blk->ctx = std::make_unique<irs::ReadContext>(*blk->reader);
+  blk->ctx = std::make_unique<irs::ReadContext>(*blk->reader, TestAlloc());
   blk->block = col->OpenSegment(0, *blk->ctx);
   blk->rows = blk->block->count;
   const auto& fn = blk->block->function;

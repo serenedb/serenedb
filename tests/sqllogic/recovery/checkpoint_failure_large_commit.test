@@ -1,0 +1,40 @@
+# A commit large enough to finish with an automatic checkpoint stays durable
+# when that checkpoint fails.
+
+control substitution on
+
+statement ok
+CREATE TABLE lc (id BIGINT);
+
+statement ok
+INSERT INTO lc VALUES (1);
+
+statement ok
+SET GLOBAL checkpoint_threshold = '1KB';
+
+statement ok
+SET debug_checkpoint_abort = 'before_header_non_fatal';
+
+statement ok
+INSERT INTO lc SELECT i FROM range(100, 50100) t(i);
+
+query
+SELECT count(*) FROM lc;
+----
+count
+50001
+
+statement ok
+RESET debug_checkpoint_abort;
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM lc;
+----
+count
+50001

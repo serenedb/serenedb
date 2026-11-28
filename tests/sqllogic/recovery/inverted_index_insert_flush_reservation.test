@@ -1,0 +1,74 @@
+# An INSERT checks that the memory its index segment needs to flush is free.
+# When it is not, the INSERT fails before the WAL: the table and its index stay
+# in sync, and checkpoints and restarts keep working.
+
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fr_words AS
+  split_text_csv(' ') WITH (frequency, position);
+
+statement ok
+CREATE TABLE fr (id BIGINT, body TEXT) WITH (compaction_interval = 0);
+
+statement ok
+CREATE INDEX fr_idx ON fr USING inverted (body fr_words);
+
+statement ok
+INSERT INTO fr SELECT i, 'seed' FROM range(1000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) fr;
+
+statement ok
+SET GLOBAL memory_limit = '256MB';
+
+statement error
+INSERT INTO fr
+  SELECT i, repeat('alpha beta gamma delta ', 5) FROM range(1000, 2001000) t(i);
+----
+db error: ERROR: <slt:ignore>failed to reserve memory data of size <slt:ignore>
+
+
+statement ok
+RESET GLOBAL memory_limit;
+
+query
+SELECT count(*) AS n FROM fr;
+----
+n
+1000
+
+statement ok
+VACUUM (FLUSH_TABLE) fr;
+
+query
+SELECT (SELECT count(*) FROM fr_idx) AS indexed,
+       (SELECT count(*) FROM fr_idx WHERE body @@ 'seed') AS seed;
+----
+indexed	seed
+1000	1000
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM fr;
+----
+n
+1000
+
+connection after_restart
+query
+SELECT count(*) AS indexed FROM fr_idx WHERE body @@ 'seed';
+----
+indexed
+1000

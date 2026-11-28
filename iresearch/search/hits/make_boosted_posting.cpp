@@ -56,17 +56,16 @@ Root::ptr Family::MakeBoosted(
       !irs::detail::FreqOf(own) || !irs::detail::FreqOf(boost_own)) {
     return {};
   }
-  const auto args = lead.Args(&ctx.fetcher);
-  const auto boost_args = boost.Args(&ctx.fetcher);
+  const auto args = lead.Args(ctx.memory, &ctx.fetcher);
+  const auto boost_args = boost.Args(ctx.memory, &ctx.fetcher);
   if (irs::detail::ConstantOf(segment, own, args) ||
       irs::detail::ConstantOf(segment, boost_own, boost_args)) {
     return {};
   }
   return Resolve(*doc, [&]<typename Input> -> Root::ptr {
-    auto root =
-      memory::make_managed<Posting<Input, BoostTerm<Input>, utils::Empty>>(
-        std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
-        std::forward_as_tuple());
+    auto root = ctx.memory.Make<Posting<Input, BoostTerm<Input>, utils::Empty>>(
+      std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
+      std::forward_as_tuple());
     root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
                   irs::detail::BoundsOf(own));
     root->Optional().Prepare(boost_meta, *doc, segment, boost_own, boost_args);

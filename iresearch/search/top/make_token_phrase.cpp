@@ -49,7 +49,7 @@ class PrunedTokenPhrase : public Root {
                     lead::Node::ptr&& approx,
                     const irs::detail::ScoreArgs& args)
     : _approx{std::move(approx)},
-      _rows{query, true},
+      _rows{query, true, args.memory->Allocator()},
       _fetcher{*args.fetcher},
       _admit{table} {
     const auto& field = query.Reader();
@@ -167,11 +167,12 @@ Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
   if (!record.stats || !HasScoreBounds(record.scorer)) {
     return {};
   }
-  auto approx = query.Approx().PlanLead({});
+  auto approx = query.Approx().PlanLead({.memory = ctx.memory});
   if (!approx) {
     return {};
   }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
+                                    .scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};

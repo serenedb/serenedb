@@ -25,6 +25,7 @@
 
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
@@ -33,9 +34,9 @@ template<Type Leaf>
 class DisjointDisjunction {
  public:
   template<typename Init>
-  DisjointDisjunction(size_t size, Init&& init)
-    : _leaves{size, std::forward<Init>(init)},
-      _heads{size,
+  DisjointDisjunction(PlanMemory& memory, size_t size, Init&& init)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)},
+      _heads{memory.Arena(), size,
              [this](Head& head, size_t i) noexcept {
                head = {.doc = doc_limits::invalid(), .leaf = &_leaves[i]};
              }},

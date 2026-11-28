@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <roaring/roaring64.h>
 
 #include <cstdint>
@@ -33,6 +34,7 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <roaring/roaring.hh>
 #include <set>
@@ -155,9 +157,10 @@ class ReindexRemovesTest : public ::testing::Test {
     const std::vector<uint64_t>& deleted_files,
     const std::vector<IcebergObserve::DeleteMask>& masks = {},
     std::vector<Row> eq_rows = {}) const {
+    absl::c_sort(eq_rows);
     const auto snapshot = _writer->GetSnapshot();
     return test::RemovedDocs(
-      *ResolveRemoves(snapshot, deleted_files, masks, std::move(eq_rows))
+      *ResolveRemoves(irs::gRootBudget, snapshot, deleted_files, masks, eq_rows)
          .Finish(snapshot));
   }
 
@@ -202,14 +205,17 @@ TEST_F(ReindexRemovesTest, ARemovalNamesItsSegments) {
   const auto segment = AddFile(1, Rows(0, 4));
   const auto snapshot = _writer->GetSnapshot();
   const std::vector<uint64_t> files{1};
-  const auto removal = ResolveRemoves(snapshot, files, {}, {}).Finish(snapshot);
+  const auto removal =
+    ResolveRemoves(irs::gRootBudget, snapshot, files, {}, {}).Finish(snapshot);
   ASSERT_EQ(1, removal->groups.size());
   EXPECT_EQ(segment, removal->groups.front().segment);
 }
 
 TEST_F(ReindexRemovesTest, NothingToRemoveIsNoRemoval) {
   AddFile(1, Rows(0, 4));
-  EXPECT_TRUE(ResolveRemoves(_writer->GetSnapshot(), {}, {}, {}).Empty());
+  EXPECT_TRUE(
+    ResolveRemoves(irs::gRootBudget, _writer->GetSnapshot(), {}, {}, {})
+      .Empty());
   EXPECT_TRUE(Resolve({7}).empty());
   EXPECT_TRUE(Resolve({}, {}, {{7, 0}}).empty());
 }

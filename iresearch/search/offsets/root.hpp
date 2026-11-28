@@ -34,7 +34,7 @@ struct Range {
   uint32_t end;
 };
 
-struct Root : memory::Managed {
+struct Root : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Root>;
 
   virtual uint32_t Run(doc_id_t doc, std::span<Range> out) = 0;

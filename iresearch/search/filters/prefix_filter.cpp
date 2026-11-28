@@ -136,8 +136,8 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   if (!reader) {
     return QueryBuilder::Empty();
   }
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, options.merge);
+  auto query = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, ctx.boost,
+                                               options.merge);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
   ByPrefixIterator terms{*reader, options.term};
   if (!terms.next()) {
@@ -180,9 +180,8 @@ QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
   }
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
-  auto query = memory::make_tracked<MultiTermQuery>(
-    sub_ctx.memory, segment, sub_ctx.memory, sub_ctx.boost,
-    ScoreMergeType::Max);
+  auto query = ctx.memory.Make<MultiTermQuery>(
+    ctx.memory, segment, sub_ctx.boost, ScoreMergeType::Max);
   MultiTermVisitor mtv{sub_ctx, query->State(), *reader};
   ByPrefixesIterator terms{*reader, options().Prefixes()};
   if (!terms.next()) {

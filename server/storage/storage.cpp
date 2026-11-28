@@ -21,14 +21,18 @@
 
 #include "storage/storage.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/flags/flag.h>
 
+#include <cstdint>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <exception>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <utility>
 
@@ -77,13 +81,18 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
     initialized = Lock(config.directory);
     network::pg::hba::SetHbaConfig(config.hba_config);
   }
+  absl::Cleanup close = [&] { Close(); };
   try {
     catalog::InitCatalog(config.default_database, initialized);
     _search.Start();
-  } catch (...) {
-    Close();
-    throw;
+  } catch (const duckdb::OutOfMemoryException& e) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+      ERR_MSG("replaying the logs at startup does not fit in memory_limit: ",
+              duckdb::ErrorData{e}.RawMessage()),
+      ERR_HINT("Raise memory_limit in the server configuration."));
   }
+  std::move(close).Cancel();
 }
 
 Storage::~Storage() { Close(); }

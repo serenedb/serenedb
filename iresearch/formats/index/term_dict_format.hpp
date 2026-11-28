@@ -151,8 +151,7 @@ constexpr uint64_t OrdinalLimit(uint32_t ordinal_bytes) noexcept {
   return uint64_t{1} << (8 * ordinal_bytes);
 }
 
-inline void AppendOrdinal(bstring& out, uint32_t ordinal,
-                          uint32_t ordinal_bytes) {
+void AppendOrdinal(auto& out, uint32_t ordinal, uint32_t ordinal_bytes) {
   SDB_ASSERT(ordinal_bytes != 0 && ordinal_bytes <= kMaxOrdinalBytes);
   SDB_ASSERT(ordinal < OrdinalLimit(ordinal_bytes));
   byte_type bytes[kMaxOrdinalBytes];

@@ -40,6 +40,7 @@
 #include "iresearch/formats/column/codecs/numeric/bitpacking_blocks.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::numeric {
 
@@ -55,7 +56,8 @@ class Values final : public State {
     uint8_t stored = 0;
   };
 
-  explicit Values(ColumnDataCheckpointData& data) : _chunks{data.rows.chunks} {
+  explicit Values(ColumnDataCheckpointData& data)
+    : Values{data.rows.chunks, data.Allocator()} {
     if (!ReadInPlace()) {
       Gather(data.rows.count);
     }
@@ -64,7 +66,7 @@ class Values final : public State {
 
   Values(ColumnDataCheckpointData& data, std::span<const U> run_values,
          std::span<const uint32_t> run_rows)
-    : _chunks{data.rows.chunks} {
+    : Values{data.rows.chunks, data.Allocator()} {
     SDB_VERIFY(ReadInPlace());
     MeasureRuns(run_values, run_rows);
   }
@@ -219,6 +221,15 @@ class Values final : public State {
   }
 
  private:
+  Values(std::span<const WriteChunk> chunks, TrackedAllocator<> allocator)
+    : _chunks{chunks},
+      _blocks{allocator},
+      _bounds{allocator},
+      _null_blocks{allocator},
+      _owned{allocator},
+      _divided_bounds{allocator},
+      _divided{allocator} {}
+
   bool ReadInPlace() {
     if constexpr (std::is_integral_v<T>) {
       size_t rows = 0;
@@ -605,10 +616,10 @@ class Values final : public State {
 
   std::span<const WriteChunk> _chunks;
   duckdb::StatsWriter<T> _stats;
-  std::vector<const U*> _blocks;
-  std::vector<BlockBounds<U>> _bounds;
-  std::vector<uint8_t> _null_blocks;
-  ScratchVector<U> _owned;
+  TrackedVector<const U*> _blocks;
+  TrackedVector<BlockBounds<U>> _bounds;
+  TrackedVector<uint8_t> _null_blocks;
+  TrackedScratchVector<U> _owned;
   std::span<const U> _values;
   size_t _size = 0;
   U _lo = 0;
@@ -619,8 +630,8 @@ class Values final : public State {
   uint32_t _runs = 0;
   bool _any_valid = false;
   bool _sequence = false;
-  std::vector<BlockBounds<U>> _divided_bounds;
-  ScratchVector<U> _divided;
+  TrackedVector<BlockBounds<U>> _divided_bounds;
+  TrackedScratchVector<U> _divided;
   U _scale = 0;
 };
 

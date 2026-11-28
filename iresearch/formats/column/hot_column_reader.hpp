@@ -32,6 +32,7 @@
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace duckdb {
 
@@ -73,7 +74,8 @@ class HotColumnReader final : public ColumnReader {
 
   static std::unique_ptr<ColumnReader> Concat(
     duckdb::DatabaseInstance& db, field_id id, const duckdb::LogicalType& type,
-    DistinctStats distinct, std::span<const HotColumnPart> parts);
+    DistinctStats distinct, std::span<const HotColumnPart> parts,
+    TrackedAllocator<> alloc);
 
   HotColumnReader(field_id id, duckdb::LogicalType type,
                   std::vector<ColumnBlockMeta> blocks,
@@ -128,6 +130,8 @@ class HotColumnReader final : public ColumnReader {
   void CopyRows(uint64_t row, duckdb::idx_t count, duckdb::Vector& out,
                 duckdb::idx_t out_offset, bool share_strings) const;
 
+  LocalBudget _budget{gRootBudget};
+  MemoryCharge _charge;
   std::vector<WriteChunk> _chunks;
   std::vector<uint64_t> _starts;
 };

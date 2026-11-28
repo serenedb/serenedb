@@ -24,16 +24,18 @@
 
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::count {
 
 struct Context {
+  PlanMemory& memory;
   detail::TableFilter* table = nullptr;
   doc_id_t span = 0;
   bool partial = false;
 };
 
-struct Root : memory::Managed {
+struct Root : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Root>;
 
   virtual uint64_t Run(doc_id_t min, doc_id_t max) = 0;

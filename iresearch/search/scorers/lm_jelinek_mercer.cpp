@@ -132,8 +132,9 @@ ScoreBoundWriter::ptr LMJelinekMercer::PrepareScoreBoundWriter() const {
   return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>();
 }
 
-ScoreBoundSource::ptr LMJelinekMercer::PrepareScoreBoundSource() const {
-  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+ScoreBoundSource::ptr LMJelinekMercer::PrepareScoreBoundSource(
+  PlanMemory& memory) const {
+  return memory.Make<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
 bool LMJelinekMercer::Compatible(

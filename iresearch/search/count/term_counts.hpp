@@ -27,6 +27,7 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::detail {
 
@@ -35,7 +36,7 @@ class LazyBitset;
 }  // namespace irs::detail
 namespace irs::count {
 
-struct TermCounts : memory::Managed {
+struct TermCounts : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<TermCounts>;
 
   static constexpr uint32_t kNoOrdinal = std::numeric_limits<uint32_t>::max();
@@ -49,7 +50,7 @@ struct TermCounts : memory::Managed {
   virtual bool Any(const PostingMeta& term) = 0;
 };
 
-TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,
-                               size_t terms);
+TermCounts::ptr MakeTermCounts(PlanMemory& memory, detail::LazyBitset& set,
+                               const TermReader& field, size_t terms);
 
 }  // namespace irs::count

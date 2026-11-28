@@ -27,6 +27,7 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <limits>
 #include <optional>
@@ -37,15 +38,16 @@
 #include <vector>
 
 #include "iresearch/formats/column/internal/write_chunk.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/system_compiler.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
 WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count);
 
-void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
+void SliceChunks(TrackedVector<WriteChunk>& out, const duckdb::Vector& vec,
                  duckdb::idx_t base, duckdb::idx_t count);
 
 struct ListRep {
@@ -61,11 +63,18 @@ class ListKeys {
   static constexpr size_t kSource = 0;
   static constexpr size_t kStore = 1;
 
+  explicit ListKeys(TrackedAllocator<> alloc)
+    : _chunks{Node::Empty(alloc), Node::Empty(alloc)} {}
+
   void SetChunk(size_t index, const duckdb::Vector& child) {
     _chunks[index].Assign(child);
   }
 
-  void Clear() noexcept { _chunks = {}; }
+  void Clear() noexcept {
+    for (auto& chunk : _chunks) {
+      chunk = Node::Empty(chunk.children.get_allocator());
+    }
+  }
 
   inline uint64_t Hash(uint64_t offset, uint64_t length) const;
 
@@ -90,9 +99,15 @@ class ListKeys {
     bool flat = false;
     bool all_valid = false;
     duckdb::idx_t width = 0;
-    std::vector<Node> children;
+    TrackedVector<Node> children;
+
+    static Node Empty(const TrackedAllocator<Node>& alloc) {
+      return {.children = TrackedVector<Node>{alloc}};
+    }
 
     void Assign(const duckdb::Vector& vec);
+
+    void Resize(size_t size);
 
     duckdb::idx_t Index(uint64_t e) const {
       return flat ? e : format.sel->get_index(e);
@@ -136,9 +151,10 @@ class ListKeys {
 };
 
 struct ListParts {
-  std::vector<uint64_t> codes;
-  std::vector<uint64_t> ends;
-  std::vector<WriteChunk> elems;
+  MemoryCharge copied;
+  TrackedVector<uint64_t> codes;
+  TrackedVector<uint64_t> ends;
+  TrackedVector<WriteChunk> elems;
   uint64_t elem_count = 0;
   uint64_t distinct = 0;
   uint64_t next_code = 0;
@@ -147,8 +163,8 @@ struct ListParts {
 
 class ListIngest {
  public:
-  ListIngest(const duckdb::LogicalType& type, bool borrow,
-             uint64_t code_base = 0, uint64_t running = 0);
+  ListIngest(TrackedAllocator<> alloc, const duckdb::LogicalType& type,
+             bool borrow, uint64_t code_base = 0, uint64_t running = 0);
 
   void AddNulls(duckdb::idx_t count);
 
@@ -157,6 +173,17 @@ class ListIngest {
   void CheckDistinct();
 
   ListParts Take();
+
+  template<typename Visit>
+  void VisitElements(Visit&& visit) const {
+    for (const auto& chunk : _elems) {
+      visit(chunk.data, chunk.count);
+    }
+    if (_tail) {
+      visit(duckdb::ListVector::GetChild(*_tail),
+            duckdb::ListVector::GetListSize(*_tail));
+    }
+  }
 
  private:
   static constexpr uint32_t kNoRep = std::numeric_limits<uint32_t>::max();
@@ -172,6 +199,8 @@ class ListIngest {
   void Reset(uint64_t code_base, uint64_t running);
 
   duckdb::Vector& Tail();
+
+  void ChargeTail();
 
   void FlushTail();
 
@@ -224,17 +253,19 @@ class ListIngest {
   uint64_t _off_chunks = 0;
   bool _sequence = true;
   uint32_t _prev = kNoRep;
-  std::vector<uint64_t> _codes;
-  std::vector<uint64_t> _ends;
-  std::vector<WriteChunk> _elems;
+  TrackedVector<uint64_t> _codes;
+  TrackedVector<uint64_t> _ends;
+  MemoryCharge _copied;
+  uint64_t _flushed = 0;
+  TrackedVector<WriteChunk> _elems;
   std::optional<duckdb::Vector> _tail;
   ListKeys _keys;
-  containers::FlatHashMap<uint64_t, uint32_t> _heads;
-  std::vector<ListRep> _reps;
-  std::vector<Fresh> _fresh;
-  std::vector<duckdb::sel_t> _picked;
-  std::string _source;
-  std::vector<uint64_t> _source_codes;
+  containers::TrackedFlatHashMap<uint64_t, uint32_t> _heads;
+  TrackedVector<ListRep> _reps;
+  TrackedVector<Fresh> _fresh;
+  TrackedVector<duckdb::sel_t> _picked;
+  TrackedString _source;
+  TrackedVector<uint64_t> _source_codes;
 };
 
 }  // namespace irs

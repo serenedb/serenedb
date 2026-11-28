@@ -32,16 +32,20 @@
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::lead {
 
-Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+Node::ptr MakePostingDocs(PlanMemory& memory,
+                          const detail::PostingClause& posting,
                           const SubReader& segment);
-Node::ptr MakePostingScored(const detail::PostingClause& posting,
+Node::ptr MakePostingScored(PlanMemory& memory,
+                            const detail::PostingClause& posting,
                             const SubReader& segment,
                             const detail::ScoreRecipe& recipe);
 
-Node::ptr MakeAllDocs(const SubReader& segment);
-Node::ptr MakeAllScored(const SubReader& segment, score_t score);
+Node::ptr MakeAllDocs(PlanMemory& memory, const SubReader& segment);
+Node::ptr MakeAllScored(PlanMemory& memory, const SubReader& segment,
+                        score_t score);
 
 }  // namespace irs::lead

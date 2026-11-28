@@ -100,6 +100,19 @@ bool SuperKMeansGate(uint32_t d, uint32_t k, uint32_t min_k) {
   return d >= kSuperKMeansMinD && k >= min_k;
 }
 
+constexpr size_t kBlasScratch = size_t{16} << 20;
+
+size_t SuperKMeansBound(size_t n, size_t k, size_t d) noexcept {
+  return sizeof(float) * (n * d + 2 * d * d + 4 * k * d) + 48 * n +
+         2 * kBlasScratch;
+}
+
+size_t LloydBound(size_t n, size_t k, size_t d) noexcept {
+  const bool blas =
+    n * d >= static_cast<size_t>(faiss::distance_compute_blas_threshold);
+  return sizeof(float) * 4 * k * d + 24 * n + (blas ? kBlasScratch : 0);
+}
+
 }  // namespace
 
 bool UsesSuperKMeans(VectorMetric metric, size_t n, uint32_t k, uint32_t d,
@@ -185,6 +198,15 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
   }
 }
 
+size_t TrainCentroidsBound(VectorMetric metric, size_t n, uint32_t k,
+                           uint32_t d) noexcept {
+  k = static_cast<uint32_t>(std::min<size_t>(k, n));
+  const auto lloyd = LloydBound(n, k, d);
+  return UsesSuperKMeans(metric, n, k, d)
+           ? std::max(SuperKMeansBound(n, k, d), lloyd)
+           : lloyd;
+}
+
 namespace {
 
 auto TrainablePredicate(size_t d) {
@@ -199,7 +221,7 @@ auto TrainablePredicate(size_t d) {
 }  // namespace
 
 std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
-                                     std::vector<float>& kept) {
+                                     TrackedVector<float>& kept) {
   const auto trainable = TrainablePredicate(d);
   const size_t n = rows.size() / d;
   size_t i = 0;
@@ -221,7 +243,7 @@ std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
   return kept;
 }
 
-void KeepTrainableRows(std::vector<float>& rows, size_t d) {
+void KeepTrainableRows(TrackedVector<float>& rows, size_t d) {
   const auto trainable = TrainablePredicate(d);
   const size_t n = rows.size() / d;
   size_t kept = 0;
@@ -241,16 +263,19 @@ void KeepTrainableRows(std::vector<float>& rows, size_t d) {
   }
 }
 
-std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
-                                  size_t n, uint32_t k, uint32_t d,
-                                  uint32_t seed, uint32_t niter, uint32_t nredo,
-                                  ClusteringAlgo algo, const float* rotation) {
+std::vector<float> TrainCentroids(TrackedAllocator<> alloc, VectorMetric metric,
+                                  const float* data, size_t n, uint32_t k,
+                                  uint32_t d, uint32_t seed, uint32_t niter,
+                                  uint32_t nredo, ClusteringAlgo algo,
+                                  const float* rotation) {
   if (n == 0 || k == 0) {
     return {};
   }
   const bool use_skm = UsesSuperKMeans(metric, n, k, d, algo);
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
   const bool angular = VectorMetricIsAngular(metric);
+  MemoryCharge charge{
+    alloc, use_skm ? SuperKMeansBound(n, k, d) : LloydBound(n, k, d)};
   if (!use_skm) {
     return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/angular);
   }

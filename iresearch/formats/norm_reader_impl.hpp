@@ -36,6 +36,7 @@
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -552,6 +553,19 @@ inline memory::managed_ptr<NormReader> MakePersistedNormReader(
       return memory::make_managed<PersistedNormReader<false, Paged>>(column);
     }
     return memory::make_managed<PersistedNormReader<true, Paged>>(column);
+  };
+  return column.Paged() ? make.template operator()<true>()
+                        : make.template operator()<false>();
+}
+
+inline memory::managed_ptr<NormReader> MakePersistedNormReader(
+  PlanMemory& memory, const NormColumnReader& column) {
+  SDB_ASSERT(column.RegionCount() > 0);
+  const auto make = [&]<bool Paged> -> memory::managed_ptr<NormReader> {
+    if (column.RegionCount() == 1) {
+      return memory.Make<NormReader, PersistedNormReader<false, Paged>>(column);
+    }
+    return memory.Make<NormReader, PersistedNormReader<true, Paged>>(column);
   };
   return column.Paged() ? make.template operator()<true>()
                         : make.template operator()<false>();

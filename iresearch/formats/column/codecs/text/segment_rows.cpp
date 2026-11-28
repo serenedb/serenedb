@@ -105,7 +105,7 @@ uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept {
 }  // namespace
 
 void CompressCodes(
-  std::span<uint32_t> codes, double& ratio,
+  TrackedAllocator<> alloc, std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
   SDB_ASSERT(!codes.empty());
   const WriteChunk chunk{
@@ -123,6 +123,7 @@ void CompressCodes(
   };
   ColumnDataCheckpointData data{
     .type = chunk.data.GetType(),
+    .alloc = alloc,
     .flush = flush,
     .tuning = column,
     .rows = {{&chunk, 1}, codes.size()},
@@ -289,7 +290,7 @@ void PlainRows::Write(const EncodedFrames& frames, Segment& out) {
 }
 
 void DictionaryRows::Write(const EncodedFrames& frames, Segment& out) {
-  CompressCodes(_codes, _codes_ratio,
+  CompressCodes(_codes.get_allocator(), _codes, _codes_ratio,
                 [&](CodecType codec, std::string_view codes) {
                   Assemble(frames, codec, codes, _sorted, out);
                 });

@@ -28,6 +28,7 @@
 
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/lead/node.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -60,9 +61,11 @@ struct ParentDocs : lead::Node {
   virtual doc_id_t Prev() const noexcept = 0;
 };
 
-using ParentProvider = std::function<ParentDocs::ptr(const SubReader&)>;
+using ParentProvider =
+  std::function<ParentDocs::ptr(PlanMemory&, const SubReader&)>;
 
-using MatchProvider = std::function<lead::Node::ptr(const SubReader&)>;
+using MatchProvider =
+  std::function<lead::Node::ptr(PlanMemory&, const SubReader&)>;
 
 struct ByNestedOptions {
   using FilterType = ByNestedFilter;

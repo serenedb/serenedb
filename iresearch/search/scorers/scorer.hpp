@@ -87,8 +87,8 @@ struct Scorer;
 struct FieldCollector;
 struct TermCollector;
 
-struct ScoreBoundSource : AttributeProvider {
-  using ptr = std::unique_ptr<ScoreBoundSource>;
+struct ScoreBoundSource : AttributeProvider, memory::ArenaOnly {
+  using ptr = memory::managed_ptr<ScoreBoundSource>;
 
   virtual void Read(bytes_view bytes) = 0;
 
@@ -115,6 +115,7 @@ struct ScoreBoundWriter {
 };
 
 struct ScoreContext {
+  PlanMemory& memory;
   const NormProvider& segment;
   const FieldProperties& field;
   const AttributeProvider& doc_attrs;
@@ -149,7 +150,8 @@ struct Scorer {
 
   virtual ScoreBoundWriter::ptr PrepareScoreBoundWriter() const = 0;
 
-  virtual ScoreBoundSource::ptr PrepareScoreBoundSource() const = 0;
+  virtual ScoreBoundSource::ptr PrepareScoreBoundSource(
+    PlanMemory& memory) const = 0;
 
   virtual bool HasScoreBounds() const noexcept { return false; }
 
@@ -193,7 +195,7 @@ class ScorerBase : public Scorer {
     return nullptr;
   }
 
-  ScoreBoundSource::ptr PrepareScoreBoundSource() const override {
+  ScoreBoundSource::ptr PrepareScoreBoundSource(PlanMemory&) const override {
     return nullptr;
   }
 

@@ -28,10 +28,10 @@ namespace irs::docs {
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
-    return memory::make_managed<Empty>();
+    return ctx.memory.Make<Empty>();
   }
   const detail::FoldReachScope reach{ctx.span};
-  return ProfileRoot(query, [&] { return query.PlanDocs(ctx); });
+  return ProfileRoot(ctx.memory, query, [&] { return query.PlanDocs(ctx); });
 }
 
 }  // namespace irs::docs

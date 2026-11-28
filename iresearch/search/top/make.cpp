@@ -124,15 +124,18 @@ class ProfiledClause : public QueryProfile::Profiled<PrunedClause> {
 
   void FetchScoreArgs(uint32_t slot) final { _inner->FetchScoreArgs(slot); }
 
-  ScoreFunction PrepareScore() final { return _inner->PrepareScore(); }
+  ScoreFunction PrepareScore(PlanMemory& memory) final {
+    return _inner->PrepareScore(memory);
+  }
 
   uint32_t TakeReads() final { return _inner->TakeReads(); }
 };
 
 template<typename Wrapper, typename Ptr>
-Ptr ProfileMember(const QueryBuilder& query, Ptr node) {
+Ptr ProfileMember(PlanMemory& memory, const QueryBuilder& query, Ptr node) {
   if (auto* profile = query.Profile(); profile && node) [[unlikely]] {
-    return profile->WrapAs<Wrapper>(std::move(node), query.ProfileNode());
+    return profile->WrapAs<Wrapper>(memory, std::move(node),
+                                    query.ProfileNode());
   }
   return node;
 }
@@ -192,16 +195,16 @@ UnionMember::ptr MakeConstantMember(const QueryBuilder& query,
   const auto docs_count = static_cast<doc_id_t>(multi.Segment().docs_count());
   if (doc && irs::detail::TakeBitset<irs::detail::LeadNode::ptr>(terms, *doc,
                                                                  docs_count)) {
-    auto buckets = irs::detail::DisjunctionBuckets(terms, field);
-    return memory::make_managed<ConstantUnionMember<lead::BitsetDocs>>(
-      score, irs::detail::BuildBitset(buckets, *doc, docs_count));
+    auto buckets = irs::detail::DisjunctionBuckets(ctx.memory, terms, field);
+    return ctx.memory.Make<ConstantUnionMember<lead::BitsetDocs>>(
+      score, irs::detail::BuildBitset(ctx.memory, buckets, *doc, docs_count));
   }
-  auto docs = multi.PlanLead({});
+  auto docs = multi.PlanLead({.memory = ctx.memory});
   if (!docs) {
     return {};
   }
-  return memory::make_managed<ConstantUnionMember<lead::Erased>>(
-    score, std::move(docs));
+  return ctx.memory.Make<ConstantUnionMember<lead::Erased>>(score,
+                                                            std::move(docs));
 }
 
 }  // namespace
@@ -216,24 +219,25 @@ UnionMember::ptr MakeUnionMember(const QueryBuilder& query,
   if (!member) {
     member = MakeConstantMember(query, ctx);
   }
-  return ProfileMember<ProfiledMember>(query, std::move(member));
+  return ProfileMember<ProfiledMember>(ctx.memory, query, std::move(member));
 }
 
 PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
                                         const Context& ctx) {
   return ProfileMember<ProfiledClause>(
-    query, MakePhraseOf<PrunedClause::ptr>(
-             query, [&]<irs::detail::PhraseMatch M, typename Phrase>(
-                      const Phrase& phrase) {
-               return PhraseMaker<M, Phrase>::Clause(phrase, ctx);
-             }));
+    ctx.memory, query,
+    MakePhraseOf<PrunedClause::ptr>(
+      query,
+      [&]<irs::detail::PhraseMatch M, typename Phrase>(const Phrase& phrase) {
+        return PhraseMaker<M, Phrase>::Clause(phrase, ctx);
+      }));
 }
 
-Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
+Root::ptr MakeEmpty(PlanMemory& memory) { return memory.Make<Empty>(); }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
-    return MakeEmpty();
+    return MakeEmpty(ctx.memory);
   }
   const detail::FoldReachScope reach{ctx.span};
   return ProfileRoot(query, ctx, [&](const Context& profiled) {

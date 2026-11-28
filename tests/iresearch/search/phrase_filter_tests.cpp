@@ -112,8 +112,9 @@ class CapturingScorer final : public irs::Scorer {
     return _impl.PrepareScoreBoundWriter();
   }
 
-  irs::ScoreBoundSource::ptr PrepareScoreBoundSource() const final {
-    return _impl.PrepareScoreBoundSource();
+  irs::ScoreBoundSource::ptr PrepareScoreBoundSource(
+    irs::PlanMemory& memory) const final {
+    return _impl.PrepareScoreBoundSource(memory);
   }
 
   bool Compatible(const irs::ScorerOptions& persisted) const noexcept final {
@@ -7025,7 +7026,6 @@ TEST(by_phrase_test, boost) {
 
   // with boost
   {
-    MaxMemoryCounter counter;
     irs::score_t boost = 1.5f;
 
     // no terms, return empty query
@@ -7049,13 +7049,10 @@ TEST(by_phrase_test, boost) {
 
       // a segment without the field matches nothing, and nothing carries no
       // boost -- so the boost is only observable where the field exists
-      tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
-                                     counter};
+      tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr};
       ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    counter.Reset();
 
     // single multiple terms
     {
@@ -8646,7 +8643,8 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_count) {
 
     const auto* query = prepared.Query(0);
     ASSERT_NE(nullptr, query);
-    auto count = query->PlanCount({});
+    irs::PlanMemory plan_memory;
+    auto count = query->PlanCount({.memory = plan_memory});
     ASSERT_NE(nullptr, count);
     ASSERT_EQ(5, count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
   }
@@ -8902,15 +8900,16 @@ TEST_P(PhraseFilterTestCase, interval_combinations) {
     ASSERT_NE(nullptr, query);
 
     if (c.entry == Entry::kOffsets) {
+      irs::PlanMemory plan_memory;
       irs::offsets::Root::ptr offs;
       if (const auto* fixed =
             dynamic_cast<const irs::FixedPhraseQuery*>(query)) {
-        offs = irs::offsets::Make(*fixed);
+        offs = irs::offsets::Make(plan_memory, *fixed);
       } else {
         const auto* variadic =
           dynamic_cast<const irs::VariadicPhraseQuery*>(query);
         ASSERT_NE(nullptr, variadic);
-        offs = irs::offsets::Make(*variadic);
+        offs = irs::offsets::Make(plan_memory, *variadic);
       }
       ASSERT_NE(nullptr, offs);
 
@@ -8993,7 +8992,8 @@ TEST_P(PhraseFilterTestCase, interval_execute_with_offsets) {
     auto sub = rdr.begin();
     auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
-    auto offs = irs::offsets::Make(*phrase_query);
+    irs::PlanMemory plan_memory;
+    auto offs = irs::offsets::Make(plan_memory, *phrase_query);
     ASSERT_NE(nullptr, offs);
 
     const auto* column = sub->Column(kName);
@@ -9030,7 +9030,8 @@ TEST_P(PhraseFilterTestCase, interval_execute_with_offsets) {
     auto sub = rdr.begin();
     auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
-    auto offs = irs::offsets::Make(*phrase_query);
+    irs::PlanMemory plan_memory;
+    auto offs = irs::offsets::Make(plan_memory, *phrase_query);
     ASSERT_NE(nullptr, offs);
 
     const auto* column = sub->Column(kName);
@@ -9077,7 +9078,8 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_execute_with_offsets) {
     auto sub = rdr.begin();
     auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
-    auto offs = irs::offsets::Make(*phrase_query);
+    irs::PlanMemory plan_memory;
+    auto offs = irs::offsets::Make(plan_memory, *phrase_query);
     ASSERT_NE(nullptr, offs);
 
     const auto* column = sub->Column(kName);
@@ -9154,7 +9156,8 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_execute_with_offsets) {
     auto sub = rdr.begin();
     auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
-    auto offs = irs::offsets::Make(*phrase_query);
+    irs::PlanMemory plan_memory;
+    auto offs = irs::offsets::Make(plan_memory, *phrase_query);
     ASSERT_NE(nullptr, offs);
 
     const auto* column = sub->Column(kName);
@@ -9380,7 +9383,8 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_overlap_same_position_with_offsets) {
 
   auto docs = prepared.Execute(0);
   ASSERT_NE(nullptr, docs);
-  auto offs = irs::offsets::Make(*phrase_query);
+  irs::PlanMemory plan_memory;
+  auto offs = irs::offsets::Make(plan_memory, *phrase_query);
   ASSERT_NE(nullptr, offs);
 
   ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
@@ -9593,7 +9597,8 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_repeat_same_position_with_offsets) {
 
     auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
-    auto offs = irs::offsets::Make(*phrase_query);
+    irs::PlanMemory plan_memory;
+    auto offs = irs::offsets::Make(plan_memory, *phrase_query);
     ASSERT_NE(nullptr, offs);
 
     ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
@@ -9891,8 +9896,9 @@ TEST_P(PhraseFilterTestCase,
 
     auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
-    auto offs =
-      variadic ? irs::offsets::Make(*variadic) : irs::offsets::Make(*fixed);
+    irs::PlanMemory plan_memory;
+    auto offs = variadic ? irs::offsets::Make(plan_memory, *variadic)
+                         : irs::offsets::Make(plan_memory, *fixed);
     ASSERT_NE(nullptr, offs);
 
     ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));

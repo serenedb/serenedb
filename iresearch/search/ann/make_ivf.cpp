@@ -85,13 +85,15 @@ template<typename Cluster>
 class VectorChain : public Root {
  public:
   template<typename Args>
-  VectorChain(ColumnArgsFetcher& fetcher, const SubReader& segment,
-              const TermReader& field, const irs::detail::ScoreArgs& score,
+  VectorChain(PlanMemory& memory, ColumnArgsFetcher& fetcher,
+              const SubReader& segment, const TermReader& field,
+              const irs::detail::ScoreArgs& score,
               irs::detail::TableFilter* table, size_t count,
               const VectorState& state, Args&& args)
-    : _clusters{count, std::forward<Args>(args)},
+    : _clusters{memory, count, std::forward<Args>(args)},
       _fetcher{fetcher},
       _table{table},
+      _candidates{state.estimation},
       _boost{score.boost},
       _width{state.rescore_width} {
     _score = irs::detail::PrepareBlockScorer(score, segment, field.meta(),
@@ -102,6 +104,7 @@ class VectorChain : public Root {
   }
 
   void Run(Collector& collector) final {
+    collector.Reserve(_candidates);
     Resolve(_width > 0.f, [&]<bool Width> { Scan<Width>(collector); });
   }
 
@@ -206,6 +209,7 @@ class VectorChain : public Root {
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;
+  uint64_t _candidates;
   score_t _boost;
   float _width;
 };
@@ -220,18 +224,19 @@ ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
     return detail::MakeKnnVector<ann::Family>(*this, routed, prefilter);
   }
   const auto record = Stats(ann::ScoredOf(routed));
-  const detail::ScoreArgs score{.scorer = record.scorer,
+  const detail::ScoreArgs score{.memory = &ctx.memory,
+                                .scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = &routed.fetcher,
                                 .boost = Boost()};
   const auto& field = *State().reader;
   return detail::ResolveClusters<detail::AcceptAll>(
-    *this,
+    ctx.memory, *this,
     [&]<typename Cluster>(size_t count,
                           const detail::ClusterFeed& feed) -> ann::Root::ptr {
-      return memory::make_managed<ann::VectorChain<Cluster>>(
-        routed.fetcher, Segment(), field, score, routed.table, count, State(),
-        feed);
+      return ctx.memory.Make<ann::VectorChain<Cluster>>(
+        ctx.memory, routed.fetcher, Segment(), field, score, routed.table,
+        count, State(), feed);
     });
 }
 

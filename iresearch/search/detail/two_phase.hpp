@@ -159,7 +159,7 @@ class TwoPhaseBase {
     return _score.Spreads();
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out)
+  void CollectScorers(auto& out)
     requires Scored
   {
     AppendScorer(out, PrepareScore());

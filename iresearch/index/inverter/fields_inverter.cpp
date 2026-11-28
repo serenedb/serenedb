@@ -33,13 +33,42 @@ bool HasTerms(const FieldInverter* field) noexcept {
 
 }  // namespace
 
+FieldsInverter::FlushNeeds FieldsInverter::Needs(size_t docs) const {
+  FlushNeeds needs;
+  if (_col_writer) {
+    needs.terms = _col_writer->AnnBound(docs).terms;
+  }
+  for (const auto& field : _fields) {
+    if (!HasTerms(&field)) {
+      continue;
+    }
+    const auto terms = field.Dictionary().Size();
+    needs.max_terms = std::max(needs.max_terms, terms);
+    needs.terms += terms;
+    needs.blocks =
+      std::max(needs.blocks, ScatteredField::Blocks(field, field.Log().Size()));
+    needs.ranges = needs.ranges || IsSubsetOf(IndexFeatures::Ranges,
+                                              field.Meta().index_features);
+  }
+  needs.terms += _docs.size();
+  return needs;
+}
+
+size_t FieldsInverter::FlushBound(size_t docs, uint64_t extra_terms) const {
+  const auto needs = Needs(docs);
+  return sizeof(const FieldsMap::value_type*) * _fields_map.size() +
+         ScatterScratch::Bytes(needs.max_terms, needs.blocks) +
+         term_dict::FieldWriter::Bound(needs.terms + extra_terms, docs,
+                                       needs.ranges, extra_terms != 0);
+}
+
 void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
-                           std::span<const BasicTermReader* const> extra) {
+                           std::span<const BasicTermReader* const> extra,
+                           uint64_t extra_terms) {
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();
 
-  ManagedVector<const FieldsMap::value_type*> sorted{
-    ManagedTypedAllocator<const FieldsMap::value_type*>{_mem.rm}};
+  TrackedVector<const FieldsMap::value_type*> sorted{state.alloc};
   sorted.reserve(_fields_map.size());
   for (const auto& item : _fields_map) {
     const auto& entry = item.second;
@@ -71,28 +100,27 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
     return lhs->first < rhs->first;
   });
 
-  ManagedVector<const BasicTermReader*> sorted_extra{
-    ManagedTypedAllocator<const BasicTermReader*>{_mem.rm}};
-  sorted_extra.assign(extra.begin(), extra.end());
-  absl::c_sort(sorted_extra,
-               [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->id() < rhs->id();
-               });
+  SDB_ASSERT(absl::c_is_sorted(
+    extra, [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+      return lhs->id() < rhs->id();
+    }));
 
-  ScatterScratch scratch{_mem.rm};
-  ScatteredField scattered{_mem, scratch};
+  const auto needs = Needs(state.doc_count);
+  auto allocator = DuckAllocator(state.alloc);
+  InverterMemory mem{allocator};
+  ScatterScratch scratch{state.alloc};
+  ScatteredField scattered{mem, scratch};
   ColumnarTermReader terms;
 
-  fw.prepare(state, keyed_dicts);
+  fw.prepare(state, keyed_dicts, needs.terms + extra_terms);
   size_t ei = 0;
   for (const auto* item : sorted) {
     const auto id = item->first;
     const auto& entry = item->second;
-    for (; ei < sorted_extra.size() && sorted_extra[ei]->id() < id; ++ei) {
-      fw.write(StringLayout::kStrings, *sorted_extra[ei]);
+    for (; ei < extra.size() && extra[ei]->id() < id; ++ei) {
+      fw.write(StringLayout::kStrings, *extra[ei]);
     }
-    const bool has_extra =
-      ei < sorted_extra.size() && sorted_extra[ei]->id() == id;
+    const bool has_extra = ei < extra.size() && extra[ei]->id() == id;
     SDB_ASSERT(!has_extra || entry.layout == DictLayout::String);
     for (const auto member : LayoutMembers(entry.layout)) {
       const DictRef dict{.layout = entry.layout, .member = member};
@@ -106,7 +134,7 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
       const auto* field = _terms[entry.terms + TermIndex(member)].field;
       if (has_extra && dict == StringLayout::kStrings) {
         SDB_ASSERT(!HasTerms(field));
-        fw.write(dict, *sorted_extra[ei++]);
+        fw.write(dict, *extra[ei++]);
       } else if (HasTerms(field)) {
         scattered.Reset(*field);
         SDB_ASSERT(scattered.TermCount() != 0);
@@ -115,8 +143,8 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
       }
     }
   }
-  for (; ei < sorted_extra.size(); ++ei) {
-    fw.write(StringLayout::kStrings, *sorted_extra[ei]);
+  for (; ei < extra.size(); ++ei) {
+    fw.write(StringLayout::kStrings, *extra[ei]);
   }
   fw.end();
 }

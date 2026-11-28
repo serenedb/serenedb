@@ -41,8 +41,8 @@ template<Producer Leaf, size_t N = 0>
 class AndLeaves {
  public:
   template<typename Init>
-  AndLeaves(size_t size, Init&& init)
-    : _leaves{size, std::forward<Init>(init)} {
+  AndLeaves(PlanMemory& memory, size_t size, Init&& init)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)} {
     SDB_ASSERT(!_leaves.empty());
   }
 

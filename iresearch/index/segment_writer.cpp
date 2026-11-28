@@ -39,6 +39,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
+#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
@@ -99,22 +100,70 @@ SegmentWriter::SegmentWriter(ConstructToken, duckdb::DatabaseInstance& db,
     _released{options.released},
     _scorer{options.scorer},
     _fields{InverterMemory{
-      duckdb::BufferManager::GetBufferManager(db).GetBufferAllocator(),
-      IResourceManager::gNoop}},
+              duckdb::BufferManager::GetBufferManager(db).GetBufferAllocator()},
+            TrackedAlloc()},
     _db{db},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
     _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
-                                std::span<const BasicTermReader* const> extra) {
+                                std::span<const BasicTermReader* const> extra,
+                                uint64_t extra_terms) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.Flush(*_field_writer, state, extra);
+    _fields.Flush(*_field_writer, state, extra, extra_terms);
   } catch (...) {
     _field_writer.reset();
     throw;
+  }
+}
+
+size_t SegmentWriter::FlushBound() {
+  if (!_initialized) {
+    return 0;
+  }
+  const auto docs = buffered_docs();
+  AnnFlushBound ann;
+  uint64_t seal = ColWriter::kSealBound;
+  if (_col_writer) {
+    ann = _col_writer->AnnBound(docs);
+    seal = std::max(_col_writer->SealBound(), CopiedSealBound());
+  }
+  return std::max({seal, ann.compute,
+                   ann.kept + _fields.FlushBound(docs, ann.terms)}) +
+         format_utils::kFlushOutputBytes;
+}
+
+uint64_t SegmentWriter::CopiedSealBound() {
+  uint64_t bound = 0;
+  TrackedVector<const ColumnReader*> sources{TrackedAlloc()};
+  const ColumnWriterOptions options;
+  for (const auto id : _copied_columns) {
+    sources.clear();
+    uint64_t rows = 0;
+    for (const auto& run : _copied_rows) {
+      if (const auto* column = run.source->Column(id)) {
+        sources.push_back(column);
+        rows += run.count;
+      }
+    }
+    if (sources.empty()) {
+      continue;
+    }
+    bound = std::max(
+      bound, SealBoundOf(sources.front()->Type(), sources,
+                         std::min<uint64_t>(rows, options.row_group_size),
+                         options.compression, options.codec_params,
+                         TrackedAlloc()));
+  }
+  return bound;
+}
+
+void SegmentWriter::AdmitFlush() {
+  if (const auto bound = FlushBound(); bound > _budget.Available()) {
+    _budget.Parent().Admit(bound - _budget.Available());
   }
 }
 
@@ -126,11 +175,13 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     .norms = this,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
+    .alloc = TrackedAlloc(),
   };
 
-  IdxWriter idx{*_tracker};
+  IdxWriter idx{*_tracker, TrackedAlloc()};
 
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
+  uint64_t cluster_terms = 0;
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
@@ -141,9 +192,9 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     } else {
       GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
     }
+    cluster_terms = _col_writer->AnnBound(state.doc_count).terms;
     ann_writers = _col_writer->TakeAnnWriters();
     _col_reader = _col_writer->TakeReader();
-    _col_writer.reset();
   } else {
     _col_reader = std::make_unique<ColReader>(_db, nullptr, ColFooter{});
   }
@@ -153,10 +204,13 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
-      PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
-    FlushFields(state, cluster_readers);
+      PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx,
+                               TrackedAlloc());
+    FlushFields(state, cluster_readers, cluster_terms);
     postings = _field_writer->TakePostings();
   }
+  _fields.SetColWriter(nullptr);
+  _col_writer.reset();
 
   for (const auto& w : ann_writers) {
     if (w) {
@@ -211,7 +265,7 @@ void SegmentWriter::CopyColumns() {
         if (!writer) {
           writer = &_col_writer->OpenColumn(id, column->Type());
         }
-        ReadContext context{*run.source};
+        ReadContext context{*run.source, TrackedAlloc()};
         writer->CopyRows(row, *column, context, run.first,
                          std::min(run.count, column->RowCount() - run.first));
       }
@@ -242,9 +296,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   }
   auto fields = std::make_shared<PieceFields>();
   SDB_ASSERT(_tracker);
-  FlushState state{.tracker = *_tracker, .doc_count = docs};
+  FlushState state{
+    .tracker = *_tracker,
+    .doc_count = docs,
+    .alloc = TrackedAlloc(),
+  };
   PieceFieldWriter field_writer{*fields, /*compaction=*/false};
-  _fields.Flush(field_writer, state, {});
+  _fields.Flush(field_writer, state, {}, 0);
   SegmentMeta meta;
   meta.name = _seg_name;
   meta.docs_count = static_cast<doc_id_t>(docs);
@@ -302,6 +360,7 @@ void SegmentWriter::ResetState() noexcept {
   _batch_first_doc_id = doc_limits::eof();
   _fields.Reset();
   _col_reader.reset();
+  _fields.SetColWriter(nullptr);
   if (_col_writer) {
     _col_writer->Rollback();
     _col_writer.reset();
@@ -312,6 +371,7 @@ void SegmentWriter::ResetState() noexcept {
     _tracker->Remove();
     _tracker.reset();
   }
+  _budget.Trim();
 }
 
 void SegmentWriter::reset() noexcept {
@@ -330,13 +390,13 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   _seg_name = meta.name;
 
   if (!_field_writer) {
-    _field_writer =
-      std::make_unique<term_dict::FieldWriter>(/*compaction=*/false);
+    _field_writer = std::make_unique<term_dict::FieldWriter>(
+      /*compaction=*/false, TrackedAlloc());
   }
 
   const auto* active = ActiveFieldOptions();
   _tracker = std::make_shared<FileTracker>(_fs, _root, meta.name, 0, _released);
-  _col_writer = std::make_unique<ColWriter>(_db, *_tracker);
+  _col_writer = std::make_unique<ColWriter>(_db, *_tracker, TrackedAlloc());
   _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);

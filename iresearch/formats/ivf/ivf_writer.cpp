@@ -46,6 +46,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -64,7 +65,45 @@ struct DocRowView {
   }
 };
 
+CentroidsBuildParams CentroidParams(const AnnInfo& info) noexcept {
+  return {
+    .posting_size = info.posting_size,
+    .sample_factor = info.sample_factor,
+    .min_train_sample =
+      QuantizerNeedsCentroid(info.quant.kind) ? kMinCentroidTrainSample : 0,
+  };
+}
+
 }  // namespace
+
+AnnFlushBound IvfBuilder::Bound(const AnnInfo& info, uint64_t rows) {
+  const auto d = static_cast<size_t>(info.d);
+  if (rows == 0 || d == 0) {
+    return {};
+  }
+  const auto centroids = CentroidsBuilder::Bound(
+    rows, static_cast<uint32_t>(info.d), info.metric, CentroidParams(info));
+  const size_t train_cap = QuantizerTrainSamples(
+    info.quant, static_cast<uint32_t>(d), EffectiveQuantMetric(info.metric),
+    rows, /*row_major=*/false);
+  const size_t train =
+    train_cap != 0 && train_cap != QuantizerWriter::kTrainStreaming
+      ? std::min<size_t>(train_cap, rows)
+      : 0;
+  const size_t tree =
+    (sizeof(float) * d + sizeof(CentroidsBuilder::Node) + 2 * sizeof(size_t)) *
+    centroids.cluster_rows;
+  const size_t docs = sizeof(doc_id_t) * rows;
+  const size_t build =
+    (sizeof(float) * d + sizeof(size_t)) * centroids.sample_rows +
+    centroids.train_bytes;
+  const size_t assign = sizeof(float) * d * train + 3 * docs;
+  return {
+    .compute = tree + std::max(build, assign),
+    .kept = tree + docs,
+    .terms = centroids.cluster_rows,
+  };
+}
 
 BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                              ReadContext& ctx, QuantizerWriter* qw) const {
@@ -72,7 +111,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const auto d = static_cast<uint32_t>(vector_column.ArraySize());
   const auto rows = vector_column.RowCount();
 
-  BuiltIvf result;
+  BuiltIvf result{_alloc};
   result.d = d;
   if (rows == 0 || d == 0) {
     return result;
@@ -86,21 +125,19 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool train_residuals = sample_train && needs_centroid;
 
   auto centroids = CentroidsBuilder::Create(
-    vector_column, ctx, rows, _info.metric, d,
-    CentroidsBuildParams{
-      .posting_size = _info.posting_size,
-      .sample_factor = _info.sample_factor,
-      .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
-    });
+    vector_column, ctx, rows, _info.metric, d, CentroidParams(_info), _alloc);
   const size_t n_clusters = centroids.NumClusters();
 
-  std::vector<float> train;
+  TrackedVector<float> train{_alloc};
+  if (sample_train) {
+    train.reserve(std::min<size_t>(train_cap, rows) * d);
+  }
   size_t train_seen = 0;
   pcg32 train_rng{kTrainSeed};
 
-  std::vector<uint32_t> doc_cluster;
+  TrackedVector<uint32_t> doc_cluster{_alloc};
   doc_cluster.reserve(rows);
-  std::vector<doc_id_t> valid_rows;
+  TrackedVector<doc_id_t> valid_rows{_alloc};
   valid_rows.reserve(rows);
 
   {
@@ -335,7 +372,7 @@ void IvfTermReader::WriteTermPayload(duckdb::WriteStream& out,
   if (n == 0) {
     return;
   }
-  ColumnReader::VectorScratch scratch{_vectors->Type()};
+  ColumnReader::VectorScratch scratch{_vectors->Type(), _ctx->Allocator()};
   auto scan = _vectors->InitScan(*_ctx);
   for (size_t b = 0; b < n;) {
     const auto m = std::min<size_t>(STANDARD_VECTOR_SIZE, n - b);
@@ -363,10 +400,12 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
-  auto qw = MakeQuantizerWriter(
-    _info.quant, d, EffectiveQuantMetric(_info.metric), kDefaultClusterIters);
+  auto qw =
+    MakeQuantizerWriter(_alloc, _info.quant, d,
+                        EffectiveQuantMetric(_info.metric),
+                        kDefaultClusterIters, /*row_major=*/false);
 
-  IvfBuilder builder{_info};
+  IvfBuilder builder{_info, _alloc};
   auto built = builder.Compute(col, ctx, qw.get());
   if (built.empty) {
     co_return {};
@@ -406,7 +445,10 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
   return _reader.get();
 }
 
-IvfWriter::IvfWriter(AnnInfo info) : _info{std::move(info)} {}
+IvfWriter::IvfWriter(AnnInfo info, TrackedAllocator<> alloc)
+  : AnnWriter{alloc},
+    _info{std::move(info)},
+    _result{.qw = nullptr, .data = BuiltIvf{alloc}} {}
 
 IvfWriter::~IvfWriter() = default;
 

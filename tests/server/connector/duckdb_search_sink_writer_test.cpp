@@ -38,6 +38,7 @@
 #include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/tracked.hpp>
 
 #include "../engine_context.h"
 #include "connector/column_id.h"
@@ -335,7 +336,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
-    irs::ReadContext pk_ctx{*cs_reader};
+    irs::LocalBudget pk_budget{irs::gRootBudget};
+    irs::ReadContext pk_ctx{*cs_reader, irs::TrackedAllocator<>{pk_budget}};
     auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
       auto pk_state = pk_column->InitScan(pk_ctx);
       duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
@@ -497,7 +499,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   ASSERT_NE(nullptr, cs_reader);
   const auto* pk_column = cs_reader->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
-  irs::ReadContext pk_ctx{*cs_reader};
+  irs::LocalBudget pk_budget{irs::gRootBudget};
+  irs::ReadContext pk_ctx{*cs_reader, irs::TrackedAllocator<>{pk_budget}};
   auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
     auto pk_state = pk_column->InitScan(pk_ctx);
     duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
@@ -661,7 +664,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
   auto& segment = reader[0];
   const auto* pk_column = segment.GetColReader()->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
-  irs::ReadContext pk_ctx{*segment.GetColReader()};
+  irs::LocalBudget pk_budget{irs::gRootBudget};
+  irs::ReadContext pk_ctx{*segment.GetColReader(),
+                          irs::TrackedAllocator<>{pk_budget}};
   const auto pks_of = [&](irs::DictRef member, std::string_view term) {
     std::vector<int64_t> pks;
     const auto* dict = segment.field(col_id, member);
@@ -737,7 +742,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertJsonListLeavesInTheirMembers) {
   auto& segment = reader[0];
   const auto* pk_column = segment.GetColReader()->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
-  irs::ReadContext pk_ctx{*segment.GetColReader()};
+  irs::LocalBudget pk_budget{irs::gRootBudget};
+  irs::ReadContext pk_ctx{*segment.GetColReader(),
+                          irs::TrackedAllocator<>{pk_budget}};
   const auto pks_of = [&](irs::DictRef member, irs::bytes_view term) {
     std::vector<int64_t> pks;
     const auto* dict = segment.field(col_id, member);
@@ -813,7 +820,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_NE(nullptr, cs_reader);
   const auto* pk_column = cs_reader->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
-  irs::ReadContext pk_ctx{*cs_reader};
+  irs::LocalBudget pk_budget{irs::gRootBudget};
+  irs::ReadContext pk_ctx{*cs_reader, irs::TrackedAllocator<>{pk_budget}};
   auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
     auto pk_state = pk_column->InitScan(pk_ctx);
     duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);

@@ -33,7 +33,8 @@
 
 namespace sdb::connector {
 
-void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader) {
+void PrepareFilterEntry(irs::PlanMemory& memory, FilterEntry& entry,
+                        const irs::TermReader* reader) {
   if (entry.root || entry.absent) {
     return;
   }
@@ -45,13 +46,13 @@ void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader) {
     entry.absent = true;
     return;
   }
-  entry.root =
-    std::visit(absl::Overload{
-                 [&](const irs::PostingMeta* cookie) {
-                   return irs::offsets::MakePosting(*cookie, handles);
-                 },
-                 [](const auto* query) { return irs::offsets::Make(*query); }},
-               entry.filter);
+  entry.root = std::visit(
+    absl::Overload{
+      [&](const irs::PostingMeta* cookie) {
+        return irs::offsets::MakePosting(memory, *cookie, handles);
+      },
+      [&](const auto* query) { return irs::offsets::Make(memory, *query); }},
+    entry.filter);
   entry.absent = entry.root == nullptr;
 }
 
@@ -67,7 +68,7 @@ void FillRowOffsets(FieldState& state, irs::doc_id_t doc_id, size_t max_pairs,
   static constexpr size_t kChunk = 256;
   state.scratch.resize(std::min(kChunk, max_pairs));
   for (auto& entry : state.entries) {
-    PrepareFilterEntry(entry, state.reader);
+    PrepareFilterEntry(*state.memory, entry, state.reader);
     if (!entry.root) {
       continue;
     }

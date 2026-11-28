@@ -145,7 +145,8 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     _meta{head.id, head.features},
     _terms{head.term_count},
     _docs{head.doc_count},
-    _index{head, prefix, BlocksOf(owner.Store(), head), separators, in},
+    _index{head,      prefix, BlocksOf(owner.Store(), head),
+           separators, in,    owner.Allocator()},
     _has_score_bounds{head.text.has_score_bounds},
     _range_levels{levels} {
   _meta.norm = head.text.norm;
@@ -163,25 +164,22 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   }
   key_width = head.width;
   single_valued = head.single_valued;
-  uint64_t bytes = _index.MemoryBytes();
   _first_block = head.first_block;
   _first_entry = head.first_entry;
   _first_record = head.first_record;
   _last_entry = head.last_entry;
   if (const auto& table = head.fsst_table; !table.empty()) {
-    _fsst = std::make_unique<duckdb_fsst_decoder_t>();
+    _fsst = MakeTrackedUnique<duckdb_fsst_decoder_t>(owner.Allocator());
     const auto consumed = duckdb_fsst_import(
       _fsst.get(), reinterpret_cast<const unsigned char*>(table.data()),
       table.size());
     if (consumed != table.size()) {
       Corrupted("FSST table", head.id);
     }
-    bytes += sizeof(duckdb_fsst_decoder_t);
   }
   if (Small()) {
     _small = store.CopyBlock(_first_block);
   }
-  store.Account(bytes);
 }
 
 void TermReaderImpl::SampleTerms(

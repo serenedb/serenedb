@@ -31,6 +31,7 @@
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -53,6 +54,10 @@ struct PqStatsHeader {
   uint32_t m;
   uint32_t ksub;
 };
+
+size_t CentroidBytes(const faiss::ProductQuantizer& pq) noexcept {
+  return pq.centroids.capacity() * sizeof(float);
+}
 
 std::vector<float> SubspaceErrors(const faiss::ProductQuantizer& pq,
                                   const float* vecs, size_t n) {
@@ -127,8 +132,9 @@ void PqScoreErrors(const PqErrorTerms& terms, size_t n, score_t* errors) {
 template<VectorMetric M>
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
-  ProductQuantizerWriter(uint32_t d, uint32_t m, uint32_t niter)
-    : _d{d}, _pq{d, m == 0 ? 1 : m, kPqNbits} {
+  ProductQuantizerWriter(uint32_t d, uint32_t m, uint32_t niter,
+                         TrackedAllocator<> alloc)
+    : _alloc{alloc}, _d{d}, _pq{d, m == 0 ? 1 : m, kPqNbits} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
@@ -143,14 +149,14 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   }
 
   size_t TrainSamples(size_t rows) const noexcept final {
-    return std::min<size_t>(rows, kPqTrainResiduals);
+    return PqTrainSamples(rows, /*row_major=*/false);
   }
 
   void Train(const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
-    std::vector<float> kept;
+    TrackedVector<float> kept{_alloc};
     const auto rows = TrainableRows({vecs, n * _d}, _d, kept);
     vecs = rows.data();
     n = rows.size() / _d;
@@ -177,9 +183,8 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   PayloadBlockSetting BlockSetting() const noexcept final {
     return {
       .group_size = kFastScanBbs,
-      .record_size =
-        static_cast<uint32_t>(FastScanNsq(_pq.M) / 2 +
-                              (M == VectorMetric::L2Sqr ? sizeof(float) : 0)),
+      .record_size = PqRecordSize(M, static_cast<uint32_t>(_pq.M),
+                                  /*row_major=*/false),
       .alignment = M == VectorMetric::L2Sqr ? alignof(float) : 1U,
     };
   }
@@ -262,6 +267,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     _coded = 0;
   }
 
+  TrackedAllocator<> _alloc;
   uint32_t _d;
   faiss::ProductQuantizer _pq;
   bool _trained = false;
@@ -281,7 +287,9 @@ class ProductQuantizerWriter final : public QuantizerWriter {
 template<VectorMetric M>
 class ProductQuantizerStats final : public QuantizerStats {
  public:
-  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats) {
+  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats,
+                        MemoryBudget& parent)
+    : _budget{parent}, _charge{TrackedAllocator<>{_budget}, 0} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
     SDB_ASSERT(hdr.m != 0);
@@ -297,6 +305,7 @@ class ProductQuantizerStats final : public QuantizerStats {
     std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
                 want);
     _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
+    _charge.Resize(CentroidBytes(_pq));
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -310,7 +319,9 @@ class ProductQuantizerStats final : public QuantizerStats {
   std::span<const float> Errors() const noexcept { return _errors; }
 
  private:
+  LocalBudget _budget;
   faiss::ProductQuantizer _pq;
+  MemoryCharge _charge;
   std::vector<float> _errors;
 };
 
@@ -335,7 +346,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
   const PqErrorTerms& ErrorTerms() const noexcept { return _error_terms; }
@@ -357,7 +368,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class ProductQuantizerReader final : public QuantizerReader {
+class ProductQuantizerReader : public QuantizerReader {
  public:
   explicit ProductQuantizerReader(
     std::shared_ptr<const ProductQuantizerCodebook<M>> cb)
@@ -431,10 +442,10 @@ class ProductQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> ProductQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr ProductQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<ProductQuantizerCodebook<M>, ProductQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>
@@ -507,19 +518,19 @@ void InitLine(std::span<const float> sorted, uint32_t k, float* cent) {
   }
 }
 
-void TrainLine(const float* x, size_t n, uint32_t k, uint32_t niter,
-               float* cent) {
-  std::vector<float> sorted(x, x + n);
+void TrainLine(TrackedAllocator<> alloc, const float* x, size_t n, uint32_t k,
+               uint32_t niter, float* cent) {
+  TrackedVector<float> sorted(x, x + n, alloc);
   absl::c_sort(sorted);
   InitLine(sorted, k, cent);
-  std::vector<double> prefix(n + 1);
+  TrackedVector<double> prefix(n + 1, alloc);
   for (size_t i = 0; i < n; ++i) {
     prefix[i + 1] = prefix[i] + sorted[i];
   }
-  std::vector<uint32_t> by_value(k);
-  std::vector<size_t> lo(k, 0);
-  std::vector<size_t> hi(k, 0);
-  std::vector<size_t> count(k);
+  TrackedVector<uint32_t> by_value(k, alloc);
+  TrackedVector<size_t> lo(k, 0, alloc);
+  TrackedVector<size_t> hi(k, 0, alloc);
+  TrackedVector<size_t> count(k, alloc);
   for (uint32_t it = 0; it < niter; ++it) {
     std::iota(by_value.begin(), by_value.end(), 0U);
     absl::c_stable_sort(
@@ -582,19 +593,21 @@ float LaneSum(const float* v, size_t n) noexcept {
   return ((a[0] + a[1]) + (a[2] + a[3])) + ((a[4] + a[5]) + (a[6] + a[7]));
 }
 
-void InitSpread(const float* x, size_t n, uint32_t dsub, uint32_t k, pcg32& rng,
-                float* cent) {
-  constexpr size_t kBlock = 256;
+constexpr size_t kSpreadBlock = 256;
+
+void InitSpread(TrackedAllocator<> alloc, const float* x, size_t n,
+                uint32_t dsub, uint32_t k, pcg32& rng, float* cent) {
+  constexpr size_t kBlock = kSpreadBlock;
   const size_t blocks = (n + kBlock - 1) / kBlock;
-  std::vector<float> xt(n * dsub);
+  TrackedVector<float> xt(n * dsub, alloc);
   for (size_t r = 0; r < n; ++r) {
     for (uint32_t j = 0; j < dsub; ++j) {
       xt[j * n + r] = x[r * dsub + j];
     }
   }
-  std::vector<float> near(n, std::numeric_limits<float>::max());
-  std::vector<float> dist(n);
-  std::vector<double> mass(blocks);
+  TrackedVector<float> near(n, std::numeric_limits<float>::max(), alloc);
+  TrackedVector<float> dist(n, alloc);
+  TrackedVector<double> mass(blocks, alloc);
   const auto pick = [&](uint32_t c, size_t i) {
     const float* p = x + i * dsub;
     std::copy_n(p, dsub, cent + size_t{c} * dsub);
@@ -641,23 +654,24 @@ void InitSpread(const float* x, size_t n, uint32_t dsub, uint32_t k, pcg32& rng,
   }
 }
 
-void TrainSubspace(const float* x, size_t n, uint32_t dsub, uint32_t k,
-                   uint32_t niter, uint64_t seed, float* cent) {
+void TrainSubspace(TrackedAllocator<> alloc, const float* x, size_t n,
+                   uint32_t dsub, uint32_t k, uint32_t niter, uint64_t seed,
+                   float* cent) {
   SDB_ASSERT(n >= k);
   SDB_ASSERT(k % 8 == 0);
   if (dsub == 1) {
-    TrainLine(x, n, k, niter, cent);
+    TrainLine(alloc, x, n, k, niter, cent);
     return;
   }
   pcg32 rng{seed};
-  InitSpread(x, n, dsub, k, rng, cent);
+  InitSpread(alloc, x, n, dsub, k, rng, cent);
   SDB_ASSERT(k == kPq8Ksub);
-  std::vector<float> cent_t(size_t{k} * dsub);
-  std::vector<float> cnorm(k);
-  std::vector<float> dist(k);
-  std::vector<uint32_t> assign(n, k);
-  std::vector<double> sum(size_t{k} * dsub);
-  std::vector<size_t> count(k);
+  TrackedVector<float> cent_t(size_t{k} * dsub, alloc);
+  TrackedVector<float> cnorm(k, alloc);
+  TrackedVector<float> dist(k, alloc);
+  TrackedVector<uint32_t> assign(n, k, alloc);
+  TrackedVector<double> sum(size_t{k} * dsub, alloc);
+  TrackedVector<size_t> count(k, alloc);
   for (uint32_t it = 0; it < niter; ++it) {
     for (uint32_t c = 0; c < k; ++c) {
       float s = 0.f;
@@ -716,9 +730,10 @@ void TrainSubspace(const float* x, size_t n, uint32_t dsub, uint32_t k,
   }
 }
 
-float SubspaceMse(const float* x, size_t n, uint32_t dsub, const float* cent) {
-  std::vector<float> cent_t(kPq8Ksub * dsub);
-  std::vector<float> cnorm(kPq8Ksub);
+float SubspaceMse(TrackedAllocator<> alloc, const float* x, size_t n,
+                  uint32_t dsub, const float* cent) {
+  TrackedVector<float> cent_t(kPq8Ksub * dsub, alloc);
+  TrackedVector<float> cnorm(kPq8Ksub, alloc);
   for (size_t c = 0; c < kPq8Ksub; ++c) {
     float s = 0.f;
     for (uint32_t j = 0; j < dsub; ++j) {
@@ -728,7 +743,7 @@ float SubspaceMse(const float* x, size_t n, uint32_t dsub, const float* cent) {
     }
     cnorm[c] = s;
   }
-  std::vector<float> dist(kPq8Ksub);
+  TrackedVector<float> dist(kPq8Ksub, alloc);
   double sum = 0.0;
   for (size_t i = 0; i < n; ++i) {
     const float* xi = x + i * dsub;
@@ -745,8 +760,19 @@ float SubspaceMse(const float* x, size_t n, uint32_t dsub, const float* cent) {
 template<VectorMetric M>
 class ProductQuantizer8Writer final : public QuantizerWriter {
  public:
-  ProductQuantizer8Writer(uint32_t d, uint32_t m, uint32_t niter)
-    : _d{d}, _pq{d, m == 0 ? 1 : m, kPq8Nbits} {
+  ProductQuantizer8Writer(uint32_t d, uint32_t m, uint32_t niter,
+                          TrackedAllocator<> alloc)
+    : _alloc{alloc},
+      _d{d},
+      _pq{d, m == 0 ? 1 : m, kPq8Nbits},
+      _charge{alloc, CentroidBytes(_pq)},
+      _cent_t{alloc},
+      _cnorm{alloc},
+      _mid{alloc},
+      _order{alloc},
+      _dist{alloc},
+      _codes{alloc},
+      _errors{alloc} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
@@ -754,28 +780,27 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
   }
 
   size_t TrainSamples(size_t rows) const noexcept final {
-    return std::min<size_t>(rows, kPq8TrainRows);
+    return PqTrainSamples(rows, /*row_major=*/true);
   }
 
   void Train(const float* vecs, size_t n) final {
-    TrainParallel(vecs, n,
-                  [](size_t tasks, absl::FunctionRef<void(size_t)> task) {
-                    for (size_t t = 0; t < tasks; ++t) {
-                      task(t);
-                    }
-                  });
+    TrainParallel(vecs, n, [&](size_t tasks, TrainTask task) {
+      for (size_t t = 0; t < tasks; ++t) {
+        task(t, _alloc);
+      }
+    });
   }
 
   void TrainParallel(const float* vecs, size_t n, TrainFanout fanout) final {
     if (n == 0) {
       return;
     }
-    std::vector<float> kept;
+    TrackedVector<float> kept{_alloc};
     const auto rows = TrainableRows({vecs, n * _d}, _d, kept);
     vecs = rows.data();
     n = rows.size() / _d;
     const size_t ksub = _pq.ksub;
-    std::vector<float> padded;
+    TrackedVector<float> padded{_alloc};
     if (n < ksub) {
       padded.resize(ksub * _d);
       for (size_t i = 0; i < ksub; ++i) {
@@ -787,17 +812,18 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     }
     const size_t dsub = _pq.dsub;
     _errors.assign(_pq.M, 0.f);
-    fanout(_pq.M, [&](size_t m) {
-      std::vector<float> sub(n * dsub);
+    fanout(_pq.M, [&](size_t m, TrackedAllocator<> alloc) {
+      TrackedVector<float> sub(n * dsub, alloc);
       for (size_t i = 0; i < n; ++i) {
         std::copy_n(vecs + i * _d + m * dsub, dsub, sub.data() + i * dsub);
       }
       float* cent = _pq.centroids.data() + m * ksub * dsub;
-      TrainSubspace(
-        sub.data(), n, static_cast<uint32_t>(dsub), static_cast<uint32_t>(ksub),
-        static_cast<uint32_t>(_pq.cp.niter), kIvfRotationSeed + m, cent);
+      TrainSubspace(alloc, sub.data(), n, static_cast<uint32_t>(dsub),
+                    static_cast<uint32_t>(ksub),
+                    static_cast<uint32_t>(_pq.cp.niter), kIvfRotationSeed + m,
+                    cent);
       _errors[m] =
-        SubspaceMse(sub.data(), n, static_cast<uint32_t>(dsub), cent);
+        SubspaceMse(alloc, sub.data(), n, static_cast<uint32_t>(dsub), cent);
     });
     PrepareEncode();
     _trained = true;
@@ -821,9 +847,11 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     return true;
   }
 
-  std::unique_ptr<QuantizerWriter> CloneForEncode() const final {
-    auto out = std::make_unique<ProductQuantizer8Writer>(_d, 0, 0);
+  std::unique_ptr<QuantizerWriter> CloneForEncode(
+    TrackedAllocator<> alloc) const final {
+    auto out = std::make_unique<ProductQuantizer8Writer>(_d, 0, 0, alloc);
     out->_pq = _pq;
+    out->_charge.Resize(CentroidBytes(out->_pq));
     out->_cent_t = _cent_t;
     out->_cnorm = _cnorm;
     out->_mid = _mid;
@@ -931,22 +959,29 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     }
   }
 
+  TrackedAllocator<> _alloc;
   uint32_t _d;
   faiss::ProductQuantizer _pq;
+  MemoryCharge _charge;
   bool _trained = false;
-  std::vector<float> _cent_t;
-  std::vector<float> _cnorm;
-  std::vector<float> _mid;
-  std::vector<uint8_t> _order;
-  std::vector<float> _dist;
-  std::vector<uint8_t> _codes;
-  std::vector<float> _errors;
+  TrackedVector<float> _cent_t;
+  TrackedVector<float> _cnorm;
+  TrackedVector<float> _mid;
+  TrackedVector<uint8_t> _order;
+  TrackedVector<float> _dist;
+  TrackedVector<uint8_t> _codes;
+  TrackedVector<float> _errors;
 };
 
 template<VectorMetric M>
 class ProductQuantizer8Stats final : public QuantizerStats {
  public:
-  ProductQuantizer8Stats(uint32_t d, std::span<const byte_type> stats) {
+  ProductQuantizer8Stats(uint32_t d, std::span<const byte_type> stats,
+                         MemoryBudget& parent)
+    : _budget{parent},
+      _charge{TrackedAllocator<>{_budget}, 0},
+      _cent_t{TrackedAllocator<>{_budget}},
+      _cent_h{TrackedAllocator<>{_budget}} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
     SDB_ASSERT(hdr.m != 0);
@@ -982,6 +1017,7 @@ class ProductQuantizer8Stats final : public QuantizerStats {
       }
     }
     _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
+    _charge.Resize(CentroidBytes(_pq));
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -998,10 +1034,12 @@ class ProductQuantizer8Stats final : public QuantizerStats {
   std::span<const float> Errors() const noexcept { return _errors; }
 
  private:
+  LocalBudget _budget;
   faiss::ProductQuantizer _pq;
+  MemoryCharge _charge;
   std::vector<float> _norms;
-  std::vector<float> _cent_t;
-  std::vector<uint16_t> _cent_h;
+  TrackedVector<float> _cent_t;
+  TrackedVector<uint16_t> _cent_h;
   std::vector<float> _errors;
 };
 
@@ -1057,7 +1095,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const ProductQuantizer8Stats<M>>& StatsPtr()
     const noexcept {
@@ -1079,7 +1117,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class ProductQuantizer8Reader final : public QuantizerReader {
+class ProductQuantizer8Reader : public QuantizerReader {
  public:
   explicit ProductQuantizer8Reader(
     std::shared_ptr<const ProductQuantizer8Codebook<M>> cb)
@@ -1171,7 +1209,7 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   bool SupportsPairScores() const noexcept final { return true; }
 
   bool PreparePairTerms(const byte_type* base, uint32_t record_size,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     const float* norms = _cb->StatsPtr()->CentroidNorms();
     terms.assign(rows, 0.f);
     for (uint64_t row = 0; row < rows; ++row) {
@@ -1489,10 +1527,10 @@ class ProductQuantizer8Reader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> ProductQuantizer8Codebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr ProductQuantizer8Codebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<ProductQuantizer8Codebook<M>, ProductQuantizer8Reader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>
@@ -1506,22 +1544,39 @@ ProductQuantizer8Stats<M>::MakeCodebook(std::span<const float> query) const {
 
 std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
                                               uint32_t pq_m, uint32_t pq_niter,
-                                              bool row_major) {
+                                              bool row_major,
+                                              TrackedAllocator<> alloc) {
   if (row_major) {
     return MakeWriterWithMetric<ProductQuantizer8Writer>(metric, d, pq_m,
-                                                         pq_niter);
+                                                         pq_niter, alloc);
   }
   return MakeWriterWithMetric<ProductQuantizerWriter>(metric, d, pq_m,
-                                                      pq_niter);
+                                                      pq_niter, alloc);
+}
+
+size_t PqTrainSamples(size_t rows, bool row_major) noexcept {
+  return std::min<size_t>(rows, row_major ? kPq8TrainRows : kPqTrainResiduals);
+}
+
+uint32_t PqRecordSize(VectorMetric metric, uint32_t pq_m,
+                      bool row_major) noexcept {
+  const uint32_t m = pq_m == 0 ? 1 : pq_m;
+  if (row_major) {
+    return (m * kPq8Nbits + 7) / 8;
+  }
+  return static_cast<uint32_t>(
+    FastScanNsq(m) / 2 +
+    (EffectiveQuantMetric(metric) == VectorMetric::L2Sqr ? sizeof(float) : 0));
 }
 
 std::shared_ptr<const QuantizerStats> MakePqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
-  bool row_major) {
+  bool row_major, MemoryBudget& parent) {
   if (row_major) {
-    return MakeStatsWithMetric<ProductQuantizer8Stats>(metric, d, stats);
+    return MakeStatsWithMetric<ProductQuantizer8Stats>(metric, d, stats,
+                                                       parent);
   }
-  return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats);
+  return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats, parent);
 }
 
 }  // namespace irs::quantizers

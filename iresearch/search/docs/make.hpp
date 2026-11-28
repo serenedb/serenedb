@@ -31,6 +31,6 @@
 
 namespace irs::docs {
 
-Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx = {});
+Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
 }  // namespace irs::docs

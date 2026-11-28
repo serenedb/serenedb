@@ -36,8 +36,10 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/formats/column/codecs/text/fsst_footprint.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text::fsst {
 
@@ -53,6 +55,12 @@ struct Fsst8 {
   using Encoding = duckdb_fsst_encoder_t;
   using Table = duckdb_fsst_decoder_t;
   using Exported = std::array<unsigned char, sizeof(Table)>;
+
+  static Exported MakeExported(TrackedAllocator<>) noexcept { return {}; }
+
+  static EncoderFootprint Footprint(size_t strings) noexcept {
+    return Fsst8Footprint(strings);
+  }
 
   static Encoding* Create(size_t n, size_t* lengths,
                           const unsigned char** strings) {
@@ -109,6 +117,14 @@ struct Encoded {
 template<typename Impl>
 class Encoder {
  public:
+  explicit Encoder(TrackedAllocator<> alloc)
+    : _charge{alloc},
+      _table{Impl::MakeExported(alloc)},
+      _in_lengths{alloc},
+      _in_ptrs{alloc},
+      _out_lengths{alloc},
+      _out_ptrs{alloc} {}
+
   Encoded Encode(std::span<const duckdb::string_t> strings,
                  std::span<const uint32_t> skip, char* out, size_t capacity,
                  std::span<uint32_t> lengths) {
@@ -126,8 +142,11 @@ class Encoder {
         reinterpret_cast<const unsigned char*>(strings[i].GetData() + skip[i]);
     }
     if (!_encoder) {
+      const auto footprint = Impl::Footprint(n);
+      _charge.Resize(footprint.build);
       _encoder.reset(Impl::Create(n, _in_lengths.data(), _in_ptrs.data()));
       SDB_ENSURE(_encoder, "fsst: cannot build a symbol table");
+      _charge.Resize(footprint.kept);
       _table_size = Impl::Export(_encoder.get(), _table);
     }
     _out_lengths.resize(n);
@@ -155,20 +174,22 @@ class Encoder {
     }
   };
 
+  MemoryCharge _charge;
   std::unique_ptr<typename Impl::Encoding, Free> _encoder;
   typename Impl::Exported _table;
   size_t _table_size = 0;
-  std::vector<size_t> _in_lengths;
-  std::vector<const unsigned char*> _in_ptrs;
-  std::vector<size_t> _out_lengths;
-  std::vector<unsigned char*> _out_ptrs;
+  TrackedVector<size_t> _in_lengths;
+  TrackedVector<const unsigned char*> _in_ptrs;
+  TrackedVector<size_t> _out_lengths;
+  TrackedVector<unsigned char*> _out_ptrs;
 };
 
 template<typename Impl, ByteCodec kLeaf = Impl::kCodec>
 struct SharedEncoder final : State {
   static constexpr StateId kId = FsstEncoderState(kLeaf);
 
-  explicit SharedEncoder(ColumnDataCheckpointData&) {}
+  explicit SharedEncoder(ColumnDataCheckpointData& data)
+    : encoder{data.alloc} {}
 
   Encoder<Impl> encoder;
 };

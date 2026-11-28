@@ -31,9 +31,10 @@
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text::onpair {
 
@@ -130,14 +131,14 @@ class Table {
 
 class Codec {
  public:
-  Codec();
+  explicit Codec(TrackedAllocator<> alloc);
 
   void Train(std::span<const duckdb::string_t> entries, uint64_t raw);
 
   void Encode(std::span<const duckdb::string_t> entries,
               std::span<uint16_t> codes, std::span<uint32_t> counts) const;
 
-  void Export(std::string& table) const;
+  void Export(TrackedString& table) const;
 
   uint8_t Bits() const noexcept { return _bits; }
 
@@ -161,15 +162,17 @@ class Codec {
   Match Longest(const char* rest, size_t left) const;
   void Finalize();
 
-  containers::FlatHashMap<std::string, uint32_t> _ids;
-  std::unique_ptr<std::array<uint16_t, 65536>> _lengths;
-  std::vector<std::string> _tokens;
-  std::vector<uint32_t> _order;
-  containers::FlatHashMap<uint32_t, uint8_t> _pairs;
-  std::vector<Key> _keys;
-  std::vector<uint32_t> _firsts;
-  std::vector<Chain> _chains;
-  std::vector<uint32_t> _stack;
+  static constexpr size_t kPairLengths = size_t{1} << 16;
+
+  containers::TrackedFlatHashMap<std::string, uint32_t> _ids;
+  TrackedVector<uint16_t> _lengths;
+  TrackedVector<std::string> _tokens;
+  TrackedVector<uint32_t> _order;
+  containers::TrackedFlatHashMap<uint32_t, uint8_t> _pairs;
+  TrackedVector<Key> _keys;
+  TrackedVector<uint32_t> _firsts;
+  TrackedVector<Chain> _chains;
+  TrackedVector<uint32_t> _stack;
   uint8_t _bits = 8;
 };
 

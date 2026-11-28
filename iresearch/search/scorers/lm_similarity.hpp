@@ -130,11 +130,12 @@ struct FreqScore : public ScoreOperatorOf<FreqScore<HasScale, Formula>> {
 };
 
 template<typename Formula>
-ScoreFunction MakeFreqScore(Formula formula, const FreqBlockAttr* freq,
-                            const uint32_t* norm, const score_t* scale) {
+ScoreFunction MakeFreqScore(PlanMemory& memory, Formula formula,
+                            const FreqBlockAttr* freq, const uint32_t* norm,
+                            const score_t* scale) {
   return Resolve(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<FreqScore<HasScale, Formula>>(std::move(formula),
-                                                             freq, norm, scale);
+    return ScoreFunction::Make<FreqScore<HasScale, Formula>>(
+      memory, std::move(formula), freq, norm, scale);
   });
 }
 
@@ -148,10 +149,11 @@ ScoreFunction PrepareShareScorer(const ScoreContext& ctx,
     return ScoreFunction::Default();
   }
   if (shares.size() == 1) {
-    return MakeFreqScore(make_term(shares.front()), freq, NormsOf(ctx),
-                         ScaleOf(ctx));
+    return MakeFreqScore(ctx.memory, make_term(shares.front()), freq,
+                         NormsOf(ctx), ScaleOf(ctx));
   }
-  return MakeFreqScore(make_terms(shares), freq, NormsOf(ctx), ScaleOf(ctx));
+  return MakeFreqScore(ctx.memory, make_terms(shares), freq, NormsOf(ctx),
+                       ScaleOf(ctx));
 }
 
 }  // namespace irs

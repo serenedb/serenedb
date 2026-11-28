@@ -68,6 +68,7 @@ add_bench(term_dict_numeric)
 add_bench(numeric_ranges)
 add_bench(block_prefixes)
 add_bench(top_term_selector)
+add_bench(tracked_alloc)
 add_bench(random)
 set_property(
     SOURCE random.cpp

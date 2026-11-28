@@ -31,23 +31,25 @@
 
 namespace irs::fill {
 
-Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+Node::ptr MakePostingDocs(PlanMemory& memory,
+                          const detail::PostingClause& posting,
                           const SubReader&) {
   SDB_ASSERT(posting.state.cookie.docs_count != 0);
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& doc = *detail::DocOf(own);
   return Resolve(doc, [&]<typename Input> -> Node::ptr {
-    return memory::make_managed<Impl<detail::PostingFill<Input>>>(
+    return memory.Make<Impl<detail::PostingFill<Input>>>(
       posting.state.cookie, doc, detail::LayoutOf(own), detail::BoundsOf(own),
       detail::FreqOf(own));
   });
 }
 
-Node::ptr MakeSinglePostingDocs(const detail::PostingClause& posting) {
+Node::ptr MakeSinglePostingDocs(PlanMemory& memory,
+                                const detail::PostingClause& posting) {
   SDB_ASSERT(posting.state.cookie.docs_count == 1);
-  return memory::make_managed<Impl<SingleDocs>>(doc_limits::min() +
-                                                posting.state.cookie.doc_delta);
+  return memory.Make<Impl<SingleDocs>>(doc_limits::min() +
+                                       posting.state.cookie.doc_delta);
 }
 
 Node::ptr MakePostingScored(const detail::PostingClause& posting,
@@ -56,6 +58,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             ScoreMergeType merge) {
   SDB_ASSERT(posting.state.cookie.docs_count != 0);
   SDB_ASSERT(posting.state.reader != nullptr);
+  auto& memory = ctx.memory;
   const auto& own = *posting.state.reader;
   const auto& meta = posting.state.cookie;
   const auto& doc = *detail::DocOf(own);
@@ -65,27 +68,27 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   if (posting.stats.stats == nullptr) {
     return Resolve(doc, [&]<typename Input> -> Node::ptr {
       using Leaf = detail::PlainFillScored<Input>;
-      return memory::make_managed<Impl<Leaf>>(meta, doc, detail::LayoutOf(own),
-                                              bounds, freq);
+      return memory.Make<Impl<Leaf>>(meta, doc, detail::LayoutOf(own), bounds,
+                                     freq);
     });
   }
 
   if (const auto constant =
-        detail::ConstantOf(segment, own, posting.Args(ctx.fetcher))) {
+        detail::ConstantOf(segment, own, posting.Args(memory, ctx.fetcher))) {
     const auto value = *constant;
     return Resolve(doc, [&]<typename Input> -> Node::ptr {
       using Approx = detail::PostingFill<Input>;
       using Node = ConstantScored<Approx>;
-      return memory::make_managed<Impl<Node>>(
-        merge, value, meta, doc, detail::LayoutOf(own), bounds, freq);
+      return memory.Make<Impl<Node>>(merge, value, meta, doc,
+                                     detail::LayoutOf(own), bounds, freq);
     });
   }
 
   return detail::ResolveFillScored<Node::ptr>(
     doc, freq && ScoresPerDoc(posting.stats.scorer), merge,
     [&]<typename Leaf, typename> -> Node::ptr {
-      return memory::make_managed<Impl<Leaf>>(meta, doc, bounds, segment, own,
-                                              posting.Args(ctx.fetcher));
+      return memory.Make<Impl<Leaf>>(meta, doc, bounds, segment, own,
+                                     posting.Args(memory, ctx.fetcher));
     });
 }
 
@@ -98,12 +101,12 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
   const auto& meta = posting.state.cookie;
   const auto doc = doc_limits::min() + meta.doc_delta;
   if (posting.stats.stats == nullptr) {
-    return memory::make_managed<Impl<SingleDocs>>(doc);
+    return ctx.memory.Make<Impl<SingleDocs>>(doc);
   }
-  const auto value = detail::SingleDocScore(
-    segment, *posting.state.reader, doc, meta.freq, posting.Args(ctx.fetcher));
-  return memory::make_managed<Impl<ConstantScored<SingleDocs>>>(merge, value,
-                                                                doc);
+  const auto value =
+    detail::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
+                           posting.Args(ctx.memory, ctx.fetcher));
+  return ctx.memory.Make<Impl<ConstantScored<SingleDocs>>>(merge, value, doc);
 }
 
 }  // namespace irs::fill

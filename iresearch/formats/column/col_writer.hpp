@@ -47,13 +47,16 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
+
+AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows);
 
 class ColWriter final {
  public:
   ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
-            WriteTier tier = WriteTier::Flush);
+            TrackedAllocator<> alloc, WriteTier tier = WriteTier::Flush);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -62,6 +65,11 @@ class ColWriter final {
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
 
   void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
+
+  TrackedAllocator<> Allocator() const noexcept { return _alloc; }
+
+  static constexpr size_t kSealBound =
+    2 * duckdb::Storage::MAX_BLOCK_ALLOC_SIZE;
 
   void SetDeferredSeal(bool deferred) noexcept {
     SDB_ASSERT(_columns.empty());
@@ -95,6 +103,9 @@ class ColWriter final {
   NormColumnWriter& StreamNormColumn(field_id id);
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
+
+  AnnFlushBound AnnBound(uint64_t rows) const;
+  uint64_t SealBound() const;
 
   std::unique_ptr<ColReader> TakeReader() noexcept {
     return std::move(_reader);
@@ -137,6 +148,7 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
+  TrackedAllocator<> _alloc;
   std::unique_ptr<duckdb::BufferedFileWriter> _out;
   std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;

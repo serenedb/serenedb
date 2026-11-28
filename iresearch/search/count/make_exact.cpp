@@ -27,8 +27,9 @@ namespace {
 
 class ExactCount : public Root {
  public:
-  ExactCount(const ExactVectorQuery& query, detail::TableFilter* table)
-    : _scanner{query, true}, _table{table} {}
+  ExactCount(PlanMemory& memory, const ExactVectorQuery& query,
+             detail::TableFilter* table)
+    : _scanner{memory, query, true}, _table{table} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
     doc_id_t docs[irs::detail::ExactScanner::kRun];
@@ -55,7 +56,7 @@ class ExactCount : public Root {
 }  // namespace
 
 Root::ptr Family::Make(const ExactVectorQuery& query, const Context& ctx) {
-  return memory::make_managed<ExactCount>(query, ctx.table);
+  return ctx.memory.Make<ExactCount>(ctx.memory, query, ctx.table);
 }
 
 }  // namespace irs::count

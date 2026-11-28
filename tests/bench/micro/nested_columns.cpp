@@ -47,6 +47,8 @@
 #include <string>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 enum class Shape : uint8_t {
@@ -173,7 +175,7 @@ const Data& GetData(Shape shape) {
 }
 
 void Write(irs::FileTracker& tracker, const Data& data, uint64_t gap = 0) {
-  irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
+  irs::ColWriter w{CsDb(), tracker, TestAlloc(), irs::WriteTier::Merge};
   auto& cw = w.OpenColumn(kField, data.type);
   uint64_t row = 0;
   for (size_t i = 0; i < data.chunks.size(); ++i) {
@@ -247,7 +249,7 @@ void PrintSegmentInfo(const Seg& seg, const irs::ColumnReader& col,
                       const std::string& path) {
   std::map<std::string, uint64_t> rows;
   std::map<std::string, uint64_t> bytes;
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : col.DataBlocks()) {
@@ -348,7 +350,7 @@ void WriteSealSparse(benchmark::State& state, Shape shape) {
 void FullScan(benchmark::State& state, Shape shape) {
   const auto& seg = GetSeg(shape);
   const auto rows = seg.col->RowCount();
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   for (auto _ : state) {
     auto st = seg.col->InitScan(ctx);
     uint64_t pos = 0;
@@ -367,12 +369,12 @@ void FullScan(benchmark::State& state, Shape shape) {
 void Rewrite(benchmark::State& state, Shape shape) {
   const auto& seg = GetSeg(shape);
   const auto rows = seg.col->RowCount();
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   uint64_t bytes = 0;
   for (auto _ : state) {
     duckdb::MemoryFileSystem fs;
     irs::FileTracker tracker{fs, kRoot, kSeg};
-    irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
+    irs::ColWriter w{CsDb(), tracker, TestAlloc(), irs::WriteTier::Merge};
     auto& cw = w.OpenColumn(kField, seg.col->Type());
     auto st = seg.col->InitScan(ctx);
     uint64_t pos = 0;
@@ -395,7 +397,7 @@ void Rewrite(benchmark::State& state, Shape shape) {
 void SparseGather(benchmark::State& state, Shape shape) {
   const auto& seg = GetSeg(shape);
   const auto& rows = ScatteredRows();
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   for (auto _ : state) {
     auto st = seg.col->InitScan(ctx);
     size_t i = 0;
@@ -418,7 +420,7 @@ void DenseGather(benchmark::State& state, Shape shape) {
   for (uint64_t r = 0; r < Rows(); r += 3) {
     rows.emplace_back(r);
   }
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   for (auto _ : state) {
     auto st = seg.col->InitScan(ctx);
     size_t i = 0;
@@ -444,7 +446,7 @@ void PointGather(benchmark::State& state, Shape shape) {
   constexpr size_t kPointRows = 8;
   const auto& seg = GetSeg(shape);
   const auto& rows = ScatteredRows();
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                             seg.col->Type(), STANDARD_VECTOR_SIZE};
   duckdb::Vector batch{cache};

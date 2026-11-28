@@ -26,6 +26,7 @@
 namespace irs::detail {
 
 struct Scored {
+  PlanMemory* memory;
   ScoreMergeType inner;
   score_t absorbed = 0;
 };

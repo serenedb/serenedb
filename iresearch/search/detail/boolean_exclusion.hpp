@@ -68,6 +68,7 @@ Result<Family> ExclusionMaker<Family, Ctx, P>::Make(const BooleanQuery& query,
       const auto recipe = RecipeOf<Family>(segment, ctx);
       return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
         return BuildExcludesOf<Result<Family>, Input, P>(
+          Family::MemoryOf(ctx),
           Family::kRoot ? ExcludeUse::PerBlock : ExcludeUse::PerDoc, excludes,
           exclude_filters, nullptr, segment, candidates, candidates,
           [&]<typename Exclude>(auto&& negated) -> Result<Family> {
@@ -99,7 +100,7 @@ Result<Family> ExclusionMaker<Family, Ctx, P>::Make(const BooleanQuery& query,
     if constexpr (Family::kRoot) {
       return MakeSparseExclusionOf<Family, P>(
         std::move(include), excludes, exclude_filters, segment, candidates, ctx,
-        merge, Scored{merge, 0});
+        merge, Scored{&Family::MemoryOf(ctx), merge, 0});
     } else {
       return MakeSparseExclusionOf<Family, P>(
         std::move(include), excludes, exclude_filters, segment, candidates, ctx,
@@ -134,9 +135,14 @@ Result<Family> ExclusionMaker<Family, Ctx, P>::Make(const BooleanQuery& query,
                                             candidates, ctx);
     }
     auto include =
-      RequiredMaker<lead::Family, utils::Empty, Restrict<P, InputAxis>>::Make(
-        must, must_filters, should, should_filters, Terms::Mixed, min_match,
-        segment, utils::Empty{}, ScoreMergeType::Noop, score_t{0});
+      RequiredMaker<lead::Family, lead::Family::DocsContext,
+                    Restrict<P, InputAxis>>::Make(must, must_filters, should,
+                                                  should_filters, Terms::Mixed,
+                                                  min_match, segment,
+                                                  lead::Family::DocsContext{
+                                                    Family::MemoryOf(ctx)},
+                                                  ScoreMergeType::Noop,
+                                                  score_t{0});
     if (!include) {
       return {};
     }

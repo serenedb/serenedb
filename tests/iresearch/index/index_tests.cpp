@@ -255,7 +255,7 @@ class SubReaderMock final : public irs::SubReader {
 
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
 
-  irs::lead::Node::ptr docs_iterator() const final {
+  irs::lead::Node::ptr docs_iterator(irs::PlanMemory&) const final {
     EXPECT_FALSE(true);
     return nullptr;
   }
@@ -271,6 +271,10 @@ class SubReaderMock final : public irs::SubReader {
   }
 
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+
+  irs::NormReader::ptr norms(irs::PlanMemory&, irs::field_id) const final {
+    return nullptr;
+  }
 
  private:
   irs::SegmentInfo _meta;
@@ -677,13 +681,15 @@ class IndexTestCase : public tests::IndexTestBase {
     // 2-nd iteration: cached
     for (size_t i = 0; i < 2; ++i) {
       auto read_columns = [&expected_docs, &reader] {
+        irs::LocalBudget budget{irs::gRootBudget};
         size_t i = 0;
         for (auto& segment : reader) {
           auto* column = segment.Column(kNameColumnId);
           if (!column) {
             return false;
           }
-          irs::tests::BlobPointReader values{segment, *column};
+          irs::tests::BlobPointReader values{segment, *column,
+                                             irs::TrackedAllocator<>{budget}};
           for (irs::doc_id_t doc = (irs::doc_limits::min)(),
                              max = segment.docs_count();
                doc <= max; ++doc) {

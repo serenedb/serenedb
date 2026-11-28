@@ -150,15 +150,21 @@ class FrameReader {
   };
 
   FrameReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
-              CodecType codec, const ReadContext::CacheSlot& slot)
+              CodecType codec, TrackedAllocator<> alloc,
+              const ReadContext::CacheSlot& slot)
     : _base{base},
       _f{frames},
       _shape{ShapeOf(codec)},
       _leaf{LeafOf(codec)},
       _meta_size{static_cast<uint32_t>(FrameMetaSize(
         ShapeOf(codec), frames.flags & kNumericPacked, sizeof(T)))},
+      _block{alloc},
       _cache{slot.touched ? slot.cache : nullptr},
-      _slot{slot} {
+      _slot{slot},
+      _rows{alloc},
+      _raw{alloc},
+      _shuffled{alloc},
+      _words{alloc} {
     if (_f.width != sizeof(T)) [[unlikely]] {
       ThrowCorrupted("numeric", "value width does not match the column");
     }
@@ -329,7 +335,7 @@ class FrameReader {
       _leaf == ByteCodec::Lz4
         ? Lz4::Decompressor::Decompress(in, m.frame.comp_len, out,
                                         m.frame.raw_len)
-        : (_zstd ? *_zstd : _zstd.emplace())
+        : (_zstd ? *_zstd : _zstd.emplace(_rows.get_allocator()))
             .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     if (!ok) [[unlikely]] {
       ThrowCorrupted("numeric", "frame is inconsistent");
@@ -843,7 +849,7 @@ class FrameReader {
   const uint8_t* _source = nullptr;
   uint32_t _source_opens = 0;
   uint64_t _fetched = std::numeric_limits<uint64_t>::max();
-  ScratchVector<U> _block;
+  TrackedScratchVector<U> _block;
   uint64_t _steps_block = kNoRow;
   size_t _steps_summed = 0;
   U _steps_sum = 0;
@@ -926,10 +932,10 @@ class FrameReader {
   std::string _key;
   int8_t _admit = -1;
   duckdb::shared_ptr<DecodedFrame> _source_held;
-  ScratchVector<U> _rows;
-  ScratchVector<uint8_t> _raw;
-  ScratchVector<uint8_t> _shuffled;
-  ScratchVector<uint64_t> _words;
+  TrackedScratchVector<U> _rows;
+  TrackedScratchVector<uint8_t> _raw;
+  TrackedScratchVector<uint8_t> _shuffled;
+  TrackedScratchVector<uint64_t> _words;
   BitpackingFrame _bitpacking;
   uint32_t _bitpacking_frame = kNoFrame;
   uint32_t _bounds_frame = kNoFrame;

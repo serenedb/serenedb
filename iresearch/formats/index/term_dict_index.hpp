@@ -34,6 +34,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -52,16 +53,26 @@ constexpr bool GatesTerms(DictMember member, uint32_t width) noexcept {
 struct DictSections {
   PrefixTrie trie;
   ByteSet held;
-  std::vector<byte_type> selected;
-  std::vector<uint64_t> masks;
+  TrackedVector<byte_type> selected;
+  TrackedVector<uint64_t> masks;
 };
+
+inline DictSections EmptySections(TrackedAllocator<> alloc) {
+  return {
+    .trie = PrefixTrie{alloc},
+    .selected = TrackedVector<byte_type>{alloc},
+    .masks = TrackedVector<uint64_t>{alloc},
+  };
+}
 
 class DictIndex {
  public:
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-            const Separators& separators, DictSections sections);
+            const Separators& separators, DictSections sections,
+            TrackedAllocator<> alloc);
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-            const Separators& separators, duckdb::ReadStream& in);
+            const Separators& separators, duckdb::ReadStream& in,
+            TrackedAllocator<> alloc);
 
   void Write(duckdb::WriteStream& out) const;
 
@@ -142,15 +153,16 @@ class DictIndex {
   }
 
  private:
-  DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks);
+  DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
+            TrackedAllocator<> alloc, Root root, PrefixTrie trie);
 
-  bstring _min_key;
-  bstring _max_key;
+  TrackedBstring _min_key;
+  TrackedBstring _max_key;
   Root _root;
   PrefixTrie _trie;
-  std::vector<uint32_t> _link_nodes;
-  std::vector<uint8_t> _link_depths;
-  std::vector<uint64_t> _masks;
+  TrackedVector<uint32_t> _link_nodes;
+  TrackedVector<uint8_t> _link_depths;
+  TrackedVector<uint64_t> _masks;
   ByteSet _held{
     .words = {~uint64_t{0}, ~uint64_t{0}, ~uint64_t{0}, ~uint64_t{0}}};
   ByteSet _masked;
@@ -162,6 +174,9 @@ class DictIndex {
 
 class DictIndexBuilder {
  public:
+  explicit DictIndexBuilder(TrackedAllocator<> alloc)
+    : _trie{alloc}, _seen{alloc} {}
+
   void Reset(bool gated) noexcept {
     _trie.Reset();
     _seen.clear();
@@ -194,7 +209,7 @@ class DictIndexBuilder {
   void FinishMasks(DictSections& sections) const;
 
   PrefixTrieBuilder _trie;
-  std::vector<ByteSet> _seen;
+  TrackedVector<ByteSet> _seen;
   uint64_t _terms = 0;
   bool _gated = false;
 };

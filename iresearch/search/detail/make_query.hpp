@@ -113,10 +113,11 @@ typename Family::Result MakeQuery(const EmptyQueryBuilder&, const Ctx&) {
 
 template<typename Family, typename Query, typename Ctx>
 typename Family::Result Plan(const Query& query, const Ctx& ctx) {
+  auto& memory = Family::MemoryOf(ctx);
   if constexpr (requires { Family::Make(query, ctx); }) {
-    return ProfilePlan(query, Family::Make(query, ctx));
+    return ProfilePlan(memory, query, Family::Make(query, ctx));
   } else {
-    return ProfilePlan(query, MakeQuery<Family>(query, ctx));
+    return ProfilePlan(memory, query, MakeQuery<Family>(query, ctx));
   }
 }
 

@@ -32,15 +32,16 @@
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
 class BlockStore {
  public:
-  BlockStore() = default;
-  ~BlockStore();
+  explicit BlockStore(TrackedAllocator<> alloc)
+    : _pages{alloc}, _copies{alloc}, _pending{alloc} {}
 
   BlockStore(const BlockStore&) = delete;
   BlockStore& operator=(const BlockStore&) = delete;
@@ -48,12 +49,6 @@ class BlockStore {
   void Open(const duckdb::InputFile* in, duckdb::BufferManager& buffers);
   void Bind(const TermsMeta& terms);
   void Finish();
-  void Account(uint64_t bytes) {
-    if (bytes != 0) {
-      _buffers->ReserveMemory(bytes);
-      _reserved += bytes;
-    }
-  }
 
   bool Opened() const noexcept { return _in; }
   bool Mapped() const noexcept { return _base; }
@@ -80,12 +75,13 @@ class BlockStore {
   const duckdb::InputFile* _in = nullptr;
   duckdb::BufferManager* _buffers = nullptr;
   const byte_type* _base = nullptr;
-  std::vector<uint32_t> _pages;
-  containers::FlatHashMap<uint64_t, duckdb::AllocatedData> _copies;
-  std::vector<PendingCopy> _pending;
+  TrackedVector<uint32_t> _pages;
+  containers::TrackedFlatHashMap<uint64_t, duckdb::AllocatedData,
+                                 absl::Hash<uint64_t>, std::equal_to<uint64_t>>
+    _copies;
+  TrackedVector<PendingCopy> _pending;
   uint64_t _first_page = 0;
   uint64_t _blocks_end = 0;
-  uint64_t _reserved = 0;
   uint32_t _block_count = 0;
 };
 

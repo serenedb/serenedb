@@ -50,7 +50,6 @@ void FieldReader::prepare(const ReaderState& state) {
     in.Seek(terms.separators.offset);
     ReadArray(in, _separators.offsets);
     ReadArray(in, _separators.arena);
-    _store.Account(SeparatorBytes(separators));
   }
 
   IndexFeatures features = IndexFeatures::None;

@@ -54,6 +54,7 @@
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 namespace {
@@ -90,8 +91,9 @@ QueryBuilder::ptr PrepareCells(const SubReader& segment,
                                const TermReader* reader) {
   SDB_ASSERT(!geo_terms.empty());
 
-  std::vector<std::string_view> sorted_terms(geo_terms.begin(),
-                                             geo_terms.end());
+  memory::ArenaVector<std::string_view> sorted_terms{ctx.memory.Scratch()};
+  sorted_terms.reserve(geo_terms.size());
+  sorted_terms.assign(geo_terms.begin(), geo_terms.end());
   absl::c_sort(sorted_terms);
   SDB_ASSERT(std::unique(sorted_terms.begin(), sorted_terms.end()) ==
              sorted_terms.end());
@@ -104,10 +106,11 @@ QueryBuilder::ptr PrepareCells(const SubReader& segment,
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
+  auto query = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, kNoBoost,
+                                               ScoreMergeType::Noop);
   auto& state = query->State();
   state.Prepare(reader);
+  state.Walked().reserve(sorted_terms.size());
   for (const auto term : sorted_terms) {
     if (!terms->seek(ViewCast<byte_type>(term))) {
       continue;
@@ -134,8 +137,7 @@ QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
   }
   const auto store_field_id = options.store_field_id;
   if (!field_limits::valid(store_field_id)) {
-    auto query = memory::make_tracked<ApproxQuery>(ctx.memory, segment,
-                                                   std::move(cells), boost);
+    auto query = ctx.memory.Make<ApproxQuery>(segment, std::move(cells), boost);
     query->SetStats(ctx.Record());
     return query;
   }
@@ -146,9 +148,9 @@ QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
   return std::visit(
     [&]<typename Parser, typename Acceptor>(
       Parser&& parser, const Acceptor& acceptor) -> QueryBuilder::ptr {
-      auto query = memory::make_tracked<GeoQuery<Parser, Acceptor>>(
-        ctx.memory, segment, std::move(cells), store_field_id,
-        std::move(parser), Acceptor{acceptor}, boost);
+      auto query = ctx.memory.Make<GeoQuery<Parser, Acceptor>>(
+        segment, std::move(cells), store_field_id, std::move(parser),
+        Acceptor{acceptor}, boost);
       query->SetStats(ctx.Record());
       return query;
     },

@@ -30,6 +30,7 @@
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <span>
 
 #include "index/index_tests.hpp"
@@ -79,8 +80,8 @@ struct DocIdScorer : irs::ScorerBase<void> {
     mutable irs::doc_id_t next_doc{irs::doc_limits::min()};
   };
 
-  irs::ScoreFunction PrepareScorer(const irs::ScoreContext&) const final {
-    return irs::ScoreFunction::Make<ScorerContext>(divisor);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    return irs::ScoreFunction::Make<ScorerContext>(ctx.memory, divisor);
   }
 
   irs::doc_id_t divisor;
@@ -440,13 +441,15 @@ TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
   size_t walked = 0;
   for (auto& segment : reader) {
     ASSERT_LT(segment.live_docs_count(), segment.docs_count());
-    auto query = irs::PrepareMasked(filter, segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto query = irs::PrepareMasked(filter, segment, {.memory = query_memory});
     ASSERT_NE(nullptr, query);
-    auto lead = query->PlanLead({});
+    auto lead = query->PlanLead({.memory = plan_memory});
     ASSERT_NE(nullptr, lead);
 
     std::vector<irs::doc_id_t> expected;
-    auto live = segment.docs_iterator();
+    auto live = segment.docs_iterator(plan_memory);
     for (auto doc = live->Next(); !irs::doc_limits::eof(doc);
          doc = live->Next()) {
       expected.push_back(doc);
@@ -500,17 +503,20 @@ TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
     size_t counted = 0;
     for (auto& segment : reader) {
       ASSERT_LT(segment.live_docs_count(), segment.docs_count());
-      auto query = irs::PrepareMasked(filter, segment, {});
+      irs::QueryMemory query_memory;
+      irs::PlanMemory plan_memory;
+      auto query =
+        irs::PrepareMasked(filter, segment, {.memory = query_memory});
       ASSERT_NE(nullptr, query);
 
       size_t expected = 0;
-      auto lead = query->PlanLead({});
+      auto lead = query->PlanLead({.memory = plan_memory});
       ASSERT_NE(nullptr, lead);
       while (!irs::doc_limits::eof(lead->Next())) {
         ++expected;
       }
 
-      auto count = query->PlanCount({});
+      auto count = query->PlanCount({.memory = plan_memory});
       ASSERT_NE(nullptr, count);
       const auto actual =
         count->Run(irs::doc_limits::min(), irs::doc_limits::eof());
@@ -548,15 +554,17 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
   size_t counted = 0;
   for (auto& segment : reader) {
     ASSERT_LT(segment.live_docs_count(), segment.docs_count());
-    auto query = irs::PrepareMasked(filter, segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto query = irs::PrepareMasked(filter, segment, {.memory = query_memory});
     ASSERT_NE(nullptr, query);
 
-    auto count = query->PlanCount({});
+    auto count = query->PlanCount({.memory = plan_memory});
     ASSERT_NE(nullptr, count);
     ASSERT_EQ(segment.live_docs_count(),
               count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
 
-    auto split = query->PlanCount({.partial = true});
+    auto split = query->PlanCount({.memory = plan_memory, .partial = true});
     ASSERT_NE(nullptr, split);
     constexpr irs::doc_id_t kBounds[]{irs::doc_limits::min(), 3, 20,
                                       irs::doc_limits::eof()};
@@ -600,14 +608,16 @@ TEST_P(DocCollectorTestCase, test_count_split_single_doc_term) {
       irs::Occur::Should);
   }
   filter.SetMinShouldMatch(1);
-  auto query = irs::PrepareMasked(filter, segment, {});
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
+  auto query = irs::PrepareMasked(filter, segment, {.memory = query_memory});
   ASSERT_NE(nullptr, query);
 
   const auto mid =
     static_cast<irs::doc_id_t>(irs::doc_limits::min() + kDocs / 2);
   uint64_t expected_front = 0;
   uint64_t expected_back = 0;
-  auto lead = query->PlanLead({});
+  auto lead = query->PlanLead({.memory = plan_memory});
   ASSERT_NE(nullptr, lead);
   for (auto doc = lead->Next(); !irs::doc_limits::eof(doc);
        doc = lead->Next()) {
@@ -616,9 +626,9 @@ TEST_P(DocCollectorTestCase, test_count_split_single_doc_term) {
   ASSERT_NE(0, expected_back);
 
   for (const bool partial : {false, true}) {
-    auto front = query->PlanCount({.partial = partial});
+    auto front = query->PlanCount({.memory = plan_memory, .partial = partial});
     ASSERT_NE(nullptr, front);
-    auto back = query->PlanCount({.partial = partial});
+    auto back = query->PlanCount({.memory = plan_memory, .partial = partial});
     ASSERT_NE(nullptr, back);
     const auto front_count =
       front->Run(irs::doc_limits::min(), mid) + front->Finish();

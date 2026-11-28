@@ -33,9 +33,11 @@ Result<Family> NegationMaker<Family, Ctx>::Make(
   std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Ctx& ctx) {
-  if constexpr (requires { Family::MakeLiveDocs(segment); }) {
+  if constexpr (requires {
+                  Family::MakeLiveDocs(Family::MemoryOf(ctx), segment);
+                }) {
     if (OnlyMask(excludes, exclude_filters)) {
-      return Family::MakeLiveDocs(segment);
+      return Family::MakeLiveDocs(Family::MemoryOf(ctx), segment);
     }
   }
   if constexpr (Family::kSparseNegation) {

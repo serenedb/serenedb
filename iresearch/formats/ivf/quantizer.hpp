@@ -32,6 +32,9 @@
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -48,8 +51,10 @@ struct PayloadBlockSetting {
   }
 };
 
-using TrainFanout =
-  absl::FunctionRef<void(size_t, absl::FunctionRef<void(size_t)>)>;
+using TrainTask =
+  absl::FunctionRef<void(size_t task, TrackedAllocator<> alloc)>;
+
+using TrainFanout = absl::FunctionRef<void(size_t tasks, TrainTask task)>;
 
 class QuantizerWriter {
  public:
@@ -82,7 +87,8 @@ class QuantizerWriter {
     return false;
   }
 
-  virtual std::unique_ptr<QuantizerWriter> CloneForEncode() const {
+  virtual std::unique_ptr<QuantizerWriter> CloneForEncode(
+    TrackedAllocator<> /*alloc*/) const {
     return nullptr;
   }
 
@@ -105,9 +111,10 @@ struct QuantizerLevelBound {
   uint32_t row_stride = 0;
 };
 
-class QuantizerReader {
+class QuantizerReader : public memory::Managed {
  public:
-  virtual ~QuantizerReader() = default;
+  using ptr = memory::managed_ptr<QuantizerReader>;
+
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
   virtual void StartCluster(const float* centroid) = 0;
   virtual void ComputeBlock(std::span<const byte_type> block, score_t threshold,
@@ -142,7 +149,7 @@ class QuantizerReader {
 
   virtual bool PreparePairTerms(const byte_type* /*base*/,
                                 uint32_t /*record_size*/, uint64_t /*rows*/,
-                                std::vector<float>& /*terms*/) {
+                                TrackedVector<float>& /*terms*/) {
     return false;
   }
 
@@ -161,7 +168,7 @@ class QuantizerCodebook
   : public std::enable_shared_from_this<QuantizerCodebook> {
  public:
   virtual ~QuantizerCodebook() = default;
-  virtual std::unique_ptr<QuantizerReader> MakeReader() const = 0;
+  virtual QuantizerReader::ptr MakeReader(PlanMemory* plan) const = 0;
 };
 
 class QuantizerCodeBound {
@@ -212,19 +219,27 @@ constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
 bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
-  const AnnInfo::Quantizer& quant, uint32_t d, VectorMetric metric,
-  uint32_t pq_niter = 0, bool row_major = false);
+  TrackedAllocator<> alloc, const AnnInfo::Quantizer& quant, uint32_t d,
+  VectorMetric metric, uint32_t pq_niter = 0, bool row_major = false);
+
+uint32_t QuantizerRecordSize(const AnnInfo::Quantizer& quant, uint32_t d,
+                             VectorMetric metric, bool row_major);
+
+size_t QuantizerTrainSamples(const AnnInfo::Quantizer& quant, uint32_t d,
+                             VectorMetric metric, size_t rows,
+                             bool row_major) noexcept;
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
-  VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric, bool row_major = false);
+  MemoryBudget& parent, VectorQuantization quant, uint32_t d,
+  std::span<const byte_type> stats, VectorMetric metric,
+  bool row_major = false);
 
 std::shared_ptr<const QuantizerStats> ReadQuantizerStats(
-  duckdb::InputFileReader& in, VectorQuantization quant, uint32_t d,
-  VectorMetric metric, bool row_major = false);
+  MemoryBudget& parent, duckdb::InputFileReader& in, VectorQuantization quant,
+  uint32_t d, VectorMetric metric, bool row_major = false);
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  const std::shared_ptr<const QuantizerCodebook>& codebook);
+QuantizerReader::ptr MakeQuantizerReader(
+  PlanMemory* plan, const std::shared_ptr<const QuantizerCodebook>& codebook);
 
 void GenerateSigns(uint32_t rotated_d, int64_t seed, std::vector<float>& signs);
 

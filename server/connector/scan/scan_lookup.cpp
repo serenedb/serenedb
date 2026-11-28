@@ -32,6 +32,7 @@
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
 #include "connector/view_fast_path.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -40,7 +41,8 @@ namespace {
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   const auto& bind = input.bind_data->Cast<ScanBindData>();
-  auto state = duckdb::make_uniq<ScanGlobalState>();
+  auto state = duckdb::make_uniq<ScanGlobalState>(
+    ConnectionContext::Get(context).Memory());
   InitScanState(*state, &context, bind, input);
   state->scan = &bind;
   state->view = bind.Read(context);
@@ -52,8 +54,18 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   return state;
 }
 
+struct LookupBudget {
+  explicit LookupBudget(irs::MemoryBudget& parent) : budget{parent} {}
+
+  irs::LocalBudget budget;
+};
+
 struct LookupLocalState final : duckdb::LocalTableFunctionState,
+                                LookupBudget,
                                 FetchLocalState {
+  explicit LookupLocalState(irs::MemoryBudget& parent)
+    : LookupBudget{parent}, FetchLocalState{irs::TrackedAllocator<>{budget}} {}
+
   duckdb::DataChunk tmp;
   duckdb::DataChunk fetched;
   std::unique_ptr<duckdb::Vector> pk;
@@ -65,7 +77,8 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> LookupInitLocal(
   duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput&,
   duckdb::GlobalTableFunctionState* global_state) {
   const auto& g = global_state->Cast<ScanGlobalState>();
-  auto state = duckdb::make_uniq<LookupLocalState>();
+  auto state = duckdb::make_uniq<LookupLocalState>(
+    ConnectionContext::Get(context.client).Memory());
   state->tmp.Initialize(context.client, g.projected_types);
   state->fetched.Initialize(context.client, g.projected_types);
   return state;

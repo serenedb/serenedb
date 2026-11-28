@@ -32,14 +32,9 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
-
-struct Lz4HcFree {
-  void operator()(LZ4_streamHC_t* stream) const noexcept {
-    LZ4_freeStreamHC(stream);
-  }
-};
 
 struct Lz4 {
   static constexpr ByteCodec kCodec = ByteCodec::Lz4;
@@ -50,9 +45,14 @@ struct Lz4 {
 
   static size_t Bound(size_t raw_size) noexcept;
 
+  static size_t ContextBytes(uint8_t level) noexcept {
+    return HighCompression<Lz4>(level) ? sizeof(LZ4_streamHC_t)
+                                       : sizeof(LZ4_stream_t);
+  }
+
   class Compressor final : public DictionaryCompressor {
    public:
-    explicit Compressor(uint8_t level);
+    explicit Compressor(TrackedAllocator<> alloc, uint8_t level);
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
@@ -67,14 +67,17 @@ struct Lz4 {
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
 
     int _level;
-    std::unique_ptr<LZ4_stream_t> _fast;
-    std::unique_ptr<LZ4_stream_t> _fast_attached;
-    std::unique_ptr<LZ4_streamHC_t, Lz4HcFree> _high;
-    std::unique_ptr<LZ4_streamHC_t> _high_attached;
+    TrackedUniquePtr<LZ4_stream_t> _fast;
+    TrackedUniquePtr<LZ4_stream_t> _fast_attached;
+    TrackedUniquePtr<LZ4_streamHC_t> _high;
+    TrackedUniquePtr<LZ4_streamHC_t> _high_attached;
   };
 
   class Decompressor final : public DictionaryDecompressor {
    public:
+    explicit Decompressor(TrackedAllocator<> alloc) noexcept
+      : DictionaryDecompressor{alloc} {}
+
     static bool Decompress(const char* src, size_t size, char* dst,
                            size_t raw_size) noexcept;
     static size_t DecompressPrefix(const char* src, size_t size, char* dst,

@@ -20,10 +20,9 @@
 
 #include "iresearch/formats/column/codecs/text/segment_buffer.hpp"
 
-#include <absl/cleanup/cleanup.h>
-
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace irs::codecs::text {
 namespace {
@@ -33,18 +32,12 @@ constexpr size_t kMinCapacity = 64 * 1024;
 }  // namespace
 
 void SegmentBuffer::Grow(size_t need) {
-  const size_t capacity = std::max({need, 2 * _capacity, kMinCapacity});
-  _buffers->ReserveMemory(capacity - _capacity);
-  absl::Cleanup release = [&] {
-    _buffers->FreeReservedMemory(capacity - _capacity);
-  };
-  auto data = std::make_unique_for_overwrite<char[]>(capacity);
-  std::move(release).Cancel();
+  const size_t capacity = std::max({need, 2 * _data.size(), kMinCapacity});
+  TrackedScratchVector<char> data(capacity, _data.get_allocator());
   if (_size != 0) {
-    std::memcpy(data.get(), _data.get(), _size);
+    std::memcpy(data.data(), _data.data(), _size);
   }
   _data = std::move(data);
-  _capacity = capacity;
 }
 
 }  // namespace irs::codecs::text

@@ -54,21 +54,21 @@ Root::ptr MakeDisjunctionOf(
       const auto candidates =
         std::min<uint64_t>(postings, segment.docs_count());
       return irs::detail::BuildBlockExcludes<Root::ptr, P>(
-        excludes, exclude_filters, nullptr, segment, candidates, candidates,
-        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+        ctx.memory, excludes, exclude_filters, nullptr, segment, candidates,
+        candidates, [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return irs::detail::MakeRemovable(
             std::type_identity<Exclude>{},
             std::forward<decltype(negated)>(negated),
             [&]<typename Removable>(auto&& args) -> Root::ptr {
               return MakeShape<PrunedDisjunction, Leaf, Removable>(
-                ctx, size, docs_count, init,
+                ctx, ctx.memory, size, docs_count, init,
                 std::forward<decltype(args)>(args));
             });
         });
     }
   }
   return MakeShape<PrunedDisjunction, Leaf, utils::Empty>(
-    ctx, size, docs_count, init, std::forward_as_tuple());
+    ctx, ctx.memory, size, docs_count, init, std::forward_as_tuple());
 }
 
 template<bool kExcludes, typename Term, typename P>
@@ -94,8 +94,8 @@ Root::ptr PrunedDisjunctionMaker<kExcludes, Term, P>::Make(
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   if (!filters.empty()) {
-    std::vector<UnionMember::ptr> members;
-    std::vector<uint32_t> costs;
+    memory::ArenaVector<UnionMember::ptr> members{ctx.memory.Scratch()};
+    memory::ArenaVector<uint32_t> costs{ctx.memory.Scratch()};
     members.reserve(terms.size() + filters.size());
     costs.reserve(terms.size() + filters.size());
     uint64_t postings = 0;
@@ -106,9 +106,9 @@ Root::ptr PrunedDisjunctionMaker<kExcludes, Term, P>::Make(
       const auto* const doc = irs::detail::DocOf(own);
       members.push_back(
         Resolve<P>(*doc, [&]<typename Input> -> UnionMember::ptr {
-          return memory::make_managed<TermUnionMember<Input>>(
+          return ctx.memory.Make<TermUnionMember<Input>>(
             posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
-            own, posting.Args(&ctx.fetcher));
+            own, posting.Args(ctx.memory, &ctx.fetcher));
         }));
       costs.push_back(posting.state.cookie.docs_count);
       postings += costs.back();
@@ -139,7 +139,7 @@ Root::ptr PrunedDisjunctionMaker<kExcludes, Term, P>::Make(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own, posting.Args(&ctx.fetcher));
+                   segment, own, posting.Args(ctx.memory, &ctx.fetcher));
       return posting.state.cookie.docs_count;
     };
     return MakeDisjunctionOf<kExcludes, Leaf, P>(

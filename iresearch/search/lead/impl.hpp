@@ -80,9 +80,7 @@ class Erased {
 
   ScoreFunction PrepareScore() { return _node->PrepareScore(); }
 
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    detail::AppendScorer(out, PrepareScore());
-  }
+  void CollectScorers(auto& out) { detail::AppendScorer(out, PrepareScore()); }
 
   IRS_FORCE_INLINE bool Valid() const noexcept { return _node != nullptr; }
 

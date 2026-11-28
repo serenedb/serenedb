@@ -293,7 +293,7 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
   tests::ObjectStore();
   const tests::IndexDir dir{Db(), Root()};
   {
-    irs::ColWriter writer{Db(), dir.Tracker("seg")};
+    irs::ColWriter writer{Db(), dir.Tracker("seg"), TestAlloc()};
     auto& plain =
       writer.OpenColumn(kPlain, duckdb::LogicalType::BIGINT,
                         {.row_group_size = kRgSize,
@@ -385,7 +385,7 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
   }
   const auto prefetched = cache.GetStatistics().misses;
 
-  irs::ReadContext ctx{reader};
+  irs::ReadContext ctx{reader, TestAlloc()};
   const duckdb::LogicalType btype{duckdb::LogicalTypeId::BIGINT};
   for (const auto& [id, type] :
        {std::pair{kPlain, btype}, std::pair{kStruct, stype},
@@ -418,7 +418,7 @@ int64_t Mixed(uint64_t row) {
 
 void WriteMixedColumn(const tests::IndexDir& dir, irs::field_id id,
                       uint32_t rg_size, uint64_t rows) {
-  irs::ColWriter writer{Db(), dir.Tracker("seg")};
+  irs::ColWriter writer{Db(), dir.Tracker("seg"), TestAlloc()};
   auto& plain =
     writer.OpenColumn(id, duckdb::LogicalType::BIGINT,
                       {.skip_validity = true, .row_group_size = rg_size});
@@ -453,7 +453,7 @@ TEST(ObjectStoreIndexTest, a_column_scan_fetches_ahead_in_one_request) {
 
   DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.ResetRequests();
-  irs::ReadContext ctx{reader};
+  irs::ReadContext ctx{reader, TestAlloc()};
   auto state = column->InitScan(ctx);
   for (uint64_t pos = 0; pos != kRows; pos += STANDARD_VECTOR_SIZE) {
     duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
@@ -475,7 +475,7 @@ TEST(ObjectStoreIndexTest, a_centroid_layer_is_fetched_in_one_request) {
   const tests::IndexDir dir{Db(), Root()};
   uint64_t root_size = 0;
   {
-    irs::CentroidsNode root{1, kDim};
+    irs::CentroidsNode root{1, kDim, TestAlloc()};
     root.size = kNodes;
     root.centroids.resize(kNodes * kDim);
     for (size_t i = 0; i != kNodes; ++i) {
@@ -484,7 +484,7 @@ TEST(ObjectStoreIndexTest, a_centroid_layer_is_fetched_in_one_request) {
       root.child_offsets.push_back(i * kChildren);
     }
     root.child_offsets.push_back(kNodes * kChildren);
-    irs::CentroidsNode leaves{0, kDim};
+    irs::CentroidsNode leaves{0, kDim, TestAlloc()};
     leaves.size = kNodes * kChildren;
     leaves.centroids.resize(leaves.size * kDim);
     for (size_t i = 0; i != leaves.size; ++i) {
@@ -505,13 +505,13 @@ TEST(ObjectStoreIndexTest, a_centroid_layer_is_fetched_in_one_request) {
   ASSERT_LT(kNodes * kBlock, file->GetSize());
   const auto tree = [&] {
     duckdb::InputFileReader in{*file};
-    return irs::CentroidsTree::Deserialize(in, root_size);
+    return irs::CentroidsTree::Deserialize(in, root_size, TestAlloc());
   }();
   DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.ResetRequests();
   duckdb::InputFileReader in{*file};
   const std::vector<float> query(kDim, 0.F);
-  std::vector<uint32_t> ids;
+  irs::TrackedVector<uint32_t> ids{TestAlloc()};
   tree.Search(query, in, kNodes, ids, nullptr);
   EXPECT_EQ(kNodes, ids.size());
   EXPECT_EQ(2, store.Requests().get);
@@ -538,7 +538,7 @@ TEST(ObjectStoreIndexTest, gathers_read_column_blocks_across_cache_blocks) {
 
   auto& cache = duckdb::ExternalFileCache::Get(Db());
   const auto gather = [&] {
-    irs::ReadContext ctx{reader};
+    irs::ReadContext ctx{reader, TestAlloc()};
     auto state = column->InitScan(ctx);
     duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     irs::column_internal::GatherRows(*column, state, Rows{rows}, out, 0);
@@ -561,7 +561,7 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
   tests::ObjectStore();
   const tests::IndexDir dir{Db(), Root()};
   {
-    irs::ColWriter writer{Db(), dir.Tracker("seg")};
+    irs::ColWriter writer{Db(), dir.Tracker("seg"), TestAlloc()};
     auto& variants = writer.OpenColumn(kVariant, duckdb::LogicalType::VARIANT(),
                                        {.row_group_size = kRgSize});
     duckdb::Connection con{Db()};
@@ -593,7 +593,7 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
   }
   const auto prefetched = cache.GetStatistics().misses;
 
-  irs::ReadContext ctx{reader};
+  irs::ReadContext ctx{reader, TestAlloc()};
   auto state = column->InitScan(ctx);
   duckdb::Vector out{duckdb::LogicalType::VARIANT(), STANDARD_VECTOR_SIZE};
   irs::column_internal::GatherRows(*column, state, Rows{rows}, out, 0);
@@ -676,14 +676,15 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
       .field = kWords,
       .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)}};
   };
+  irs::QueryMemory memory;
   irs::BooleanFilter only;
   only.Add(clause("long"), irs::Occur::Must);
-  const auto only_query = only.PrepareSegment(segment, {});
+  const auto only_query = only.PrepareSegment(segment, {.memory = memory});
   irs::BooleanFilter either;
   either.Add(clause("long"), irs::Occur::Should);
   either.Add(clause("short"), irs::Occur::Should);
   either.SetMinShouldMatch(1);
-  const auto terms_query = either.PrepareSegment(segment, {});
+  const auto terms_query = either.PrepareSegment(segment, {.memory = memory});
   auto& cache = duckdb::ExternalFileCache::Get(Db());
   DropCachedBlocks(cache);
   irs::PrefetchPostingHeads(*only_query, 2);
@@ -700,7 +701,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
-  const auto phrase_query = phrase.PrepareSegment(segment, {});
+  const auto phrase_query = phrase.PrepareSegment(segment, {.memory = memory});
   const auto [text, quick] = meta(kText, "quick");
   ASSERT_NE(nullptr, text.pos);
   DropCachedBlocks(cache);
@@ -713,7 +714,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   *prefix.mutable_field_id() = kWords;
   prefix.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view{"sh"});
-  const auto prefix_query = prefix.PrepareSegment(segment, {});
+  const auto prefix_query = prefix.PrepareSegment(segment, {.memory = memory});
   DropCachedBlocks(cache);
   EXPECT_FALSE(words.doc->IsResident(short_list.doc_start, 1));
   irs::PrefetchPostingHeads(*prefix_query, 1);
@@ -725,7 +726,8 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
     irs::ViewCast<irs::byte_type>(std::string_view{"qui"});
   variadic.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
-  const auto variadic_query = variadic.PrepareSegment(segment, {});
+  const auto variadic_query =
+    variadic.PrepareSegment(segment, {.memory = memory});
   DropCachedBlocks(cache);
   EXPECT_FALSE(text.pos->IsResident(quick.pos_start, 1));
   irs::PrefetchPostingHeads(*variadic_query, 1);
@@ -970,8 +972,10 @@ TEST(ObjectStoreIndexTest, a_merge_reads_its_segments_ahead) {
   store.ResetRequests();
   const tests::IndexDir merged{Db(), TestEnv::MemoryRoot()};
   irs::SegmentMeta meta;
+  irs::LocalBudget budget{irs::gRootBudget};
   irs::MergeWriter merger{merged.Db(), merged.Fs(), merged.Root(),
-                          irs::SegmentWriterOptions{}};
+                          irs::SegmentWriterOptions{},
+                          irs::TrackedAllocator<>{budget}};
   merger.Reset(reader.begin(), reader.end());
   ASSERT_TRUE(irs::GetReady(merger.Flush(meta)));
   EXPECT_LT(store.Requests().get, blocks / 3);

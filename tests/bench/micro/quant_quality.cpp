@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_split.h>
 #include <faiss/impl/ProductQuantizer.h>
 #include <fast_float/fast_float.h>
@@ -33,6 +34,8 @@
 #include <fstream>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <limits>
 #include <numbers>
 #include <random>
@@ -463,6 +466,9 @@ int Main(int argc, char** argv) {
   const bool l2 = std::string_view{argv[4]} == "l2";
   const auto n = ParseNumber<size_t>(argv[5]);
   const auto nq = ParseNumber<size_t>(argv[6]);
+  auto& engine = DuckDBEngine::Instance();
+  engine.Initialize();
+  absl::Cleanup shutdown = [&] { engine.Shutdown(); };
   const VectorMetric metric =
     l2 ? VectorMetric::L2Sqr : VectorMetric::InnerProduct;
 
@@ -584,7 +590,9 @@ int Main(int argc, char** argv) {
     const std::vector<std::string> cparts = absl::StrSplit(cfg.name, ':');
     const uint32_t pq_niter =
       pq_m != 0 && cparts.size() > 2 ? ParseNumber<uint32_t>(cparts[2]) : 0;
+    LocalBudget budget{gRootBudget};
     auto writer = MakeQuantizerWriter(
+      TrackedAllocator<>{budget},
       AnnInfo::Quantizer{.kind = cfg.quant,
                          .pq_m = pq_m,
                          .nb_bits = pq_m != 0 ? 0 : cfg.nb_bits,
@@ -637,7 +645,8 @@ int Main(int argc, char** argv) {
     const bstring blob{
       irs::bytes_view{framed.GetData(), framed.GetPosition()}.substr(
         sizeof(uint64_t))};
-    auto stats = MakeQuantizerStats(cfg.quant, d, blob, metric, true);
+    auto stats =
+      MakeQuantizerStats(gRootBudget, cfg.quant, d, blob, metric, true);
 
     std::vector<std::vector<size_t>> hits(nq,
                                           std::vector<size_t>(pools.size()));
@@ -645,7 +654,7 @@ int Main(int argc, char** argv) {
     ParallelFor(nq, [&](size_t qi) {
       const std::span<const float> q{queries.data() + qi * d, d};
       auto cb = stats->MakeCodebook(q);
-      auto reader = MakeQuantizerReader(cb);
+      auto reader = MakeQuantizerReader(nullptr, cb);
       reader->StartCluster(centroid.empty() ? nullptr : centroid.data());
       std::vector<float> s(n);
       const auto t0 = std::chrono::steady_clock::now();
@@ -665,11 +674,13 @@ int Main(int argc, char** argv) {
       const size_t kBatches = 256;
       uint64_t total = 0;
       uint64_t setup = 0;
+      PlanMemory plan;
       for (size_t qi = 0; qi < kQ; ++qi) {
         const std::span<const float> q{queries.data() + (qi % nq) * d, d};
         const auto s0 = std::chrono::steady_clock::now();
+        plan.Rewind();
         auto cb = stats->MakeCodebook(q);
-        auto reader = MakeQuantizerReader(cb);
+        auto reader = MakeQuantizerReader(&plan, cb);
         reader->StartCluster(centroid.empty() ? nullptr : centroid.data());
         setup += static_cast<uint64_t>(
           std::chrono::duration_cast<std::chrono::nanoseconds>(

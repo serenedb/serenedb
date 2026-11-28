@@ -49,10 +49,10 @@ class PrunedConjunction : public Root {
   static constexpr bool kJoined = !std::is_same_v<Joined, utils::Empty>;
 
   template<typename Init, typename JoinedArgs, typename ExcludesArgs>
-  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, bool exhaustive,
-                    size_t size, Init&& init, JoinedArgs&& joined,
-                    ExcludesArgs&& excludes)
-    : _others{fetcher, size - 1,
+  PrunedConjunction(Table table, PlanMemory& memory, ColumnArgsFetcher& fetcher,
+                    bool exhaustive, size_t size, Init&& init,
+                    JoinedArgs&& joined, ExcludesArgs&& excludes)
+    : _others{memory, fetcher, size - 1,
               [&](auto& leaf, size_t i) { init(leaf, i + 1); }},
       _joined{std::make_from_tuple<Joined>(std::forward<JoinedArgs>(joined))},
       _excludes{
@@ -64,11 +64,11 @@ class PrunedConjunction : public Root {
   }
 
   template<typename LeadArgs, typename OthersArgs, typename ExcludesArgs>
-  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
-                    std::piecewise_construct_t, LeadArgs&& lead,
+  PrunedConjunction(Table table, PlanMemory& memory, ColumnArgsFetcher& fetcher,
+                    size_t size, std::piecewise_construct_t, LeadArgs&& lead,
                     OthersArgs&& others, ExcludesArgs&& excludes)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _others{fetcher, size - 1, std::piecewise_construct,
+      _others{memory, fetcher, size - 1, std::piecewise_construct,
               std::forward<OthersArgs>(others)},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},

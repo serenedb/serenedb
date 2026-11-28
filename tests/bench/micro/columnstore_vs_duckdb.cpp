@@ -56,6 +56,8 @@
 #include <string>
 #include <vector>
 
+#include "test_alloc.hpp"
+
 namespace {
 
 enum class Shape {
@@ -136,7 +138,7 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
   const auto type = TypeOf(shape);
   {
     irs::FileTracker tracker{seg->fs, kRoot, kSeg};
-    irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
+    irs::ColWriter w{CsDb(), tracker, TestAlloc(), irs::WriteTier::Merge};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;
     while (pos < seg->rows) {
@@ -196,7 +198,7 @@ struct Rows2 {
 void IrsFullScan(benchmark::State& state, Shape shape, bool nullable) {
   const auto& seg = GetSeg(shape, nullable);
   const auto type = TypeOf(shape);
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   for (auto _ : state) {
     state.PauseTiming();
     auto st = seg.col->InitScan(ctx);
@@ -220,7 +222,7 @@ void IrsSparseGather(benchmark::State& state, Shape shape, bool nullable) {
   const auto& seg = GetSeg(shape, nullable);
   const auto type = TypeOf(shape);
   const auto& rows = ScatteredRows();
-  irs::ReadContext ctx{*seg.reader};
+  irs::ReadContext ctx{*seg.reader, TestAlloc()};
   for (auto _ : state) {
     state.PauseTiming();
     auto st = seg.col->InitScan(ctx);
@@ -247,7 +249,7 @@ void IrsPointLookup(benchmark::State& state, Shape shape, bool nullable) {
   const auto& rows = ScatteredRows();
   for (auto _ : state) {
     state.PauseTiming();
-    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col};
+    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col, TestAlloc()};
     duckdb::Vector out{type, 1};
     state.ResumeTiming();
     for (const auto r : rows) {
@@ -266,7 +268,7 @@ void IrsWriteSeal(benchmark::State& state, Shape shape, bool nullable) {
   for (auto _ : state) {
     duckdb::MemoryFileSystem fs;
     irs::FileTracker tracker{fs, kRoot, kSeg};
-    irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
+    irs::ColWriter w{CsDb(), tracker, TestAlloc(), irs::WriteTier::Merge};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;
     while (pos < n) {

@@ -62,7 +62,7 @@ duckdb::block_id_t WriteOverflowString(duckdb::WriteStream& out,
 template<typename Appender>
 bool CompressChunks(const Codec& codec,
                     ColumnDataCheckpointData& checkpoint_data) {
-  CompressedSegment segment{codec, checkpoint_data.type};
+  CompressedSegment segment{codec, checkpoint_data};
   Appender::Begin(segment);
   for (const auto& chunk : checkpoint_data.rows.chunks) {
     duckdb::UnifiedVectorFormat data;
@@ -107,8 +107,8 @@ struct PinnedScan final : SegmentScanState {
   duckdb::BufferHandle handle;
 };
 
-std::unique_ptr<SegmentScanState> InitPinnedScan(const ColumnSegment& segment) {
-  return std::make_unique<PinnedScan>(segment.Pin());
+SegmentScanStatePtr InitPinnedScan(const ColumnSegment& segment) {
+  return MakeScanState<PinnedScan>(segment.ctx.Allocator(), segment.Pin());
 }
 
 const_data_ptr_t ScanBase(ColumnScanState& state) {

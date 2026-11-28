@@ -1,0 +1,106 @@
+# sdb_session_memory_limit caps the memory one session's statements hold: past
+# it a statement fails with an out-of-memory error, another session is not
+# affected, and RESET lifts the cap.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY session_memory_en AS split_by_non_alpha(case := 'lower')
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE session_memory_docs (id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO session_memory_docs SELECT i, 'word' || (i % 100) FROM range(10000) t(i);
+
+statement ok
+CREATE INDEX session_memory_idx ON session_memory_docs USING inverted(body session_memory_en);
+
+query
+SELECT current_setting('sdb_session_memory_limit') AS setting;
+----
+setting
+0
+
+statement ok
+SET sdb_session_memory_limit = 1;
+
+statement error
+SELECT count(*) AS n FROM session_memory_idx WHERE body @@ 'word7';
+----
+db error: ERROR: failed to allocate data of size <slt:ignore> (the session's memory limit: <slt:ignore> used)
+
+
+statement error
+INSERT INTO session_memory_docs SELECT i, 'word' || (i % 100) FROM range(10000, 20000) t(i);
+----
+db error: ERROR: failed to allocate data of size <slt:ignore> (the session's memory limit: <slt:ignore> used)
+
+
+connection other
+query
+SELECT count(*) AS n FROM session_memory_idx WHERE body @@ 'word7';
+----
+n
+100
+
+statement ok
+RESET sdb_session_memory_limit;
+
+query
+SELECT count(*) AS n FROM session_memory_idx WHERE body @@ 'word7';
+----
+n
+100
+
+statement ok
+INSERT INTO session_memory_docs SELECT i, 'word' || (i % 100) FROM range(10000, 20000) t(i);
+
+query
+SELECT count(*) AS n FROM session_memory_idx WHERE body @@ 'word7';
+----
+n
+200
+
+statement ok
+CREATE TABLE session_memory_flushed (id INTEGER, body VARCHAR)
+    WITH (compaction_floor_segment_bytes = 1);
+
+statement ok
+CREATE INDEX session_memory_flushed_idx ON session_memory_flushed
+    USING inverted(body session_memory_en);
+
+statement ok
+SET sdb_session_memory_limit = 65536;
+
+statement error
+INSERT INTO session_memory_flushed SELECT i, 'word' || (i % 100) FROM range(10000) t(i);
+----
+db error: ERROR: failed to allocate data of size <slt:ignore> (the session's memory limit: <slt:ignore> used)
+
+
+statement ok
+RESET sdb_session_memory_limit;
+
+query
+SELECT count(*) AS n FROM session_memory_flushed;
+----
+n
+0
+
+statement ok
+SET threads = 2;
+
+statement ok
+SET sdb_session_memory_limit = 33554432;
+
+query
+SELECT count(*) AS n FROM (SELECT DISTINCT range FROM range(10000000));
+----
+n
+10000000
+
+statement ok
+RESET sdb_session_memory_limit;
+
+statement ok
+RESET threads;

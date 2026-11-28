@@ -1,0 +1,23 @@
+# A memory limit too low for a statement can still be raised from a
+# connection, and the statement then succeeds.
+
+statement ok
+SET GLOBAL memory_limit = '1MB';
+
+statement error
+SELECT length(string_agg(range::VARCHAR, ',')) FROM range(3000000);
+----
+db error: ERROR: failed to allocate data of size <slt:ignore>
+
+
+statement ok
+SET GLOBAL memory_limit = '4GB';
+
+query
+SELECT length(string_agg(range::VARCHAR, ',')) FROM range(3000000);
+----
+length
+22888889
+
+statement ok
+RESET GLOBAL memory_limit;

@@ -49,14 +49,14 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own, posting.Args(&ctx.fetcher));
+                   segment, own, posting.Args(ctx.memory, &ctx.fetcher));
     };
     if (size == 2) {
       return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause, 1>>(
-        ctx, ctx.fetcher, size, init);
+        ctx, ctx.memory, ctx.fetcher, size, init);
     }
-    return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause>>(ctx, ctx.fetcher,
-                                                               size, init);
+    return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause>>(
+      ctx, ctx.memory, ctx.fetcher, size, init);
   });
 }
 

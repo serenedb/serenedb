@@ -28,9 +28,10 @@
 
 namespace irs::probe {
 
-Node::ptr MakeAllScored(const SubReader& segment, score_t score) {
+Node::ptr MakeAllScored(PlanMemory& memory, const SubReader& segment,
+                        score_t score) {
   using Node = ConstantScored<AllDocs>;
-  return memory::make_managed<Impl<Node>>(score, segment);
+  return memory.Make<Impl<Node>>(memory, score, segment);
 }
 
 }  // namespace irs::probe

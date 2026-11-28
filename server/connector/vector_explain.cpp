@@ -166,15 +166,18 @@ irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
   return out;
 }
 
-DistanceExplainer::DistanceExplainer(const irs::SubReader& segment,
+DistanceExplainer::DistanceExplainer(irs::MemoryBudget& parent,
+                                     const irs::SubReader& segment,
                                      const VectorScorerOptions& vs,
                                      std::string_view column)
-  : _vs{vs},
+  : _budget{parent},
+    _vs{vs},
     _text{DistanceTextOf(vs, column)},
-    _reader{StoredVectors(segment, vs)} {
+    _reader{StoredVectors(segment, vs), irs::TrackedAllocator<>{_budget}} {
   const auto& stored = *segment.Column(vs.field_id);
   if (irs::detail::MayHaveNullRows(stored)) {
-    _validity.emplace(*segment.GetColReader(), stored);
+    _validity.emplace(*segment.GetColReader(), stored,
+                      irs::TrackedAllocator<>{_budget});
   }
 }
 

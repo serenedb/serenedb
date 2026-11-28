@@ -40,6 +40,10 @@ struct Family : detail::RootFamily<Context> {
   using Result = Root::ptr;
   using DocsContext = Context;
 
+  static PlanMemory& MemoryOf(const Context& ctx) noexcept {
+    return ctx.memory;
+  }
+
   template<typename Node, typename... Args>
   static Result Docs(const Context& ctx, Args&&... args) {
     return MakeShape<Walk, Node>(ctx, std::forward<Args>(args)...);
@@ -93,8 +97,8 @@ struct Family : detail::RootFamily<Context> {
 
   static Result Make(const ExactVectorQuery& query, const Context& ctx);
 
-  static Result Make(const EmptyQueryBuilder&, const Context&) {
-    return memory::make_managed<Empty>();
+  static Result Make(const EmptyQueryBuilder&, const Context& ctx) {
+    return ctx.memory.Make<Empty>();
   }
 };
 

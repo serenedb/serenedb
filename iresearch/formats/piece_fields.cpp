@@ -354,7 +354,7 @@ size_t PieceFields::Bytes() const noexcept {
   return bytes;
 }
 
-void PieceFieldWriter::prepare(const FlushState& state, uint64_t) {
+void PieceFieldWriter::prepare(const FlushState& state, uint64_t, uint64_t) {
   _features = state.index_features;
   _pw.Prepare(state);
 }

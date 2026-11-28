@@ -49,7 +49,8 @@ Route RouteOf(const Query& query, const Context& ctx,
     return {inner, ctx};
   }
   return {index_part,
-          {.scorer = ctx.scorer,
+          {.memory = ctx.memory,
+           .scorer = ctx.scorer,
            .fetcher = ctx.fetcher,
            .table = ctx.columns,
            .k = ctx.k}};

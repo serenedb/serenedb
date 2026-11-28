@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/index/term_dict_prefixes.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <bit>
 #include <iterator>
 #include <utility>
@@ -35,7 +37,16 @@ constexpr size_t kWindow = kTrieMaxSpan + 1;
 
 }  // namespace
 
-PrefixTrie::PrefixTrie(const TrieShape& shape) {
+PrefixTrie::PrefixTrie(const TrieShape& shape, TrackedAllocator<> alloc)
+  : _dense_words{alloc},
+    _dense_first{alloc},
+    _chain{alloc},
+    _labels{alloc},
+    _inner{alloc},
+    _inner_rank{alloc},
+    _first{alloc},
+    _terminal{alloc},
+    _open{alloc} {
   const auto nodes = static_cast<uint32_t>(shape.flags.size());
   SDB_ASSERT(nodes != 0 && shape.labels.size() == nodes &&
              shape.depths.size() == nodes &&
@@ -100,7 +111,19 @@ PrefixTrie::PrefixTrie(const TrieShape& shape) {
   }
 }
 
-PrefixTrie::PrefixTrie(duckdb::ReadStream& in) {
+PrefixTrie::PrefixTrie(TrackedAllocator<> alloc)
+  : _dense_words{alloc},
+    _dense_first{alloc},
+    _chain{alloc},
+    _labels{alloc},
+    _inner{alloc},
+    _inner_rank{alloc},
+    _first{alloc},
+    _terminal{alloc},
+    _open{alloc} {}
+
+PrefixTrie::PrefixTrie(duckdb::ReadStream& in, TrackedAllocator<> alloc)
+  : PrefixTrie{alloc} {
   _nodes = in.Read<uint32_t>();
   _dense = in.Read<uint32_t>();
   ReadArray(in, _dense_words);
@@ -159,23 +182,57 @@ void PrefixTrieBuilder::Expand(uint32_t node, size_t from, size_t to) {
     }
   };
   for (size_t i = from; i != to; ++i) {
-    const bytes_view term = _window[i % kWindow];
-    if (term.size() == depth) {
+    const size_t slot = i % kWindow;
+    const size_t size = _window[slot].size;
+    if (size == depth) {
       _nodes[node].terminal = true;
       continue;
     }
-    const byte_type label = term[depth];
+    const byte_type label = LabelAt(slot, depth);
     if (child == kNoNode || _nodes[child].label != label) {
       close(i);
       child = AppendChild(node, label);
       child_from = i;
     }
     ++_nodes[child].count;
-    if (term.size() == depth + 1) {
+    if (size == depth + 1) {
       _nodes[child].terminal = true;
     }
   }
   close(to);
+}
+
+bytes_view PrefixTrieBuilder::Stored(size_t slot) const noexcept {
+  const auto& recent = _window[slot];
+  return {_window_bytes.data() + slot * kTrieDepth,
+          std::min(recent.size - recent.origin, size_t{kTrieDepth})};
+}
+
+byte_type PrefixTrieBuilder::LabelAt(size_t slot, size_t depth) const noexcept {
+  const size_t origin = _window[slot].origin;
+  if (depth < origin) {
+    return _first[depth];
+  }
+  SDB_ASSERT(depth - origin < kTrieDepth && depth < _window[slot].size);
+  return _window_bytes[slot * kTrieDepth + depth - origin];
+}
+
+size_t PrefixTrieBuilder::SharedWithLast(bytes_view term,
+                                         size_t shared) const noexcept {
+  const size_t slot = (_added - 1) % kWindow;
+  const size_t origin = _window[slot].origin;
+  if (shared < origin) {
+    return shared;
+  }
+  return origin + CommonPrefixLength(Stored(slot), term.substr(origin));
+}
+
+void PrefixTrieBuilder::Remember(bytes_view term) {
+  const size_t slot = _added % kWindow;
+  SDB_ASSERT(_origin <= term.size());
+  _window[slot] = {.origin = _origin, .size = term.size()};
+  const auto stored = term.substr(_origin, kTrieDepth);
+  absl::c_copy(stored, _window_bytes.begin() + slot * kTrieDepth);
 }
 
 void PrefixTrieBuilder::Descend(bytes_view term) {
@@ -203,16 +260,18 @@ void PrefixTrieBuilder::Add(bytes_view term) {
     _nodes.push_back({.expanded = true});
     _open.assign(1, 0);
     _window.resize(kWindow);
+    _window_bytes.resize(kWindow * kTrieDepth);
   }
   size_t lcp = 0;
   if (_added != 0) {
-    lcp = CommonPrefixLength(bytes_view{_window[(_added - 1) % kWindow]}, term);
-    _origin = std::min(_origin, CommonPrefixLength(bytes_view{_first}, term));
+    const size_t shared = CommonPrefixLength(bytes_view{_first}, term);
+    lcp = SharedWithLast(term, shared);
+    _origin = std::min(_origin, shared);
   } else {
     _first.assign(term);
     _origin = term.size();
   }
-  _window[_added % kWindow].assign(term);
+  Remember(term);
   ++_added;
   _open.resize(std::min(_open.size(), lcp + 1));
   Descend(term);
@@ -231,7 +290,7 @@ void PrefixTrieBuilder::Add(bytes_view term) {
 
 PrefixTrie PrefixTrieBuilder::Finish() {
   if (_nodes.empty()) {
-    return {};
+    return PrefixTrie{TrackedAllocator<>{_nodes.get_allocator()}};
   }
   const auto chain = bytes_view{_first}.substr(0, _origin);
   uint32_t root = 0;
@@ -246,8 +305,10 @@ PrefixTrie PrefixTrieBuilder::Finish() {
            (depth < kTrieFull ||
             (node.count > kTrieSpan && depth < kTrieDepth));
   };
-  std::vector<uint32_t> queue{root};
+  const TrackedAllocator<> alloc = _nodes.get_allocator();
+  TrackedVector<uint32_t> queue{alloc};
   queue.reserve(_nodes.size());
+  queue.push_back(root);
   for (size_t at = 0; at != queue.size(); ++at) {
     const auto& node = _nodes[queue[at]];
     if (inner(node)) {
@@ -258,10 +319,10 @@ PrefixTrie PrefixTrieBuilder::Finish() {
     }
   }
   const size_t count = queue.size();
-  std::vector<byte_type> flags(count);
-  std::vector<byte_type> labels(count);
-  std::vector<uint32_t> depths(count);
-  std::vector<uint32_t> first(count + 1);
+  TrackedVector<byte_type> flags(count, alloc);
+  TrackedVector<byte_type> labels(count, alloc);
+  TrackedVector<uint32_t> depths(count, alloc);
+  TrackedVector<uint32_t> first(count + 1, alloc);
   uint32_t next = 1;
   for (size_t at = 0; at != count; ++at) {
     const auto& node = _nodes[queue[at]];
@@ -284,13 +345,16 @@ PrefixTrie PrefixTrieBuilder::Finish() {
   }
   first[count] = next;
   SDB_ASSERT(next == count);
-  PrefixTrie trie{TrieShape{
-    .chain = chain,
-    .flags = flags,
-    .labels = labels,
-    .depths = depths,
-    .first = first,
-  }};
+  PrefixTrie trie{
+    TrieShape{
+      .chain = chain,
+      .flags = flags,
+      .labels = labels,
+      .depths = depths,
+      .first = first,
+    },
+    alloc,
+  };
   Reset();
   return trie;
 }
@@ -299,6 +363,7 @@ void PrefixTrieBuilder::Reset() noexcept {
   _nodes.clear();
   _open.clear();
   _window.clear();
+  _window_bytes.clear();
   _first.clear();
   _origin = 0;
   _added = 0;

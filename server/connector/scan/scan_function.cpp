@@ -44,11 +44,13 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <magic_enum/magic_enum.hpp>
 
 #include "connector/column_id.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
 
@@ -104,7 +106,8 @@ void ClassifySegments(ScanGlobalState& g) {
     }
     return;
   }
-  irs::ColFilterStateCache init_states;
+  irs::ColFilterStateCache init_states{
+    ConnectionContext::Get(*g.client_context).Memory()};
   irs::ColFilterClassification cls;
   for (uint32_t si = 0; si < g.total_segments; ++si) {
     ClassifySegmentColFilters((*g.reader)[si], g, g.col_filters, init_states,
@@ -249,7 +252,8 @@ const VectorScorerOptions& PrepareVectorScorer(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<ScanBindData>();
-  auto state = duckdb::make_uniq<ScanGlobalState>();
+  auto state = duckdb::make_uniq<ScanGlobalState>(
+    ConnectionContext::Get(context).Memory());
   const bool profiled =
     duckdb::QueryProfiler::Get(context).MetricIsTracked(kIndexProfileMetric);
   absl::Cleanup finish_init = [g = state.get()] {
@@ -442,7 +446,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->scorer_obj && (!ss.score.vector || !ss.score.text)) {
     state->collect_threads = std::max<uint32_t>(1, state->workers);
-    state->stats_arena.emplace(duckdb::Allocator::Get(context));
+    state->stats_memory.emplace(ConnectionContext::Get(context).Memory());
+    state->stats_arena.emplace(state->stats_memory->allocator);
     state->collector.emplace(*state->filter, *state->scorer_obj,
                              *state->stats_arena, state->collect_threads);
     state->stats_scorer = state->collector->GetScorer();
@@ -502,7 +507,9 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       break;
     }
   }
-  result->Cast<ScanLocalState>().worker = worker;
+  auto& local = result->Cast<ScanLocalState>();
+  local.worker = worker;
+  local.BindMemory(ConnectionContext::Get(*g.client_context).Memory());
   return result;
 }
 

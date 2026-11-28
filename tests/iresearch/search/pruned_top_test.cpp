@@ -254,12 +254,14 @@ class PrunedTopTest : public tests::IndexTestBase {
     ASSERT_EQ(1, _reader.size());
   }
 
-  std::vector<irs::QueryBuilder::ptr> Prepare(const irs::Filter& filter) {
+  std::vector<irs::QueryBuilder::ptr> Prepare(irs::QueryMemory& memory,
+                                              const irs::Filter& filter) {
     irs::PreparedCollector collector{filter, *_ranking, _stats, 1};
     std::vector<irs::QueryBuilder::ptr> queries;
     for (const auto& segment : _reader) {
       queries.emplace_back(filter.PrepareSegment(
-        segment, {.collector = collector.Get(), .profile = _profile}));
+        segment,
+        {.memory = memory, .collector = collector.Get(), .profile = _profile}));
     }
     collector.Finish();
     return queries;
@@ -268,13 +270,15 @@ class PrunedTopTest : public tests::IndexTestBase {
   absl::flat_hash_map<doc_id_t, irs::score_t> Matches(
     const irs::Filter& filter) {
     absl::flat_hash_map<doc_id_t, irs::score_t> out;
-    const auto queries = Prepare(filter);
+    irs::QueryMemory query_memory;
+    const auto queries = Prepare(query_memory, filter);
     if (!queries[0] || irs::QueryBuilder::IsEmpty(*queries[0])) {
       return out;
     }
+    irs::PlanMemory plan_memory;
     irs::ColumnArgsFetcher fetcher;
-    auto plan =
-      queries[0]->PlanScored({.scorer = *_ranking, .fetcher = fetcher});
+    auto plan = queries[0]->PlanScored(
+      {.memory = plan_memory, .scorer = *_ranking, .fetcher = fetcher});
     constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
     irs::SlackBuf<doc_id_t, kBatch, irs::doc_limits::kDocsSlack> docs;
     irs::SlackBuf<irs::score_t, kBatch, irs::doc_limits::kScoresSlack> scores;
@@ -292,7 +296,8 @@ class PrunedTopTest : public tests::IndexTestBase {
   std::vector<irs::ScoreDoc> Top(const irs::Filter& filter, size_t k,
                                  doc_id_t span, bool prune, bool bounds,
                                  bool reuse, uint64_t& total) {
-    const auto queries = Prepare(filter);
+    irs::QueryMemory query_memory;
+    const auto queries = Prepare(query_memory, filter);
     std::vector<irs::ScoreDoc> hits(k);
     std::atomic<irs::score_t> threshold{
       std::numeric_limits<irs::score_t>::lowest()};
@@ -300,8 +305,10 @@ class PrunedTopTest : public tests::IndexTestBase {
     collector.SetSegment(0);
     if (queries[0] && !irs::QueryBuilder::IsEmpty(*queries[0])) {
       const auto end = irs::doc_limits::min() + kDocs;
+      irs::PlanMemory plan_memory;
       const auto plan_top = [&](irs::ColumnArgsFetcher& fetcher) {
-        return queries[0]->PlanTop({.scorer = *_ranking,
+        return queries[0]->PlanTop({.memory = plan_memory,
+                                    .scorer = *_ranking,
                                     .fetcher = fetcher,
                                     .prune = prune,
                                     .bounds = bounds,

@@ -68,8 +68,9 @@ template<typename Family, typename Ctx>
 typename Family::Result MakeConstantRows(const MultiTermQuery& query,
                                          const TermReader& field,
                                          const Ctx& ctx, ScoreMergeType merge) {
-  std::vector<FillNode::ptr> rows;
-  rows.emplace_back(query.PlanFill({}, ScoreMergeType::Noop));
+  auto& memory = Family::MemoryOf(ctx);
+  memory::ArenaVector<FillNode::ptr> rows{memory.Scratch()};
+  rows.emplace_back(query.PlanFill({.memory = memory}, ScoreMergeType::Noop));
   if (!rows.front()) {
     return {};
   }
@@ -86,13 +87,16 @@ template<typename Family, typename Ctx>
 typename Family::Result MakeConstantWindow(const MultiTermQuery& query,
                                            const Ctx& ctx,
                                            ScoreMergeType merge) {
-  auto docs = query.PlanFill({}, ScoreMergeType::Noop);
+  auto docs =
+    query.PlanFill({.memory = Family::MemoryOf(ctx)}, ScoreMergeType::Noop);
   if (!docs) {
     return {};
   }
   return Family::template MakeWindow<fill::Erased, utils::Empty, utils::Empty,
                                      utils::Empty>(
-    ctx, merge, Scored{merge, AllDocsScoreOf(query, Family::Scoring(ctx))},
+    ctx, merge,
+    Scored{&Family::MemoryOf(ctx), merge,
+           AllDocsScoreOf(query, Family::Scoring(ctx))},
     std::forward_as_tuple(std::move(docs)), std::forward_as_tuple(),
     std::forward_as_tuple(), std::forward_as_tuple());
 }
@@ -115,8 +119,9 @@ typename Family::Result MakeConstantBitset(
   } else if (!TakeBitset<Result>(terms, *doc, docs_count)) {
     return {};
   }
+  auto& memory = Family::MemoryOf(ctx);
   return MakeConstantBitsetNode<Result>(
-    DisjunctionBuckets(terms, &field), *doc, docs_count,
+    memory, DisjunctionBuckets(memory, terms, &field), *doc, docs_count,
     AllDocsScoreOf(query, Family::Scoring(ctx)));
 }
 
@@ -154,7 +159,8 @@ typename Family::Result MakeQuery(const MultiTermQuery& query, const Ctx& ctx) {
         if (!child) {
           return {};
         }
-        return Family::WrapMerge(merge, std::move(child));
+        return Family::WrapMerge(Family::MemoryOf(ctx), merge,
+                                 std::move(child));
       }
     }
     const TermScoring scoring{
@@ -180,7 +186,7 @@ typename Family::Result MakeQuery(const MultiTermQuery& query, const Ctx& ctx) {
     if constexpr (kProbePlan<Family>) {
       return probe::MakeDisjunction(terms, {}, field, segment,
                                     Family::Interrogations(ctx), NoScoring{},
-                                    ScoredCtx{});
+                                    ScoredCtx{.memory = Family::MemoryOf(ctx)});
     } else {
       return builder::MakeDisjunctionOfTerms<Family>(
         terms, field, *DocOf(*field),

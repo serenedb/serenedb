@@ -65,8 +65,12 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : Base{kCodec, data.type, dedup, data.tuning.strings,
-           data.params.segment_target} {}
+    : Base{data.alloc,          kCodec,
+           data.type,           dedup,
+           data.tuning.strings, data.params.segment_target},
+      _codec{data.alloc},
+      _side{data.alloc},
+      _codes{data.alloc} {}
 
   void FinalizeCompress();
 
@@ -82,8 +86,8 @@ class CompressionState final : public SortedCompressionState<Rows> {
             uint64_t region);
 
   Codec _codec;
-  std::string _side;
-  std::vector<uint16_t> _codes;
+  TrackedString _side;
+  TrackedVector<uint16_t> _codes;
 };
 
 std::string_view SymbolTable(const Header& h,
@@ -137,7 +141,10 @@ struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment& segment, const Frames& s)
     : table{OpenSymbolTable<Table>(segment.cache_slot.cache,
-                                   SymbolTable(s.header, s.base))} {
+                                   SymbolTable(s.header, s.base))},
+      groups{segment.ctx.Allocator()},
+      entry_decoded{segment.ctx.Allocator()},
+      probe{segment.ctx.Allocator()} {
     if (!table) [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
     }
@@ -224,12 +231,14 @@ struct Scan {
 
   duckdb::shared_ptr<CachedSymbolTable<Table>> table;
   ChainGroups groups;
-  std::vector<uint8_t> entry_decoded;
+  TrackedVector<uint8_t> entry_decoded;
   uint64_t entry_heap_bytes = 0;
-  std::string probe;
+  TrackedString probe;
 };
 
 struct Fetch {
+  explicit Fetch(TrackedAllocator<> alloc) : groups{alloc}, buf{alloc} {}
+
   void Reset(const Header&, duckdb::data_ptr_t) {
     table.reset();
     groups.Clear();
@@ -273,7 +282,7 @@ struct Fetch {
 
   duckdb::shared_ptr<CachedSymbolTable<Table>> table;
   ChainGroups groups;
-  std::string buf;
+  TrackedString buf;
   uint64_t walked = 0;
 };
 
@@ -378,13 +387,22 @@ bool Table::Open(std::string_view table) {
 
 void Table::Corrupted() { ThrowCorrupted("text", "entry is inconsistent"); }
 
-Codec::Codec() : _lengths{std::make_unique<std::array<uint16_t, 65536>>()} {}
+Codec::Codec(TrackedAllocator<> alloc)
+  : _ids{alloc},
+    _lengths(kPairLengths, alloc),
+    _tokens{alloc},
+    _order{alloc},
+    _pairs{alloc},
+    _keys{alloc},
+    _firsts{alloc},
+    _chains{alloc},
+    _stack{alloc} {}
 
 void Codec::Reset() {
   _ids.clear();
   _tokens.clear();
   _pairs.clear();
-  _lengths->fill(0);
+  absl::c_fill(_lengths, 0);
   for (uint32_t b = 0; b < kSingles; ++b) {
     const auto byte = static_cast<char>(b);
     Insert(std::string_view{&byte, 1});
@@ -397,8 +415,8 @@ uint32_t Codec::Insert(std::string_view token) {
   SDB_ASSERT(fresh);
   _tokens.emplace_back(token);
   if (token.size() > 1) {
-    (*_lengths)[static_cast<uint8_t>(token[0]) |
-                (static_cast<uint8_t>(token[1]) << 8)] |=
+    _lengths[static_cast<uint8_t>(token[0]) |
+             (static_cast<uint8_t>(token[1]) << 8)] |=
       static_cast<uint16_t>(1u << (token.size() - 1));
   }
   return it->second;
@@ -406,8 +424,8 @@ uint32_t Codec::Insert(std::string_view token) {
 
 Codec::Match Codec::Longest(const char* rest, size_t left) const {
   if (left > 1) {
-    uint32_t lengths = (*_lengths)[static_cast<uint8_t>(rest[0]) |
-                                   (static_cast<uint8_t>(rest[1]) << 8)] &
+    uint32_t lengths = _lengths[static_cast<uint8_t>(rest[0]) |
+                                (static_cast<uint8_t>(rest[1]) << 8)] &
                        ((1u << std::min<size_t>(left, kMaxToken)) - 1);
     while (lengths > 1) {
       const auto len = static_cast<uint32_t>(std::bit_width(lengths));
@@ -483,7 +501,7 @@ void Codec::Finalize() {
   std::iota(_order.begin(), _order.end(), 0);
   absl::c_stable_sort(
     _order, [&](uint32_t a, uint32_t b) { return _tokens[a] < _tokens[b]; });
-  std::vector<std::string> sorted;
+  TrackedVector<std::string> sorted{_tokens.get_allocator()};
   sorted.reserve(_tokens.size());
   for (const auto t : _order) {
     sorted.emplace_back(std::move(_tokens[t]));
@@ -623,7 +641,7 @@ void Codec::Encode(std::span<const duckdb::string_t> entries,
   }
 }
 
-void Codec::Export(std::string& table) const {
+void Codec::Export(TrackedString& table) const {
   table.assign(kSymbolTableHeader, '\0');
   table[0] = static_cast<char>(_bits);
   duckdb::Store<uint32_t>(

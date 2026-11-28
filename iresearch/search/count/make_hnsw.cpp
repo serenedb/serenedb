@@ -25,15 +25,15 @@
 namespace irs::count {
 
 Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
-  auto hits = query.RunSearch(ctx.table);
+  auto hits = query.RunSearch(ctx.memory, ctx.table);
   if (!ctx.table || ctx.table->Foldable()) {
-    return MakeConstant(hits.size());
+    return MakeConstant(ctx.memory, hits.size());
   }
   uint64_t live = 0;
   for (const auto& hit : hits) {
     live += ctx.table->Live(hit.doc) == hit.doc;
   }
-  return MakeConstant(live);
+  return MakeConstant(ctx.memory, live);
 }
 
 }  // namespace irs::count

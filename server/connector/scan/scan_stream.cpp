@@ -61,9 +61,11 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
     l.unit_done = !l.root;
     return;
   }
+  l.root.reset();
+  l.score_fetcher.Clear();
+  l.plan_memory.Rewind();
   const auto& seg_query = EnsureSegmentQuery(g, &l, seg_idx);
   if (irs::QueryBuilder::IsEmpty(seg_query)) {
-    l.root.reset();
     l.unit_done = true;
     return;
   }
@@ -72,14 +74,15 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   if (l.scored) {
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that emits a score has a scorer to compute it with");
-    l.score_fetcher.Clear();
-    auto root = irs::hits::MakeRoot(
-      seg_query,
-      {.scorer = *g.scorer_obj, .fetcher = l.score_fetcher, .span = span});
+    auto root = irs::hits::MakeRoot(seg_query, {.memory = l.plan_memory,
+                                                .scorer = *g.scorer_obj,
+                                                .fetcher = l.score_fetcher,
+                                                .span = span});
     EnsurePlanned(root != nullptr);
     l.root = std::move(root);
   } else {
-    auto root = irs::docs::MakeRoot(seg_query, {.span = span});
+    auto root =
+      irs::docs::MakeRoot(seg_query, {.memory = l.plan_memory, .span = span});
     EnsurePlanned(root != nullptr);
     l.root = std::move(root);
   }

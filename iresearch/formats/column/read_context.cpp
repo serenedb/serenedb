@@ -72,19 +72,22 @@ uint64_t SectorAligned(uint64_t size) noexcept {
 
 }  // namespace
 
-ReadContext::ReadContext(duckdb::DatabaseInstance& db)
+ReadContext::ReadContext(duckdb::DatabaseInstance& db, TrackedAllocator<> alloc)
   : BlockManager{db, DEFAULT_BLOCK_ALLOC_SIZE, /*block_header_size=*/0},
-    _cache{&db.GetObjectCache()} {}
+    _cache{&db.GetObjectCache()},
+    _alloc{alloc} {}
 
-ReadContext::ReadContext(const ColReader& reader, bool random_access)
-  : ReadContext{reader.Database()} {
+ReadContext::ReadContext(const ColReader& reader, TrackedAllocator<> alloc,
+                         bool random_access)
+  : ReadContext{reader.Database(), alloc} {
   ResetFile(reader.File());
   _random_access = random_access;
 }
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db,
-                         const duckdb::InputFile* file)
-  : ReadContext{db} {
+                         const duckdb::InputFile* file,
+                         TrackedAllocator<> alloc)
+  : ReadContext{db, alloc} {
   ResetFile(file);
 }
 

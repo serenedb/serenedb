@@ -23,10 +23,12 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/posting/writer.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -37,30 +39,38 @@ class RangeWriter final {
     PostingMeta meta;
   };
 
-  RangeWriter() = default;
+  explicit RangeWriter(TrackedAllocator<> alloc)
+    : _levels{MakeLevels(alloc, std::make_index_sequence<kMaxRangeLevels>{})} {}
   RangeWriter(const RangeWriter&) = delete;
   RangeWriter& operator=(const RangeWriter&) = delete;
 
+  static uint64_t Bound(uint64_t docs) noexcept;
+
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
-  void Begin(PostingsWriter& pw, uint64_t docs) noexcept;
+  void Begin(PostingsWriter& pw, uint64_t docs);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
   size_t Height() const noexcept { return _height; }
   uint32_t Count(size_t level) const noexcept { return _levels[level].count; }
   Entry At(size_t level, uint32_t i) const noexcept;
   void Clear() noexcept;
+  void Shrink() noexcept;
 
  private:
   struct RangePosting {
+    explicit RangePosting(TrackedAllocator<> alloc) : docs{alloc} {}
+
     bstring key;
-    std::vector<doc_id_t> docs;
+    TrackedVector<doc_id_t> docs;
     PostingMeta meta;
     uint64_t docs_count = 0;
     bool join = false;
   };
 
   struct Level {
+    explicit Level(TrackedAllocator<> alloc) : group{alloc}, held{alloc} {}
+
     bstring starts;
     std::vector<PostingMeta> metas;
     RangePosting group;
@@ -76,6 +86,12 @@ class RangeWriter final {
     std::span<const doc_id_t> docs;
     uint64_t docs_count;
   };
+
+  template<size_t... I>
+  static std::array<Level, kMaxRangeLevels> MakeLevels(
+    TrackedAllocator<> alloc, std::index_sequence<I...>) {
+    return {((void)I, Level{alloc})...};
+  }
 
   void Push(size_t level, const Child& child);
   void Close(size_t level);

@@ -344,11 +344,19 @@ inline void ReadFill(FillNode& node, doc_id_t end,
   }
 }
 
+using Clauses = memory::ArenaVector<PostingClause>;
+
 struct BitsetBuckets {
-  std::vector<std::vector<PostingClause>> must;
-  std::vector<PostingClause> must_not;
-  std::vector<FillNode::ptr> fills;
-  std::vector<FillNode::ptr> exclude_fills;
+  explicit BitsetBuckets(PlanMemory& memory)
+    : must{memory.Scratch()},
+      must_not{memory.Scratch()},
+      fills{memory.Scratch()},
+      exclude_fills{memory.Scratch()} {}
+
+  memory::ArenaVector<Clauses> must;
+  Clauses must_not;
+  memory::ArenaVector<FillNode::ptr> fills;
+  memory::ArenaVector<FillNode::ptr> exclude_fills;
   const SubReader* masked = nullptr;
 
   size_t Seed(doc_id_t docs_count) const noexcept {
@@ -386,16 +394,17 @@ struct BitsetBuckets {
   }
 };
 
-void FillBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
-                doc_id_t docs_count, BitsetStorage& bits);
+void ReadBuckets(PlanMemory& memory, BitsetBuckets& buckets,
+                 const duckdb::InputFile& doc, doc_id_t docs_count,
+                 BitsetStorage& bits);
 
 template<typename P = NoPins>
-BitsetStorage BuildBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
-                          doc_id_t docs_count) {
+void FillBitset(PlanMemory& memory, BitsetStorage& bits, BitsetBuckets& buckets,
+                const duckdb::InputFile& doc, doc_id_t docs_count) {
   SDB_ASSERT(!buckets.must.empty() || !buckets.fills.empty());
   SDB_ASSERT(buckets.fills.empty() || buckets.must.size() <= 1);
-  BitsetStorage bits{docs_count};
-  FillBitset(buckets, doc, docs_count, bits);
+  SDB_ASSERT(bits.End() == BitsetStorage::kMin + docs_count);
+  ReadBuckets(memory, buckets, doc, docs_count, bits);
   auto* const words = bits.Words();
 
   if constexpr (P::template Pinned<MaskedAxis>(false)) {
@@ -406,6 +415,13 @@ BitsetStorage BuildBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
     });
   }
   bits.Trim();
+}
+
+template<typename P = NoPins>
+BitsetStorage BuildBitset(PlanMemory& memory, BitsetBuckets& buckets,
+                          const duckdb::InputFile& doc, doc_id_t docs_count) {
+  BitsetStorage bits{memory.Scratch(), docs_count};
+  FillBitset<P>(memory, bits, buckets, doc, docs_count);
   return bits;
 }
 

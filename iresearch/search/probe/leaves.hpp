@@ -54,8 +54,8 @@ template<Type Leaf, size_t N = 0>
 class AndLeaves {
  public:
   template<typename Init>
-  AndLeaves(size_t size, Init&& init)
-    : _leaves{size, std::forward<Init>(init)} {
+  AndLeaves(PlanMemory& memory, size_t size, Init&& init)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)} {
     SDB_ASSERT(_leaves.size() > 1);
   }
 
@@ -83,7 +83,7 @@ class AndLeaves {
     }
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out) {
+  void CollectScorers(auto& out) {
     for (auto& leaf : _leaves) {
       leaf.CollectScorers(out);
     }
@@ -103,8 +103,9 @@ class OrLeaves {
   };
 
   template<typename Init>
-  OrLeaves(size_t size, Init&& init)
-    : _leaves{size, std::forward<Init>(init)}, _held{size} {
+  OrLeaves(PlanMemory& memory, size_t size, Init&& init)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)},
+      _held{memory.Arena(), size} {
     SDB_ASSERT(!_leaves.empty());
   }
 
@@ -176,10 +177,11 @@ class OrLeaves {
     GatherHeld(_leaves, _held, _first + 1, _doc, slot);
   }
 
-  ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
+  ScoreFunction PrepareScore(PlanMemory& memory, ScoreMergeType inner,
+                             score_t absorbed)
     requires Scored
   {
-    return detail::MakeProbeOf(inner, _leaves, _held, absorbed);
+    return detail::MakeProbeOf(memory, inner, _leaves, _held, absorbed);
   }
 
  private:
@@ -198,10 +200,11 @@ class ThresholdLeaves {
   static constexpr bool kDecides = true;
 
   template<typename Init>
-  ThresholdLeaves(size_t size, Init&& init, uint32_t min_match)
-    : _probes{size, std::forward<Init>(init)},
-      _held{size},
-      _matched{min_match},
+  ThresholdLeaves(PlanMemory& memory, size_t size, Init&& init,
+                  uint32_t min_match)
+    : _probes{memory.Arena(), size, std::forward<Init>(init)},
+      _held{memory.Arena(), size},
+      _matched{memory.Arena(), min_match},
       _min_match{min_match} {
     SDB_ASSERT(_min_match > 1);
     SDB_ASSERT(_probes.size() >= _min_match);
@@ -259,10 +262,11 @@ class ThresholdLeaves {
     GatherHeld(_probes, _held, _matched[_min_match - 1] + 1, _doc, slot);
   }
 
-  ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
+  ScoreFunction PrepareScore(PlanMemory& memory, ScoreMergeType inner,
+                             score_t absorbed)
     requires Scored
   {
-    return detail::MakeProbeOf(inner, _probes, _held, absorbed);
+    return detail::MakeProbeOf(memory, inner, _probes, _held, absorbed);
   }
 
  private:
@@ -282,8 +286,9 @@ class BoostLeaves {
   static constexpr bool kDecides = false;
 
   template<typename Init>
-  BoostLeaves(size_t size, Init&& init)
-    : _leaves{size, std::forward<Init>(init)}, _held{size} {
+  BoostLeaves(PlanMemory& memory, size_t size, Init&& init)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)},
+      _held{memory.Arena(), size} {
     SDB_ASSERT(!_leaves.empty());
   }
 
@@ -304,18 +309,18 @@ class BoostLeaves {
     GatherHeld(_leaves, _held, 0, doc, slot);
   }
 
-  ScoreFunction PrepareScore(ScoreMergeType inner) {
-    return detail::MakeProbeOf(inner, _leaves, _held);
+  ScoreFunction PrepareScore(PlanMemory& memory, ScoreMergeType inner) {
+    return detail::MakeProbeOf(memory, inner, _leaves, _held);
   }
 
-  ScoreFunction PrepareScore(ScoreMergeType inner, ScoreFunction&& required,
-                             score_t absorbed) {
-    std::vector<ScoreFunction> probed;
+  ScoreFunction PrepareScore(PlanMemory& memory, ScoreMergeType inner,
+                             ScoreFunction&& required, score_t absorbed) {
+    memory::ArenaVector<ScoreFunction> probed{memory.Scratch()};
     probed.reserve(_leaves.size());
     for (auto& leaf : _leaves) {
       probed.emplace_back(leaf.PrepareScore());
     }
-    return detail::MakeProbeScore(inner, std::move(required), std::move(probed),
+    return detail::MakeProbeScore(memory, inner, std::move(required), probed,
                                   _held.data(), absorbed);
   }
 
@@ -329,7 +334,7 @@ class NoLeaves {
  public:
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) noexcept { return target; }
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t) noexcept {}
-  void CollectScorers(std::vector<ScoreFunction>&) const noexcept {}
+  void CollectScorers(auto&) const noexcept {}
 };
 
 }  // namespace irs::probe

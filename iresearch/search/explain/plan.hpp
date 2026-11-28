@@ -26,10 +26,12 @@
 #include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::explain {
 
-std::unique_ptr<Explainer> MakePlan(const QueryBuilder& query,
+std::unique_ptr<Explainer> MakePlan(MemoryBudget& memory,
+                                    const QueryBuilder& query,
                                     const Scorer& scorer,
                                     const StatsIndex& stats,
                                     const Filter& filter);

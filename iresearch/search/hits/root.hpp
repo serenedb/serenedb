@@ -28,7 +28,7 @@
 
 namespace irs::hits {
 
-struct Root : memory::Managed {
+struct Root : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Root>;
 
   virtual uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* docs,

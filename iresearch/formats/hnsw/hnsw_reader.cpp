@@ -54,11 +54,12 @@ std::shared_ptr<const HnswData> HnswIndex::Load(ParallelFor parallel) const {
   _load.Call([&] {
     duckdb::InputFileReader in{_file};
     in.Seek(_meta.offset);
-    auto data = std::make_shared<HnswData>();
-    data->graph =
-      _meta.graph_compression.Packed()
-        ? HnswGraph::DeserializePacked(in, _meta.graph_compression, parallel)
-        : HnswGraph::Deserialize(in);
+    auto data = std::make_shared<HnswData>(gRootBudget);
+    const TrackedAllocator<> alloc{data->budget};
+    data->graph = _meta.graph_compression.Packed()
+                    ? HnswGraph::DeserializePacked(
+                        in, _meta.graph_compression, parallel, alloc)
+                    : HnswGraph::Deserialize(in, alloc);
     const auto read_floats = [&](auto& out, size_t count) {
       out.resize(count);
       if (count != 0) {
@@ -83,7 +84,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(ParallelFor parallel) const {
       }
     } else {
       data->stats = ReadQuantizerStats(
-        in, _meta.header.quant, _meta.header.d,
+        gRootBudget, in, _meta.header.quant, _meta.header.d,
         EffectiveQuantMetric(_meta.header.metric), /*row_major=*/true);
       if (!data->stats) {
         return;
@@ -156,7 +157,7 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
       PrepareInnerFilter(opts.index_part, segment, ctx, index_part);
     SDB_ASSERT(prepared);
   }
-  auto built = memory::make_tracked<HnswQuery>(
+  auto built = ctx.memory.Make<HnswQuery>(
     ctx.memory, segment, std::move(data), opts, _meta.header.record_size,
     limits, ctx.boost, std::move(inner), std::move(index_part), cache);
   built->SetStats(ctx.Record());

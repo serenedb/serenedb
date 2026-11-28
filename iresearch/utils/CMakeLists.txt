@@ -8,6 +8,7 @@ target_sources(
         cpu_features.cpp
         crash_handler.cpp
         duckdb_engine.cpp
+        fault_hits.cpp
         huge_page_allocator.cpp
         index_utils.cpp
         levenshtein_default_pdp.cpp
@@ -19,6 +20,7 @@ target_sources(
         regexp_ngram.cpp
         regexp_utils.cpp
         remap_executable.cpp
+        tracked.cpp
         wildcard_utils.cpp
 )
 

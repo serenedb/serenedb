@@ -56,6 +56,7 @@
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -242,6 +243,9 @@ struct AlpCombination {
 
 template<typename T>
 struct AlpCompressionData {
+  explicit AlpCompressionData(TrackedAllocator<> alloc)
+    : best_k_combinations{alloc} {}
+
   AlpEncodingIndices vector_encoding_indices;
   uint16_t exceptions_count = 0;
   uint16_t bit_width = 0;
@@ -250,7 +254,7 @@ struct AlpCompressionData {
   int64_t encoded_integers[kVectorSize] = {};
   T exceptions[kVectorSize] = {};
   uint16_t exceptions_positions[kVectorSize] = {};
-  std::vector<AlpCombination> best_k_combinations;
+  TrackedVector<AlpCombination> best_k_combinations;
   uint32_t values_encoded[kVectorSize * 2] = {};
 };
 
@@ -364,7 +368,7 @@ uint64_t DryCompressToEstimateSize(std::span<const T> input_vector,
 }
 
 template<typename T>
-void FindTopKCombinations(const std::vector<std::vector<T>>& vectors_sampled,
+void FindTopKCombinations(std::span<const TrackedVector<T>> vectors_sampled,
                           AlpCompressionData<T>& compression_data) {
   constexpr uint8_t kMaxExponent = AlpTypedConstants<T>::kMaxExponent;
   constexpr idx_t kExactTypeBitSize = sizeof(T) * 8;
@@ -408,7 +412,8 @@ void FindTopKCombinations(const std::vector<std::vector<T>>& vectors_sampled,
                  [best_combination.encoding_indices.factor];
   }
 
-  std::vector<AlpCombination> best_k_combinations;
+  TrackedVector<AlpCombination> best_k_combinations{
+    compression_data.best_k_combinations.get_allocator()};
   for (uint8_t exponent = 0; exponent <= kMaxExponent; ++exponent) {
     for (uint8_t factor = 0; factor <= exponent; ++factor) {
       if (const auto n_appearances = appearances[exponent][factor]) {
@@ -591,11 +596,16 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
 
 template<typename T>
 struct AlpAnalyzeState {
+  explicit AlpAnalyzeState(TrackedAllocator<> alloc)
+    : rowgroup_sample{alloc},
+      complete_vectors_sampled{alloc},
+      compression_data{alloc} {}
+
   idx_t vectors_sampled_count = 0;
   idx_t total_values_count = 0;
   idx_t vectors_count = 0;
-  std::vector<std::vector<T>> rowgroup_sample;
-  std::vector<std::vector<T>> complete_vectors_sampled;
+  TrackedVector<TrackedVector<T>> rowgroup_sample;
+  TrackedVector<TrackedVector<T>> complete_vectors_sampled;
   AlpCompressionData<T> compression_data;
 };
 
@@ -614,8 +624,12 @@ void AlpSample(AlpAnalyzeState<T>& analyze_state, const duckdb::Vector& input) {
   const auto sampling_params = alp::GetSamplingParameters(count);
 
   uint16_t current_vector_null_positions[kVectorSize] = {};
-  std::vector<T> current_vector_values(sampling_params.n_lookup_values);
-  std::vector<T> current_vector_sample(sampling_params.n_sampled_values);
+  TrackedVector<T> current_vector_values(
+    sampling_params.n_lookup_values,
+    analyze_state.complete_vectors_sampled.get_allocator());
+  TrackedVector<T> current_vector_sample(
+    sampling_params.n_sampled_values,
+    analyze_state.rowgroup_sample.get_allocator());
 
   idx_t nulls_idx = 0;
   if (!values.CanHaveNull()) {
@@ -648,14 +662,14 @@ void AlpSample(AlpAnalyzeState<T>& analyze_state, const duckdb::Vector& input) {
 }
 
 template<typename T>
-std::unique_ptr<AlpAnalyzeState<T>> AlpSampleRowGroup(
-  std::span<const WriteChunk> chunks) {
-  auto analyze_state = std::make_unique<AlpAnalyzeState<T>>();
+TrackedUniquePtr<AlpAnalyzeState<T>> AlpSampleRowGroup(
+  TrackedAllocator<> alloc, std::span<const WriteChunk> chunks) {
+  auto analyze_state = MakeTrackedUnique<AlpAnalyzeState<T>>(alloc, alloc);
   for (const auto& chunk : chunks) {
     AlpSample(*analyze_state, chunk.data);
   }
-  FindTopKCombinations(analyze_state->rowgroup_sample,
-                       analyze_state->compression_data);
+  FindTopKCombinations<T>(analyze_state->rowgroup_sample,
+                          analyze_state->compression_data);
   return analyze_state;
 }
 
@@ -664,9 +678,9 @@ struct RowGroupSample final : State {
   static constexpr StateId kId = StateId::AlpSample;
 
   explicit RowGroupSample(ColumnDataCheckpointData& data)
-    : state{AlpSampleRowGroup<T>(data.rows.chunks)} {}
+    : state{AlpSampleRowGroup<T>(data.alloc, data.rows.chunks)} {}
 
-  std::unique_ptr<AlpAnalyzeState<T>> state;
+  TrackedUniquePtr<AlpAnalyzeState<T>> state;
 };
 
 template<typename T>
@@ -707,7 +721,9 @@ class AlpCompressionState {
   AlpCompressionState(const Codec& codec,
                       ColumnDataCheckpointData& checkpoint_data,
                       AlpAnalyzeState<T>& analyze_state)
-    : _checkpoint_data{checkpoint_data}, _segment{codec, checkpoint_data.type} {
+    : _checkpoint_data{checkpoint_data},
+      _segment{codec, checkpoint_data},
+      _compression_data{checkpoint_data.alloc} {
     _compression_data.best_k_combinations =
       std::move(analyze_state.compression_data.best_k_combinations);
   }
@@ -985,17 +1001,19 @@ struct AlpScanState final : SegmentScanState {
   using VectorState = AlpVectorState<T>;
 
   AlpScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment,
-               std::unique_ptr<VectorState> vector_state_p = nullptr)
-    : handle{std::move(handle_p)},
+               TrackedUniquePtr<VectorState> vector_state_p = nullptr)
+    : alloc{segment.ctx.Allocator()},
+      handle{std::move(handle_p)},
       count{segment.count},
       layout{ReadAlpSegmentLayout(handle.Ptr(), segment.size, count)},
       vector_state{std::move(vector_state_p)} {}
 
+  TrackedAllocator<> alloc;
   duckdb::BufferHandle handle;
   idx_t count = 0;
   alp::SegmentLayout layout;
   idx_t total_value_count = 0;
-  std::unique_ptr<VectorState> vector_state;
+  TrackedUniquePtr<VectorState> vector_state;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_group_stats;
 };
 
@@ -1183,8 +1201,8 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   SDB_ASSERT(count != 0 && rows[count - 1] < segment.count);
   auto& fetch_state =
     state.GetOrCreateSegmentState<alp::FetchState<AlpScanState<T>>>([&] {
-      return std::make_unique<alp::FetchState<AlpScanState<T>>>(segment.Pin(),
-                                                                segment);
+      return MakeScanState<alp::FetchState<AlpScanState<T>>>(
+        segment.ctx.Allocator(), segment.Pin(), segment);
     });
   auto* result_data =
     duckdb::FlatVector::GetDataMutableUnsafe<T>(result) + result_offset;

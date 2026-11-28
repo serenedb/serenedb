@@ -73,7 +73,7 @@ class MockHandler final : public network::HttpHandler {
     auto body = network::http::FlattenBody(request.body);
     {
       std::lock_guard lock{_mutex};
-      _bodies.push_back(body);
+      _bodies.emplace_back(body);
     }
     const auto reply = [&] {
       duckdb::TaskScheduler::BlockingScope blocking;

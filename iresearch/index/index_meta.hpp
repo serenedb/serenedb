@@ -27,7 +27,6 @@
 #include <vector>
 
 #include "iresearch/index/document_mask.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

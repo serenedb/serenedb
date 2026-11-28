@@ -60,6 +60,7 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 #include <limits>
@@ -331,8 +332,11 @@ const irs::ColumnReader& StoredColumn(const irs::SubReader& segment,
 
 class BlobScanner {
  public:
-  BlobScanner(const irs::ColReader& store, const irs::ColumnReader& column)
-    : _ctx{store}, _column{&column}, _state{column.InitScan(_ctx)} {}
+  BlobScanner(const irs::ColReader& store, const irs::ColumnReader& column,
+              irs::TrackedAllocator<> alloc)
+    : _ctx{store, alloc},
+      _column{&column},
+      _state{column.InitScan(_ctx)} {}
 
   irs::bytes_view FetchDoc(irs::doc_id_t doc) {
     const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
@@ -365,13 +369,17 @@ class EntryFetcher {
  public:
   EntryFetcher(const irs::SubReader& segment, const Layout& layout,
                Content content)
-    : _path{ColumnStore(segment), StoredColumn(segment, layout.path.stored)},
-      _title{ColumnStore(segment), StoredColumn(segment, layout.title.stored)},
+    : _path{ColumnStore(segment), StoredColumn(segment, layout.path.stored),
+            Allocator()},
+      _title{ColumnStore(segment), StoredColumn(segment, layout.title.stored),
+             Allocator()},
       _breadcrumb{ColumnStore(segment),
-                  StoredColumn(segment, layout.breadcrumb.stored)} {
+                  StoredColumn(segment, layout.breadcrumb.stored),
+                  Allocator()} {
     if (content == Content::Include) {
       _content.emplace(ColumnStore(segment),
-                       StoredColumn(segment, layout.content.stored));
+                       StoredColumn(segment, layout.content.stored),
+                       Allocator());
     }
   }
 
@@ -398,6 +406,11 @@ class EntryFetcher {
     return std::string{irs::ViewCast<char>(reader.FetchDoc(doc))};
   }
 
+  irs::TrackedAllocator<> Allocator() noexcept {
+    return irs::TrackedAllocator<>{_budget};
+  }
+
+  irs::LocalBudget _budget{irs::gRootBudget};
   Reader _path;
   Reader _title;
   Reader _breadcrumb;
@@ -409,7 +422,7 @@ using EntryScanner = EntryFetcher<BlobScanner>;
 class ObjectFetcher {
  public:
   ObjectFetcher(const irs::SubReader& segment, const ObjectLayout& layout)
-    : _columns(Open(segment, layout,
+    : _columns(Open(segment, layout, irs::TrackedAllocator<>{_budget},
                     std::make_index_sequence<kObjectColumns.size()>{})) {}
 
   Object Fetch(irs::doc_id_t doc) {
@@ -432,23 +445,30 @@ class ObjectFetcher {
 
   template<size_t... I>
   static Columns Open(const irs::SubReader& segment, const ObjectLayout& layout,
+                      irs::TrackedAllocator<> alloc,
                       std::index_sequence<I...>) {
     return {BlobScanner{ColumnStore(segment),
-                        StoredColumn(segment, layout.stored[I])}...};
+                        StoredColumn(segment, layout.stored[I]), alloc}...};
   }
 
+  irs::LocalBudget _budget{irs::gRootBudget};
   Columns _columns;
 };
 
 template<typename MakeFetcher, typename Fn>
 void ForEachMatchIn(const irs::CompositeReader& reader,
                     const irs::Filter& filter, MakeFetcher&& make, Fn&& fn) {
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   for (const auto& segment : reader) {
-    auto query = filter.PrepareSegment(segment, {});
+    query_memory.Rewind();
+    plan_memory.Rewind();
+    auto query = filter.PrepareSegment(segment, {.memory = query_memory});
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
       continue;
     }
-    auto node = query->PlanFill({}, irs::ScoreMergeType::Noop);
+    auto node =
+      query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
     if (!node) {
       continue;
     }
@@ -457,7 +477,7 @@ void ForEachMatchIn(const irs::CompositeReader& reader,
     if (auto* folded = node->Folded()) {
       live.emplace(std::move(*folded), irs::MakeGenericDocsMask(segment));
     } else {
-      live.emplace(std::move(node), docs_count,
+      live.emplace(plan_memory, std::move(node), docs_count,
                    irs::MakeGenericDocsMask(segment));
     }
     auto fetcher = make(segment);

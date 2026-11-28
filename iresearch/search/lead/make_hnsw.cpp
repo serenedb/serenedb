@@ -29,17 +29,17 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::lead {
 namespace {
 
 class HnswHits : public Node {
  public:
-  HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
+  HnswHits(memory::ArenaVector<ScoreDoc>&& hits, const SubReader& segment,
            const detail::ScoreArgs& args)
-    : _hits{hits.size(),
-            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }} {
+    : _hits{std::move(hits)} {
     _score = detail::PrepareBlockScorer(args, segment, detail::NoField(),
                                         _provider, _block);
   }
@@ -72,7 +72,7 @@ class HnswHits : public Node {
   ScoreFunction PrepareScore() final { return std::move(_score); }
 
  private:
-  containers::Fixed<ScoreDoc> _hits;
+  memory::ArenaVector<ScoreDoc> _hits;
   detail::ScaleProvider _provider;
   ScoreFunction _score;
   score_t _block[kScoreBlock];
@@ -84,12 +84,13 @@ class HnswHits : public Node {
 
 Node::ptr Family::Make(const HnswQuery& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  const detail::ScoreArgs args{.scorer = record.scorer,
+  auto& memory = ctx.memory;
+  const detail::ScoreArgs args{.memory = &memory,
+                               .scorer = record.scorer,
                                .stats = record.stats,
                                .fetcher = ctx.fetcher,
                                .boost = query.Boost()};
-  return memory::make_managed<HnswHits>(query.RunSearch(), query.Segment(),
-                                        args);
+  return memory.Make<HnswHits>(query.RunSearch(memory), query.Segment(), args);
 }
 
 }  // namespace irs::lead

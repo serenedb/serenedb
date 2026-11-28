@@ -174,7 +174,8 @@ void AssertQuantizedPath(const ::tests::IndexDir& dir,
   const std::vector<float> query(kDim, 0.f);
   ASSERT_NE(nullptr,
             irs::ReadQuantizerCodebook(
-              static_cast<const irs::IvfIndex*>(ann)->Tree(), idx_in,
+              irs::gRootBudget, static_cast<const irs::IvfIndex*>(ann)->Tree(),
+              idx_in,
               irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
               query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
@@ -193,8 +194,8 @@ class VectorSimilarityQueryTest : public ::testing::Test {
     ASSERT_EQ(n, _reader.docs_count());
     AssertQuantizedPath(_dir, _reader[0]);
     _filter = MakeKnnFilter();
-    _prepared.emplace(_filter, _reader, nullptr, irs::IResourceManager::gNoop,
-                      nullptr, ::tests::PreparedFilter::CollectMode::Single);
+    _prepared.emplace(_filter, _reader, nullptr, nullptr,
+                      ::tests::PreparedFilter::CollectMode::Single);
     ASSERT_EQ(1U, _prepared->size());
   }
 
@@ -276,8 +277,9 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   }
   {
     SCOPED_TRACE("probe");
+    irs::PlanMemory plan_memory;
     auto probe = prepared.Query(0)->PlanProbe(
-      {.scorer = &scorer, .fetcher = &_fetcher}, _docs);
+      {.memory = plan_memory, .scorer = &scorer, .fetcher = &_fetcher}, _docs);
     ASSERT_NE(nullptr, probe);
     check_scores(*probe, [&](auto doc) { return probe->Probe(doc); });
   }
@@ -311,7 +313,9 @@ TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
 
   {
     SCOPED_TRACE("hits");
-    auto hits = query->PlanScored({.scorer = scorer, .fetcher = _fetcher});
+    irs::PlanMemory plan_memory;
+    auto hits = query->PlanScored(
+      {.memory = plan_memory, .scorer = scorer, .fetcher = _fetcher});
     ASSERT_NE(nullptr, hits);
     std::vector<irs::doc_id_t> docs(_docs + irs::doc_limits::kDocsSlack);
     std::vector<irs::score_t> scores(_docs + irs::doc_limits::kScoresSlack);
@@ -324,8 +328,11 @@ TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
   }
   {
     SCOPED_TRACE("ann");
-    auto ann =
-      query->PlanAnn({.scorer = scorer, .fetcher = _fetcher, .k = _docs});
+    irs::PlanMemory plan_memory;
+    auto ann = query->PlanAnn({.memory = plan_memory,
+                               .scorer = scorer,
+                               .fetcher = _fetcher,
+                               .k = _docs});
     ASSERT_NE(nullptr, ann);
     irs::ann::SharedFloor floor{_docs};
     irs::ann::Collector collector{floor, _docs};
@@ -424,7 +431,9 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
   for (const bool inclusive : {false, true}) {
     SCOPED_TRACE(inclusive);
     const auto filter = MakeExactFilter(150.f, 9.f, inclusive);
-    const auto query = filter.PrepareSegment(segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    const auto query = filter.PrepareSegment(segment, {.memory = query_memory});
     ASSERT_NE(nullptr, query);
     std::vector<irs::doc_id_t> want;
     for (irs::doc_id_t doc = inclusive ? 147 : 148;
@@ -432,20 +441,20 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
       want.push_back(doc);
     }
 
-    auto count = irs::count::MakeRoot(*query);
+    auto count = irs::count::MakeRoot(*query, {.memory = plan_memory});
     ASSERT_NE(nullptr, count);
     EXPECT_EQ(want.size(),
               count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
 
-    auto docs = irs::docs::MakeRoot(*query);
+    auto docs = irs::docs::MakeRoot(*query, {.memory = plan_memory});
     ASSERT_NE(nullptr, docs);
     std::vector<irs::doc_id_t> out(_docs);
     out.resize(
       docs->Run(irs::doc_limits::min(), irs::doc_limits::eof(), out.data()));
     EXPECT_EQ(want, out);
 
-    auto hits =
-      irs::hits::MakeRoot(*query, {.scorer = scorer, .fetcher = _fetcher});
+    auto hits = irs::hits::MakeRoot(
+      *query, {.memory = plan_memory, .scorer = scorer, .fetcher = _fetcher});
     ASSERT_NE(nullptr, hits);
     std::vector<irs::doc_id_t> hit_docs(_docs);
     std::vector<irs::score_t> scores(_docs);
@@ -459,8 +468,10 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
 
     irs::ann::SharedFloor floor{_docs};
     irs::ann::Collector collector{floor, _docs};
-    auto ranked = irs::ann::MakeRoot(
-      *query, {.scorer = scorer, .fetcher = _fetcher, .k = _docs});
+    auto ranked = irs::ann::MakeRoot(*query, {.memory = plan_memory,
+                                              .scorer = scorer,
+                                              .fetcher = _fetcher,
+                                              .k = _docs});
     ASSERT_NE(nullptr, ranked);
     ranked->Run(collector);
     EXPECT_EQ(want.size(), collector.Flush().size());
@@ -500,8 +511,9 @@ TEST_P(RerankExactDistancesTest, Rerank) {
        {1u, 2u, 3u, 40u, 64u, 65u, 66u, 128u, 129u, 200u, 299u, 300u}) {
     hits.push_back({.doc = doc});
   }
-  irs::RerankExactDistances(segment, *segment.Column(kVec), kDim, query,
-                            irs::VectorMetric::L2Sqr, hits);
+  irs::PlanMemory plan_memory;
+  irs::RerankExactDistances(plan_memory, segment, *segment.Column(kVec), kDim,
+                            query, irs::VectorMetric::L2Sqr, hits);
   for (const auto& hit : hits) {
     const auto x = static_cast<float>(hit.doc);
     ASSERT_EQ(-x * x, hit.score);
@@ -527,7 +539,7 @@ TEST(RawVectorReaderTest, RowsAcrossBlocksThatDoNotContinueTheirBytesScore) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   ::tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("seg")};
+    irs::ColWriter w{db, dir.Tracker("seg"), TestAlloc()};
     auto& cw =
       w.OpenColumn(kId, vtype,
                    {.row_group_size = kRowGroup,
@@ -558,7 +570,7 @@ TEST(RawVectorReaderTest, RowsAcrossBlocksThatDoNotContinueTheirBytesScore) {
   ASSERT_NE(blocks[0].file_offset + blocks[0].byte_size, blocks[1].file_offset);
   ASSERT_EQ(irs::codecs::CodecType::Constant, blocks[2].codec->type);
   const std::vector<float> query{1.f, 2.f, 3.f};
-  irs::detail::RawVectorReader reader{*col, r, kDims};
+  irs::detail::RawVectorReader reader{*col, r, kDims, TestAlloc()};
   reader.SetQuery(query, irs::VectorMetric::L2Sqr);
   const auto distance = irs::ResolveScoringDistance(irs::VectorMetric::L2Sqr);
   for (const uint64_t first : {kRowGroup - 11, 2 * kRowGroup - 11}) {

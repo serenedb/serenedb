@@ -46,6 +46,7 @@
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace duckdb {
 
@@ -56,13 +57,14 @@ namespace irs {
 
 class ColFilterLeaf {
  public:
-  ColFilterLeaf(const Filter& filter, const SubReader& segment);
+  ColFilterLeaf(QueryMemory& query_memory, PlanMemory& plan_memory,
+                const Filter& filter, const SubReader& segment);
 
   bool Contains(doc_id_t doc);
 
  private:
   QueryBuilder::ptr _query;
-  std::unique_ptr<detail::LazyBitset> _set;
+  std::optional<detail::LazyBitset> _set;
 };
 
 struct ColFilterSpec {
@@ -103,6 +105,16 @@ struct ColFilterSpec {
 // every use goes through Reset(), so one per filter is enough.
 class ColFilterStateCache {
  public:
+  explicit ColFilterStateCache(MemoryBudget& memory) noexcept
+    : _memory{&memory}, _budget{memory} {}
+
+  void Bind(MemoryBudget& memory) {
+    _memory = &memory;
+    _budget.Rebind(memory);
+  }
+
+  TrackedAllocator<> Allocator() noexcept { return TrackedAllocator<>{_budget}; }
+
   duckdb::TableFilterState& State(duckdb::ClientContext& context,
                                   const duckdb::TableFilter& filter);
   bool AdmitsNull(duckdb::ClientContext& context,
@@ -123,12 +135,16 @@ class ColFilterStateCache {
     duckdb::unique_ptr<duckdb::TableFilterState> state;
     std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
     std::unique_ptr<duckdb::DataChunk> chunk;
+    std::unique_ptr<QueryMemory> query_memory;
+    std::unique_ptr<PlanMemory> plan_memory;
     std::vector<ColFilterLeaf> leaves;
     std::optional<bool> admits_null;
   };
 
   Entry& Find(const duckdb::TableFilter& filter);
 
+  MemoryBudget* _memory;
+  LocalBudget _budget;
   std::vector<Entry> _entries;
 };
 
@@ -303,6 +319,7 @@ class ColFilterChain {
   duckdb::ClientContext* _context = nullptr;
   ColFilterStateCache* _states = nullptr;
   const irs::ColReader* _col_reader = nullptr;
+  const irs::ReadContext* _read_ctx = nullptr;
   // The one walk behind `FilterMask` and `CountMask`: `Keep` writes the
   // survivors to `out`, otherwise the words are left zeroed.
   template<bool Keep>

@@ -36,6 +36,7 @@
 #include "iresearch/formats/index/term_dict_store.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::term_dict {
@@ -122,7 +123,7 @@ class TermReaderImpl final : public TermReader {
   bool _has_score_bounds;
   FreqAttr _freq;
   std::span<const TermReaderImpl> _range_levels;
-  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
+  TrackedUniquePtr<duckdb_fsst_decoder_t> _fsst;
 };
 
 }  // namespace irs::term_dict

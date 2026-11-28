@@ -39,24 +39,26 @@
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::offsets {
 
 template<detail::PhraseMatch M, typename Query>
-Root::ptr PhraseMaker<M, Query>::Make(const Query& query) {
+Root::ptr PhraseMaker<M, Query>::Make(PlanMemory& memory, const Query& query) {
   if (!query.state.handles.HasOffsets()) {
     return {};
   }
   static constexpr bool kCount = M == detail::PhraseMatch::Slop;
   return detail::BuildPhrase<M, kCount, true, false>(
-    query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
-      return memory::make_managed<Impl<Phrase<Slots>>>(
+    memory, query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+      return memory.Make<Impl<Phrase<Slots>>>(
         std::forward<decltype(args)>(args)...);
     });
 }
 
 template<detail::NGramMatch M>
-Root::ptr NGramMaker<M>::Make(const NGramSimilarityQuery& query) {
+Root::ptr NGramMaker<M>::Make(PlanMemory& memory,
+                              const NGramSimilarityQuery& query) {
   const auto& state = query.State();
   const auto& h = state.handles;
   if (!h.HasOffsets()) {
@@ -69,13 +71,13 @@ Root::ptr NGramMaker<M>::Make(const NGramSimilarityQuery& query) {
       if constexpr (M == detail::NGramMatch::All) {
         using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
         using Node = Impl<NGram<Slots>>;
-        return memory::make_managed<Node>(metas, *h.doc, h.Layout(), *h.pos,
-                                          h.pay, query.TotalTerms());
+        return memory.Make<Node>(memory, metas, *h.doc, h.Layout(), *h.pos,
+                                 h.pay, query.TotalTerms());
       } else {
         using Slots = detail::NGramSlots<Leaf, false, true>;
         using Node = Impl<NGram<Slots>>;
-        return memory::make_managed<Node>(
-          metas.size(),
+        return memory.Make<Node>(
+          memory, metas.size(),
           [&](Leaf& leaf, size_t i) {
             leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
           },
@@ -88,7 +90,8 @@ Root::ptr NGramMaker<M>::Make(const NGramSimilarityQuery& query) {
 }  // namespace irs::offsets
 namespace irs::detail {
 
-inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,
+inline offsets::Root::ptr MakePostingOffsets(PlanMemory& memory,
+                                             const PostingMeta& meta,
                                              const PhraseHandles& h) {
   if (!h.HasOffsets() || meta.docs_count == 0) {
     return {};
@@ -97,8 +100,7 @@ inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,
     return Resolve(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
       using Leaf = detail::PostingPos<Input, Bounds, true>;
       using Impl = offsets::Impl<offsets::Posting<Leaf>>;
-      return memory::make_managed<Impl>(meta, *h.doc, h.Layout(), *h.pos,
-                                        h.pay);
+      return memory.Make<Impl>(meta, *h.doc, h.Layout(), *h.pos, h.pay);
     });
   });
 }

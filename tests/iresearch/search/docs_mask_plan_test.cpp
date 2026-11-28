@@ -201,9 +201,11 @@ std::vector<irs::ScoreDoc> ScoreHits(const irs::CompositeReader& reader,
   auto& allocator = duckdb::Allocator::DefaultAllocator();
   irs::StatsArena stats_arena{allocator};
   irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+  irs::QueryMemory query_memory;
   std::vector<irs::QueryBuilder::ptr> queries;
   for (const auto& segment : reader) {
-    const irs::PrepareContext ctx{.collector = collector_tree.Get()};
+    const irs::PrepareContext ctx{.memory = query_memory,
+                                  .collector = collector_tree.Get()};
     queries.emplace_back(masked ? irs::PrepareMasked(filter, segment, ctx)
                                 : filter.PrepareSegment(segment, ctx));
   }
@@ -212,15 +214,18 @@ std::vector<irs::ScoreDoc> ScoreHits(const irs::CompositeReader& reader,
   std::atomic<irs::score_t> threshold{
     std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector{threshold, hits};
+  irs::PlanMemory plan_memory;
   irs::ColumnArgsFetcher fetcher;
   for (uint32_t i = 0; i != queries.size(); ++i) {
     fetcher.Clear();
+    plan_memory.Rewind();
     collector.SetSegment(i);
     if (!queries[i]) {
       continue;
     }
     auto plan =
-      irs::top::MakeRoot(*queries[i], {.scorer = scorer,
+      irs::top::MakeRoot(*queries[i], {.memory = plan_memory,
+                                       .scorer = scorer,
                                        .fetcher = fetcher,
                                        .prune = prune,
                                        .bounds = true,
@@ -414,7 +419,9 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     irs::StatsArena stats_arena{allocator};
     irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
     for (const auto& segment : reader) {
-      auto nested = irs::PrepareMasked(filter, segment, {});
+      irs::QueryMemory query_memory;
+      auto nested =
+        irs::PrepareMasked(filter, segment, {.memory = query_memory});
       ASSERT_NE(nullptr, nested);
       ASSERT_EQ(irs::QueryKind::Boolean, nested->Kind());
       const auto& outer = irs::utils::downCast<irs::BooleanQuery>(*nested);
@@ -427,8 +434,9 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       ASSERT_EQ(1, masks.size());
       ASSERT_EQ(irs::QueryKind::DocsMask, masks.front()->Kind());
 
-      auto query = irs::PrepareMasked(filter, segment,
-                                      {.collector = collector_tree.Get()});
+      auto query = irs::PrepareMasked(
+        filter, segment,
+        {.memory = query_memory, .collector = collector_tree.Get()});
       ASSERT_NE(nullptr, query);
       ASSERT_EQ(irs::QueryKind::Boolean, query->Kind());
       const auto& flat = irs::utils::downCast<irs::BooleanQuery>(*query);
@@ -445,18 +453,20 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
 
   static void CheckUnmaskedCount(const irs::Filter& filter,
                                  const irs::SubReader& segment) {
-    auto query = filter.PrepareSegment(segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto query = filter.PrepareSegment(segment, {.memory = query_memory});
     if (!query) {
       return;
     }
-    auto lead = query->PlanLead({});
+    auto lead = query->PlanLead({.memory = plan_memory});
     const uint64_t expected = lead ? Drain(*lead).size() : 0;
-    auto count = query->PlanCount({});
+    auto count = query->PlanCount({.memory = plan_memory});
     ASSERT_NE(nullptr, count);
     ASSERT_EQ(expected,
               count->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
                 count->Finish());
-    auto split = query->PlanCount({.partial = true});
+    auto split = query->PlanCount({.memory = plan_memory, .partial = true});
     ASSERT_NE(nullptr, split);
     constexpr doc_id_t kBounds[]{
       irs::doc_limits::min(), 777, 30001, 65536, 70001, irs::doc_limits::eof()};
@@ -469,12 +479,14 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
 
   static std::vector<doc_id_t> Expected(const irs::Filter& filter,
                                         const irs::SubReader& segment) {
-    auto unmasked = filter.PrepareSegment(segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto unmasked = filter.PrepareSegment(segment, {.memory = query_memory});
     std::vector<doc_id_t> docs;
     if (!unmasked) {
       return docs;
     }
-    auto lead = unmasked->PlanLead({});
+    auto lead = unmasked->PlanLead({.memory = plan_memory});
     if (!lead) {
       return docs;
     }
@@ -502,12 +514,14 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
   static void CheckSegment(const irs::Filter& filter,
                            const irs::SubReader& segment,
                            const std::vector<doc_id_t>& expected) {
-    auto query = irs::PrepareMasked(filter, segment, {});
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto query = irs::PrepareMasked(filter, segment, {.memory = query_memory});
     ASSERT_NE(nullptr, query);
     const auto end =
       static_cast<doc_id_t>(irs::doc_limits::min() + segment.docs_count());
 
-    auto lead = query->PlanLead({});
+    auto lead = query->PlanLead({.memory = plan_memory});
     if (expected.empty() && !lead) {
       return;
     }
@@ -515,7 +529,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     ASSERT_EQ(expected, Drain(*lead));
 
     {
-      auto seeker = query->PlanLead({});
+      auto seeker = query->PlanLead({.memory = plan_memory});
       ASSERT_NE(nullptr, seeker);
       auto it = expected.begin();
       for (doc_id_t target = 1; target < end + 5; target += 997) {
@@ -526,12 +540,12 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
 
     {
-      auto count = query->PlanCount({});
+      auto count = query->PlanCount({.memory = plan_memory});
       ASSERT_NE(nullptr, count);
       ASSERT_EQ(expected.size(),
                 count->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
                   count->Finish());
-      auto split = query->PlanCount({.partial = true});
+      auto split = query->PlanCount({.memory = plan_memory, .partial = true});
       ASSERT_NE(nullptr, split);
       constexpr doc_id_t kBounds[]{
         irs::doc_limits::min(), 777, 30001, 65536, 70001,
@@ -543,7 +557,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       parts += split->Finish();
       ASSERT_EQ(expected.size(), parts);
 
-      auto fine = query->PlanCount({.partial = true});
+      auto fine = query->PlanCount({.memory = plan_memory, .partial = true});
       ASSERT_NE(nullptr, fine);
       uint64_t pieces = 0;
       doc_id_t from = irs::doc_limits::min();
@@ -559,7 +573,8 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     for (const doc_id_t span : {doc_id_t{0}, irs::detail::kWindowDocs}) {
       for (const bool skip : {false, true}) {
         SCOPED_TRACE(testing::Message("span ") << span << " skip " << skip);
-        auto docs = irs::docs::MakeRoot(*query, {.span = span});
+        auto docs =
+          irs::docs::MakeRoot(*query, {.memory = plan_memory, .span = span});
         ASSERT_NE(nullptr, docs);
         constexpr doc_id_t kWindow = 3000;
         std::vector<doc_id_t> buf(kWindow + irs::doc_limits::kDocsSlack);
@@ -582,7 +597,8 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
 
     {
-      auto probe = query->PlanProbe({}, expected.size() + 1);
+      auto probe =
+        query->PlanProbe({.memory = plan_memory}, expected.size() + 1);
       ASSERT_NE(nullptr, probe);
       auto it = expected.begin();
       for (doc_id_t target = 1; target < end; target += 1 + target % 13) {
@@ -596,7 +612,8 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
 
     {
-      auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+      auto fill =
+        query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
       ASSERT_NE(nullptr, fill);
       std::vector<doc_id_t> actual;
       for (doc_id_t min = irs::doc_limits::min(); min < end;

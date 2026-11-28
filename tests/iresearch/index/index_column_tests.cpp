@@ -133,7 +133,7 @@ template<typename Present, typename Payload>
 void FetchAndExpect(const irs::ColReader& reader,
                     const irs::ColumnReader& column, uint64_t docs_count,
                     Present is_present, Payload expected_payload) {
-  irs::ColumnReader::BlobPointReader cursor{reader, column};
+  irs::ColumnReader::BlobPointReader cursor{reader, column, TestAlloc()};
   for (uint64_t i = 0; i < docs_count; ++i) {
     const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
     if (is_present(doc)) {
@@ -196,7 +196,7 @@ void FetchDocsAndExpect(const irs::ColReader& reader,
                         const irs::ColumnReader& column,
                         const std::vector<irs::doc_id_t>& docs,
                         Present is_present, Payload expected_payload) {
-  irs::ColumnReader::BlobPointReader cursor{reader, column};
+  irs::ColumnReader::BlobPointReader cursor{reader, column, TestAlloc()};
   for (irs::doc_id_t doc : docs) {
     if (is_present(doc)) {
       ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -218,7 +218,7 @@ template<typename Present, typename Payload>
 void CheckBoundaries(const irs::ColReader& reader,
                      const irs::ColumnReader& column, uint64_t docs_count,
                      Present is_present, Payload expected_payload) {
-  irs::ColumnReader::BlobPointReader cursor{reader, column};
+  irs::ColumnReader::BlobPointReader cursor{reader, column, TestAlloc()};
   const auto first = irs::doc_limits::min();
   const auto last =
     static_cast<irs::doc_id_t>(docs_count + irs::doc_limits::min() - 1);
@@ -260,7 +260,7 @@ void SeekAndNextFive(const irs::ColReader& reader,
                      const irs::ColumnReader& column, uint64_t docs_count,
                      irs::doc_id_t start, Present is_present,
                      Payload expected_payload) {
-  irs::ColumnReader::BlobPointReader cursor{reader, column};
+  irs::ColumnReader::BlobPointReader cursor{reader, column, TestAlloc()};
   const irs::doc_id_t kMin = irs::doc_limits::min();
   const irs::doc_id_t kLast = static_cast<irs::doc_id_t>(docs_count + kMin - 1);
   for (int step = 0; step <= 5; ++step) {
@@ -293,7 +293,7 @@ void SeekBackwardsAndNextFive(const irs::ColReader& reader,
                               Payload expected_payload) {
   // Forward leg on a primary cursor.
   {
-    irs::ColumnReader::BlobPointReader fwd{reader, column};
+    irs::ColumnReader::BlobPointReader fwd{reader, column, TestAlloc()};
     if (is_present(big)) {
       ASSERT_FALSE(fwd.IsNullDoc(big)) << "doc=" << big;
       EXPECT_EQ(AsBytes(expected_payload(big)), fwd.FetchDoc(big))
@@ -308,7 +308,7 @@ void SeekBackwardsAndNextFive(const irs::ColReader& reader,
   // version of the legacy "seek backwards" invariant -- the column
   // remains entryable at any row, regardless of any earlier cursor's
   // position.
-  irs::ColumnReader::BlobPointReader back{reader, column};
+  irs::ColumnReader::BlobPointReader back{reader, column, TestAlloc()};
   const irs::doc_id_t kMin = irs::doc_limits::min();
   const irs::doc_id_t kLast = static_cast<irs::doc_id_t>(docs_count + kMin - 1);
   for (int step = 0; step <= 5; ++step) {
@@ -436,7 +436,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
 
     // Per-doc fetch.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *name_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *name_col, TestAlloc()};
       for (size_t i = 0; i < kNameValues.size(); ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i) + irs::doc_limits::min();
         ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -465,7 +465,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
     }
 
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col, TestAlloc()};
       for (irs::doc_id_t doc = irs::doc_limits::min();
            doc < irs::doc_limits::min() + kDocsCount; ++doc) {
         const auto found =
@@ -486,7 +486,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
     // verify each lookup returns the right validity/payload. A single
     // cursor is forward-only, so a backwards jump uses a fresh cursor.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col, TestAlloc()};
       // Forward sequence: 1 (present) -> 2 (null) -> 3 (null) -> 4 (present).
       ASSERT_FALSE(cursor.IsNullDoc(1));
       EXPECT_EQ("abcd", ReadStr(cursor.FetchDoc(1)));
@@ -496,18 +496,18 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
       EXPECT_EQ("abcde", ReadStr(cursor.FetchDoc(4)));
 
       // Backwards jump via a second fresh cursor.
-      irs::ColumnReader::BlobPointReader back{reader, *prefix_col};
+      irs::ColumnReader::BlobPointReader back{reader, *prefix_col, TestAlloc()};
       ASSERT_FALSE(back.IsNullDoc(1));
       EXPECT_EQ("abcd", ReadStr(back.FetchDoc(1)));
 
       // Another backwards jump: from 4 down to 2 (null).
-      irs::ColumnReader::BlobPointReader back2{reader, *prefix_col};
+      irs::ColumnReader::BlobPointReader back2{reader, *prefix_col, TestAlloc()};
       EXPECT_TRUE(back2.IsNullDoc(2));
     }
 
     // Boundary checks: invalid/past-end on the prefix column.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col, TestAlloc()};
       EXPECT_TRUE(cursor.IsNullDoc(irs::doc_limits::invalid()));
       // doc 5 (past the last) and doc 6 (well past).
       EXPECT_TRUE(cursor.IsNullDoc(5));
@@ -588,7 +588,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
 
       // Per-doc fetch path.
       {
-        irs::ColumnReader::BlobPointReader cursor{reader, *col};
+        irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
         for (uint64_t i = 0; i < kDocsCount; ++i) {
           const auto doc =
             static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
@@ -609,8 +609,8 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
     const auto* label_col = reader.Column(kLabelId);
     ASSERT_NE(nullptr, id_col);
     ASSERT_NE(nullptr, label_col);
-    irs::ColumnReader::BlobPointReader id_cursor{reader, *id_col};
-    irs::ColumnReader::BlobPointReader label_cursor{reader, *label_col};
+    irs::ColumnReader::BlobPointReader id_cursor{reader, *id_col, TestAlloc()};
+    irs::ColumnReader::BlobPointReader label_cursor{reader, *label_col, TestAlloc()};
     for (uint64_t i = 0; i < kDocsCount; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       ASSERT_FALSE(id_cursor.IsNullDoc(doc));
@@ -728,7 +728,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_dense_column_dense_mask) {
 
     // Per-doc fetch sequentially.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -819,7 +819,7 @@ TEST_P(IndexColumnTestCase,
     // Spot-check the fixed payload width (legacy "fixed_length" was the
     // sole subscenario that asserted on the size class).
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; i += 257) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         EXPECT_EQ(8u, cursor.FetchDoc(doc).size()) << "doc=" << doc;
@@ -859,7 +859,7 @@ TEST_P(IndexColumnTestCase,
     // "fixed_length" inverted the encoding to verify the codec didn't
     // truncate or reorder bytes).
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       const std::vector<uint64_t> sample = {0,
                                             1,
                                             7,
@@ -973,7 +973,7 @@ TEST_P(IndexColumnTestCase,
 
     // Spot-check the 4-byte payload width across row-group boundaries.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; i += 521) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         EXPECT_EQ(4u, cursor.FetchDoc(doc).size()) << "doc=" << doc;
@@ -983,8 +983,8 @@ TEST_P(IndexColumnTestCase,
     // Cross-cursor sanity: two independent BlobPointReaders over the same
     // constant-payload column return identical bytes for the same doc.
     {
-      irs::ColumnReader::BlobPointReader a{reader, *col};
-      irs::ColumnReader::BlobPointReader b{reader, *col};
+      irs::ColumnReader::BlobPointReader a{reader, *col, TestAlloc()};
+      irs::ColumnReader::BlobPointReader b{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; i += 311) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         EXPECT_EQ(a.FetchDoc(doc), b.FetchDoc(doc)) << "doc=" << doc;
@@ -1063,7 +1063,7 @@ TEST_P(IndexColumnTestCase,
 
     // Sequential per-doc fetch.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -1185,7 +1185,7 @@ TEST_P(IndexColumnTestCase,
     // "seek to gap + next(x5)" sub-scenario. IsPresent here is `doc % 2 ==
     // 0`, so doc=1 (min) is absent -- start the gap walk there.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       const auto gap = irs::doc_limits::min();  // doc=1, absent.
       EXPECT_TRUE(cursor.IsNullDoc(gap)) << "doc=" << gap;
       // Then walk forward over a mix of even/odd docs.
@@ -1203,7 +1203,7 @@ TEST_P(IndexColumnTestCase,
 
     // Width assertion: every present doc carries an 8-byte payload.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; i += 257) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1295,7 +1295,7 @@ TEST_P(IndexColumnTestCase,
 
     // seek "to gap" (a null doc) then forward.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       // doc 3 is absent (3 % 3 == 0).
       const auto gap = static_cast<irs::doc_id_t>(irs::doc_limits::min() + 2);
       EXPECT_TRUE(cursor.IsNullDoc(gap)) << "doc=" << gap;
@@ -1313,7 +1313,7 @@ TEST_P(IndexColumnTestCase,
     // Width assertion: every present doc carries the constant 4-byte
     // payload, confirming the codec didn't truncate / widen any cells.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; i += 313) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1392,7 +1392,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch with explicit IsNullDoc reads on the gaps.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1498,7 +1498,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch sequentially.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1606,7 +1606,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch sequentially.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1723,7 +1723,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch sequentially.
     {
-      irs::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col, TestAlloc()};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {

@@ -33,7 +33,8 @@ namespace irs {
 struct FieldSink {
   virtual ~FieldSink() = default;
 
-  virtual void prepare(const FlushState& state, uint64_t keyed_dicts) = 0;
+  virtual void prepare(const FlushState& state, uint64_t keyed_dicts,
+                       uint64_t terms) = 0;
   virtual void write(DictRef dict, const BasicTermReader& reader) = 0;
   virtual void WriteSlot(field_id id, DictRef dict,
                          std::span<const doc_id_t> docs) = 0;

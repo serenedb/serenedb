@@ -153,17 +153,19 @@ void CheckHandOff() {
   const irs::All child;
   const std::array<const irs::Filter*, 3> filters{&root, &parent, &child};
   irs::QueryProfile profile{filters, true};
-  auto node = irs::memory::make_managed<Fake>();
+  irs::PlanMemory memory;
+  auto node = memory.Make<Fake>();
   const auto* raw = node.get();
 
-  auto planned = profile.Wrap(profile.Wrap(std::move(node), 2), 1);
+  auto planned =
+    profile.Wrap(memory, profile.Wrap(memory, std::move(node), 2), 1);
   const auto slots = profile.Slots();
   ASSERT_EQ(1, slots.size());
   EXPECT_EQ(1, slots[0].node);
   EXPECT_TRUE(typeid(*raw) == *slots[0].executed->type);
   EXPECT_EQ(1, slots[0].executed->plans.load());
 
-  EXPECT_EQ(raw, profile.Wrap(std::move(planned), 0).get());
+  EXPECT_EQ(raw, profile.Wrap(memory, std::move(planned), 0).get());
   EXPECT_TRUE(profile.Slots().empty());
 }
 
@@ -231,7 +233,8 @@ TEST(query_profile, fill_counts_documents_it_marks) {
   const irs::All part;
   const std::array<const irs::Filter*, 2> filters{&root, &part};
   irs::QueryProfile profile{filters, true};
-  auto node = profile.Wrap(irs::memory::make_managed<FakeFill>(), 1);
+  irs::PlanMemory memory;
+  auto node = profile.Wrap(memory, memory.Make<FakeFill>(), 1);
 
   std::array<uint64_t, 2> mask{};
   std::array<irs::score_t, 128> scores{};
@@ -262,9 +265,10 @@ TEST(query_profile, root_is_not_wrapped) {
   const irs::All root;
   const std::array<const irs::Filter*, 1> filters{&root};
   irs::QueryProfile profile{filters, true};
-  auto fill = irs::memory::make_managed<FakeFill>();
+  irs::PlanMemory memory;
+  auto fill = memory.Make<FakeFill>();
   const auto* raw = fill.get();
-  EXPECT_EQ(raw, profile.Wrap(std::move(fill), 0).get());
+  EXPECT_EQ(raw, profile.Wrap(memory, std::move(fill), 0).get());
   EXPECT_TRUE(profile.Slots().empty());
 }
 
@@ -279,9 +283,11 @@ TEST(query_profile, a_profiled_probe_reports_the_score_inputs_of_its_node) {
   const irs::All part;
   const std::array<const irs::Filter*, 2> filters{&root, &part};
   irs::QueryProfile profile{filters, true};
-  auto node = irs::memory::make_managed<InputsProbe>();
+  irs::PlanMemory memory;
+  auto node = memory.Make<InputsProbe>();
   const auto* raw = node.get();
-  const auto planned = profile.Wrap(irs::probe::Node::ptr{std::move(node)}, 1);
+  const auto planned =
+    profile.Wrap(memory, irs::probe::Node::ptr{std::move(node)}, 1);
   ASSERT_NE(raw, planned.get());
   EXPECT_EQ(&raw->inputs, planned->Inputs());
   EXPECT_FALSE(FakeProbe{}.Inputs());
@@ -292,16 +298,17 @@ TEST(query_profile, roots_are_profiled_without_nested_parts) {
   const irs::All part;
   const std::array<const irs::Filter*, 2> filters{&root, &part};
   irs::QueryProfile profile{filters, false};
-  auto fill = irs::memory::make_managed<FakeFill>();
+  irs::PlanMemory memory;
+  auto fill = memory.Make<FakeFill>();
   const auto* raw = fill.get();
-  EXPECT_EQ(raw, profile.Wrap(std::move(fill), 1).get());
-  auto inner = irs::memory::make_managed<FakeFill>();
+  EXPECT_EQ(raw, profile.Wrap(memory, std::move(fill), 1).get());
+  auto inner = memory.Make<FakeFill>();
   const auto* raw_inner = inner.get();
-  EXPECT_EQ(raw_inner, profile.WrapRoot(std::move(inner), 1, 5, {}).get());
+  EXPECT_EQ(raw_inner,
+            profile.WrapRoot(memory, std::move(inner), 1, 5, {}).get());
   EXPECT_TRUE(profile.Slots().empty());
 
-  auto planned =
-    profile.WrapRoot(irs::memory::make_managed<FakeFill>(), 0, 7, {});
+  auto planned = profile.WrapRoot(memory, memory.Make<FakeFill>(), 0, 7, {});
   std::array<uint64_t, 2> mask{};
   EXPECT_EQ(129, planned->FillOr(1, 129, mask.data()));
   EXPECT_EQ(nullptr, planned->Folded());
@@ -321,7 +328,9 @@ TEST(query_profile, a_root_that_could_not_be_planned_stays_unplanned) {
   const irs::All root;
   const std::array<const irs::Filter*, 1> filters{&root};
   irs::QueryProfile profile{filters, false};
-  EXPECT_EQ(nullptr, profile.WrapRoot(irs::fill::Node::ptr{}, 0, 3, {}));
+  irs::PlanMemory memory;
+  EXPECT_EQ(nullptr,
+            profile.WrapRoot(memory, irs::fill::Node::ptr{}, 0, 3, {}));
   EXPECT_TRUE(profile.Slots().empty());
 }
 
@@ -375,8 +384,9 @@ TEST(query_profile, a_root_owns_the_checks_it_runs) {
   irs::QueryProfile::OwnedChecks owned;
   owned.table = profile.WrapTableChecks(table);
   owned.columns = profile.WrapColumnChecks(columns);
-  auto planned = profile.WrapRoot(irs::memory::make_managed<FakeFill>(), 0, 0,
-                                  std::move(owned));
+  irs::PlanMemory memory;
+  auto planned =
+    profile.WrapRoot(memory, memory.Make<FakeFill>(), 0, 0, std::move(owned));
   std::array<irs::doc_id_t, 1> docs{2};
   EXPECT_EQ(1, table->Narrow(docs.data(), nullptr, 1));
   std::array<irs::doc_id_t, 2> more{2, 3};

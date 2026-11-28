@@ -40,14 +40,15 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
 struct DocRemap {
-  explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
+  explicit DocRemap(TrackedAllocator<> alloc) : id_map{alloc} {}
 
   doc_id_t base_id = doc_limits::invalid();
-  ManagedVector<doc_id_t> id_map;
+  TrackedVector<doc_id_t> id_map;
 
   bool IsMasked(doc_id_t src) const noexcept {
     SDB_ASSERT(id_map.empty() || src < id_map.size());
@@ -68,19 +69,21 @@ class MergeWriter : public util::Noncopyable {
   using FlushProgress = std::function<bool()>;
 
   struct ReaderCtx {
-    ReaderCtx(const SubReader* reader, IResourceManager& rm) noexcept;
-    ReaderCtx(const SubReader& reader, IResourceManager& rm) noexcept
-      : ReaderCtx{&reader, rm} {}
+    ReaderCtx(const SubReader* reader, TrackedAllocator<> alloc) noexcept;
+    ReaderCtx(const SubReader& reader, TrackedAllocator<> alloc) noexcept
+      : ReaderCtx{&reader, alloc} {}
 
     const SubReader* reader;
     DocRemap remap;
   };
 
   MergeWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
-              std::string_view root, const SegmentWriterOptions& options)
+              std::string_view root, const SegmentWriterOptions& options,
+              TrackedAllocator<> alloc)
     : _fs{fs},
       _root{root},
-      _readers{{IResourceManager::gNoop}},
+      _alloc{alloc},
+      _readers{alloc},
       _scorer{options.scorer},
       _db{db},
       _field_options{options.field_options},
@@ -93,7 +96,7 @@ class MergeWriter : public util::Noncopyable {
   void Reset(Iterator begin, Iterator end) {
     _readers.reserve(_readers.size() + std::distance(begin, end));
     while (begin != end) {
-      _readers.emplace_back(*begin++, _readers.get_allocator().Manager());
+      _readers.emplace_back(*begin++, _alloc);
     }
   }
 
@@ -115,7 +118,8 @@ class MergeWriter : public util::Noncopyable {
  private:
   duckdb::FileSystem& _fs;
   std::string _root;
-  ManagedVector<ReaderCtx> _readers;
+  TrackedAllocator<> _alloc;
+  TrackedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.

@@ -102,6 +102,7 @@ class ColReader final {
 
   duckdb::DatabaseInstance* _db;
   duckdb::shared_ptr<duckdb::InputFile> _file;
+  LocalBudget _budget{gRootBudget};
   ReadContext _ctx;
   const ColReader* _base = nullptr;
   std::vector<std::unique_ptr<ColumnReader>> _owned;

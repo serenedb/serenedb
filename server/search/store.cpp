@@ -411,10 +411,11 @@ std::vector<OwnSegment> Store::OpenFlushed(
   return segments;
 }
 
-Store::Piece Store::StartPiece() {
+Store::Piece Store::StartPiece(irs::MemoryBudget& memory) {
   SDB_ASSERT(_piece_writer);
   Piece piece{.trx = _piece_writer->GetBatch(), .id = _writer->NextSegmentId()};
   piece.trx.SetHot(piece.id);
+  piece.trx.SetMemory(memory);
   return piece;
 }
 
@@ -715,9 +716,10 @@ catalog::RecordBuffer Store::SnapshotRecord(const TableState& state,
       (uint64_t{unit->docs} + STANDARD_VECTOR_SIZE - 1) / STANDARD_VECTOR_SIZE;
     rows.scan = [unit, readers = std::move(readers),
                  types = std::move(types)](ChunkVisit visit) {
+      irs::LocalBudget budget{irs::gRootBudget};
       std::optional<irs::ReadContext> ctx;
       if (const auto* columns = unit->reader->GetColReader()) {
-        ctx.emplace(*columns);
+        ctx.emplace(*columns, irs::TrackedAllocator<>{budget});
       }
       std::vector<irs::ColumnReader::ScanState> scans;
       scans.reserve(readers.size());
@@ -913,9 +915,13 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
     CommitReplace(ids, folded, std::move(added), std::move(merged.maps), 0,
                   /*logged=*/true);
   } catch (const std::exception& e) {
-    co_return absl::InternalError(
-      absl::StrCat("compaction of table ", _id,
-                   " failed: ", duckdb::ErrorData{e}.RawMessage()));
+    const duckdb::ErrorData error{e};
+    auto message =
+      absl::StrCat("compaction of table ", _id, " failed: ", error.RawMessage());
+    if (error.Type() == duckdb::ExceptionType::OUT_OF_MEMORY) {
+      co_return absl::ResourceExhaustedError(std::move(message));
+    }
+    co_return absl::InternalError(std::move(message));
   }
   co_return absl::OkStatus();
 }
@@ -1514,7 +1520,7 @@ void Store::ScheduleRecovery(duckdb::ClientContext& context,
 
 std::shared_ptr<const irs::SegmentReaderImpl> Store::ReplayPiece(
   duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks) {
-  auto piece = StartPiece();
+  auto piece = StartPiece(irs::gRootBudget);
   uint64_t rows = 0;
   {
     const auto sink = connector::MakeSearchTableInsertSink(

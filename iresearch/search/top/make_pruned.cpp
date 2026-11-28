@@ -56,7 +56,7 @@ Root::ptr PinnedDisjunction(const BooleanQuery& query, const Context& ctx) {
 Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   const auto merge = query.MergeType();
   if (!PruneByBounds(ctx) || merge != ScoreMergeType::Sum ||
-      query.Absorbed(ctx.fetcher) != 0) {
+      query.Absorbed(ctx.memory, ctx.fetcher) != 0) {
     return {};
   }
   const auto& segment = query.Segment();
@@ -101,7 +101,7 @@ Root::ptr MakeDenseConjunction(const BooleanQuery& query, const Context& ctx) {
   const std::span must = query.Terms(Occur::Must);
   const std::span must_filters = query.Queries(Occur::Must);
   if (PruneByBounds(ctx) || merge != ScoreMergeType::Sum ||
-      query.Absorbed(ctx.fetcher) != 0 || !must_filters.empty() ||
+      query.Absorbed(ctx.memory, ctx.fetcher) != 0 || !must_filters.empty() ||
       !query.Terms(Occur::Should).empty() ||
       !query.Queries(Occur::Should).empty() ||
       !irs::detail::DenseConjunction(

@@ -22,8 +22,9 @@
 
 namespace irs::detail {
 
-void FillBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
-                doc_id_t docs_count, BitsetStorage& bits) {
+void ReadBuckets(PlanMemory& memory, BitsetBuckets& buckets,
+                 const duckdb::InputFile& doc, doc_id_t docs_count,
+                 BitsetStorage& bits) {
   auto* const words = bits.Words();
   const auto seed = buckets.Seed(docs_count);
   Resolve(doc, [&]<typename Input> {
@@ -41,7 +42,7 @@ void FillBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
     std::optional<BitsetStorage> scratch;
     const auto open_scratch = [&]() -> uint64_t* {
       if (!scratch) {
-        scratch.emplace(docs_count);
+        scratch.emplace(memory.Scratch(), docs_count);
       } else {
         std::fill_n(scratch->Words(), scratch->Alloc(), uint64_t{0});
       }

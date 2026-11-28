@@ -27,12 +27,6 @@
 
 namespace irs::term_dict {
 
-BlockStore::~BlockStore() {
-  if (_reserved != 0) {
-    _buffers->FreeReservedMemory(_reserved);
-  }
-}
-
 void BlockStore::Open(const duckdb::InputFile* in,
                       duckdb::BufferManager& buffers) {
   _in = in;
@@ -114,7 +108,6 @@ void BlockStore::Bind(const TermsMeta& terms) {
                       BlockOffset(blocks - 1) >= _blocks_end)) {
     Corrupted("block directory");
   }
-  Account(_pages.capacity() * sizeof(uint32_t));
 }
 
 }  // namespace irs::term_dict

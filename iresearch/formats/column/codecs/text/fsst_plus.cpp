@@ -51,6 +51,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text::fsst_plus {
 namespace {
@@ -63,9 +64,25 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : Base{kCodec, data.type, dedup, data.tuning.strings,
-           data.params.segment_target},
-      _codec{data.Get<fsst::SharedEncoder<fsst::Fsst8, kCodec>>().encoder} {}
+    : Base{data.alloc,          kCodec,
+           data.type,           dedup,
+           data.tuning.strings, data.params.segment_target},
+      _codec{data.Get<fsst::SharedEncoder<fsst::Fsst8, kCodec>>().encoder},
+      _encoded{data.alloc},
+      _prefixes{data.alloc},
+      _side{data.alloc},
+      _encoded_lengths{data.alloc},
+      _codes{data.alloc},
+      _shared{data.alloc},
+      _ids{data.alloc},
+      _ends{data.alloc},
+      _lcp{data.alloc},
+      _tree{data.alloc},
+      _order{data.alloc},
+      _size{data.alloc},
+      _saved{data.alloc},
+      _whole{data.alloc},
+      _ranges{data.alloc} {}
 
   void FinalizeCompress();
 
@@ -90,21 +107,21 @@ class CompressionState final : public SortedCompressionState<Rows> {
   void Cleave(uint32_t first_entry);
 
   fsst::Encoder<fsst::Fsst8>& _codec;
-  std::string _encoded;
-  std::string _prefixes;
-  std::string _side;
-  std::vector<uint32_t> _encoded_lengths;
-  std::vector<std::string_view> _codes;
-  std::vector<uint32_t> _shared;
-  std::vector<uint32_t> _ids;
-  std::vector<uint32_t> _ends;
-  std::vector<uint32_t> _lcp;
-  std::vector<Node> _tree;
-  std::vector<uint32_t> _order;
-  std::vector<uint32_t> _size;
-  std::vector<uint64_t> _saved;
-  std::vector<uint8_t> _whole;
-  std::vector<Range> _ranges;
+  TrackedString _encoded;
+  TrackedString _prefixes;
+  TrackedString _side;
+  TrackedVector<uint32_t> _encoded_lengths;
+  TrackedVector<std::string_view> _codes;
+  TrackedVector<uint32_t> _shared;
+  TrackedVector<uint32_t> _ids;
+  TrackedVector<uint32_t> _ends;
+  TrackedVector<uint32_t> _lcp;
+  TrackedVector<Node> _tree;
+  TrackedVector<uint32_t> _order;
+  TrackedVector<uint32_t> _size;
+  TrackedVector<uint64_t> _saved;
+  TrackedVector<uint8_t> _whole;
+  TrackedVector<Range> _ranges;
 };
 
 class Prefixes {
@@ -178,8 +195,13 @@ struct Scan {
   using Fetch = fsst_plus::Fetch;
 
   template<typename Frames>
-  Scan(const ColumnSegment&, const Frames& s)
-    : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
+  Scan(const ColumnSegment& segment, const Frames& s)
+    : ids{s.base + s.header.off_lcps, s.header.lcp_width},
+      groups{segment.ctx.Allocator()},
+      heap{segment.ctx.Allocator()},
+      prefix_ends{segment.ctx.Allocator()},
+      entry_decoded{segment.ctx.Allocator()},
+      probe{segment.ctx.Allocator()} {
     if (!prefixes.Open(SymbolTable(s.header, s.base), s.header.dictionary_size,
                        decoder)) [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
@@ -323,14 +345,16 @@ struct Scan {
   Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
-  std::string heap;
-  std::vector<uint64_t> prefix_ends;
-  std::vector<uint8_t> entry_decoded;
+  TrackedString heap;
+  TrackedVector<uint64_t> prefix_ends;
+  TrackedVector<uint8_t> entry_decoded;
   uint64_t entry_heap_bytes = 0;
-  std::string probe;
+  TrackedString probe;
 };
 
 struct Fetch {
+  explicit Fetch(TrackedAllocator<> alloc) : groups{alloc}, buf{alloc} {}
+
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
     groups.Clear();
@@ -400,7 +424,7 @@ struct Fetch {
   Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
-  std::string buf;
+  TrackedString buf;
   uint64_t walked = 0;
 };
 
@@ -415,7 +439,7 @@ size_t SharedCodes(std::string_view a, std::string_view b) noexcept {
   return n;
 }
 
-void AppendU32(std::string& out, uint32_t value) {
+void AppendU32(TrackedString& out, uint32_t value) {
   char bytes[sizeof(uint32_t)];
   duckdb::Store<uint32_t>(value, duckdb::data_ptr_cast(bytes));
   out.append(bytes, sizeof(bytes));

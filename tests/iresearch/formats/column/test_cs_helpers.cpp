@@ -32,12 +32,14 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
+#include "tests_shared.hpp"
+
 namespace irs::tests {
 
 std::unique_ptr<ColWriter> MakeCsWriter(const ::tests::IndexDir& dir,
                                         std::string_view segment_name) {
   return std::make_unique<ColWriter>(::irs::DuckDBEngine::Instance().instance(),
-                                     dir.Tracker(segment_name));
+                                     dir.Tracker(segment_name), ::TestAlloc());
 }
 
 std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
@@ -61,7 +63,7 @@ ColReader OpenColReader(const ::tests::IndexDir& dir,
 }
 
 uint64_t ColFileId(ColReader& reader, const ColumnReader& col) {
-  ReadContext ctx{reader};
+  ReadContext ctx{reader, ::TestAlloc()};
   const auto segment = col.OpenSegment(col.Locate(0, BlockWindow{}).block, ctx);
   return segment->cache_slot.file_id;
 }
@@ -101,7 +103,7 @@ void AppendNullBlob(ColumnWriter& cw, doc_id_t doc) {
 bool VisitBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
                      const std::function<bool(doc_id_t, bytes_view)>& visitor) {
   duckdb::Vector batch{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
-  ReadContext ctx{cs_reader};
+  ReadContext ctx{cs_reader, ::TestAlloc()};
   auto state = column.InitScan(ctx);
   for (uint64_t row_pos = 0; row_pos < column.RowCount();) {
     const auto take = std::min<duckdb::idx_t>(column.RowCount() - row_pos,

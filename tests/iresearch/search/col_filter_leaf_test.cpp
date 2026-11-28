@@ -39,7 +39,9 @@ class ColFilterLeafTestCase : public tests::FilterTestCaseBase {
  protected:
   static Docs Members(const irs::Filter& filter,
                       const irs::SubReader& segment) {
-    irs::ColFilterLeaf leaf{filter, segment};
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    irs::ColFilterLeaf leaf{query_memory, plan_memory, filter, segment};
     const auto end =
       irs::doc_limits::min() + static_cast<irs::doc_id_t>(segment.docs_count());
     Docs docs;

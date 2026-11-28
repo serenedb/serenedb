@@ -29,6 +29,7 @@
 #include <chrono>
 #include <core_functions/array_kernels.hpp>
 #include <cstring>
+#include <deque>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -58,6 +59,7 @@
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/topic.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -160,8 +162,11 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
 }
 
 struct HealScratch {
-  std::vector<HnswCandidate> pool;
-  std::vector<uint32_t> stack;
+  explicit HealScratch(TrackedAllocator<> alloc) noexcept
+    : pool{alloc}, stack{alloc}, seen{alloc}, walked{alloc} {}
+
+  TrackedVector<HnswCandidate> pool;
+  TrackedVector<uint32_t> stack;
   HnswVisited seen;
   HnswVisited walked;
 };
@@ -236,7 +241,7 @@ void HealNode(HnswGraphWriter& graph, const HnswGraph& src_graph,
 template<typename Fn>
 void ForEachVectorBatch(const ColumnReader& col, ReadContext& ctx,
                         uint64_t rows, Fn&& fn) {
-  ColumnReader::VectorScratch scratch{col.Type()};
+  ColumnReader::VectorScratch scratch{col.Type(), ctx.Allocator()};
   auto scan = col.InitScan(ctx);
   for (uint64_t done = 0; done < rows;) {
     const auto take = static_cast<size_t>(
@@ -301,11 +306,12 @@ uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
   return delivered;
 }
 
-std::vector<float> LoadVectors(const ColumnReader& col, ReadContext& ctx,
-                               uint64_t rows, uint32_t d, bool normalize,
-                               std::span<uint8_t> valid,
-                               std::vector<float>& buf) {
-  std::vector<float> vectors(static_cast<size_t>(rows) * d);
+TrackedVector<float> LoadVectors(const ColumnReader& col, ReadContext& ctx,
+                                 uint64_t rows, uint32_t d, bool normalize,
+                                 std::span<uint8_t> valid,
+                                 std::vector<float>& buf,
+                                 TrackedAllocator<> alloc) {
+  TrackedVector<float> vectors(static_cast<size_t>(rows) * d, alloc);
   ScanVectors(col, ctx, rows, d, normalize, buf,
               [&](const float* src, size_t n, uint64_t first,
                   const duckdb::ValidityMask& mask) {
@@ -326,16 +332,23 @@ inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
 bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                   uint32_t d, bool normalize, QuantizerWriter& qw,
                   byte_type* codes, uint32_t record_size,
-                  std::vector<uint8_t>& valid, const AnnBuildEnv* env) {
+                  TrackedVector<uint8_t>& valid, const AnnBuildEnv* env,
+                  MemoryBudget& parent) {
   AnnCrew crew{env, static_cast<uint32_t>(std::clamp<uint64_t>(
                       rows * qw.EncodeWidth() / kHnswMinRowsPerEncoder, 1,
                       kHnswMaxWorkers))};
-  std::vector<std::unique_ptr<QuantizerWriter>> spare;
+  struct Spare {
+    explicit Spare(MemoryBudget& parent) : budget{parent} {}
+
+    LocalBudget budget;
+    std::unique_ptr<QuantizerWriter> writer;
+  };
+  std::deque<Spare> spare;
   bool clonable = true;
 
   std::vector<float> owned;
   std::vector<yaclib::FutureOn<>> runs;
-  ColumnReader::VectorScratch scratch{col.Type()};
+  ColumnReader::VectorScratch scratch{col.Type(), ctx.Allocator()};
   auto scan = col.InitScan(ctx);
   std::atomic<bool> ok{true};
 
@@ -363,12 +376,13 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
 
     const uint32_t held = crew.Take();
     while (clonable && spare.size() + 1 < held) {
-      auto clone = qw.CloneForEncode();
-      if (!clone) {
+      auto& slot = spare.emplace_back(parent);
+      slot.writer = qw.CloneForEncode(TrackedAllocator<>{slot.budget});
+      if (!slot.writer) {
+        spare.pop_back();
         clonable = false;
         break;
       }
-      spare.push_back(std::move(clone));
     }
     const size_t parts = spare.size() + 1;
     const size_t n = take;
@@ -388,7 +402,7 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
           }
         }
       }
-      auto& writer = w == 0 ? qw : *spare[w - 1];
+      auto& writer = w == 0 ? qw : *spare[w - 1].writer;
       if (!writer.EncodeInto(codes + (done + lo) * size_t{record_size},
                              vecs + lo * size_t{d}, hi - lo)) {
         ok.store(false, std::memory_order_relaxed);
@@ -436,11 +450,11 @@ struct HnswCodeBuildDist {
   uint32_t d = 0;
   std::span<const float> pair_terms;
   std::shared_ptr<const QuantizerCodebook> query_book;
-  std::unique_ptr<QuantizerReader> query_reader;
+  QuantizerReader::ptr query_reader;
   std::vector<float> decoded_query;
   bool symmetric = false;
   std::shared_ptr<const QuantizerCodebook> pair_book;
-  std::unique_ptr<QuantizerReader> pair_reader;
+  QuantizerReader::ptr pair_reader;
   std::vector<float> decoded_pair;
   uint32_t pair_key = kHnswInvalidNode;
   const float* window = nullptr;
@@ -525,7 +539,7 @@ struct HnswCodeDistFactory {
     return dec && dist.query_reader->SetQuery(dist.decoded_query);
   }
 
-  bool PreparePairTerms(uint64_t rows, std::vector<float>& terms) const {
+  bool PreparePairTerms(uint64_t rows, TrackedVector<float>& terms) const {
     auto reader = MakeReader();
     if (!reader->SupportsPairScores()) {
       return false;
@@ -542,12 +556,12 @@ struct HnswCodeDistFactory {
     dist.symmetric = !pair_terms.empty();
     dist.decoded_query.assign(d, 0.f);
     dist.query_book = stats->MakeBuildCodebook(dist.decoded_query);
-    dist.query_reader = MakeQuantizerReader(dist.query_book);
+    dist.query_reader = MakeQuantizerReader(nullptr, dist.query_book);
     dist.query_reader->StartCluster(centroid);
     if (!dist.symmetric) {
       dist.decoded_pair.assign(d, 0.f);
       dist.pair_book = stats->MakeBuildCodebook(dist.decoded_pair);
-      dist.pair_reader = MakeQuantizerReader(dist.pair_book);
+      dist.pair_reader = MakeQuantizerReader(nullptr, dist.pair_book);
       dist.pair_reader->StartCluster(centroid);
     }
     dist.SetWindow(resident, 0, resident ? rows : 0);
@@ -555,21 +569,19 @@ struct HnswCodeDistFactory {
   }
 
  private:
-  std::unique_ptr<QuantizerReader> MakeReader() const {
+  QuantizerReader::ptr MakeReader() const {
     std::vector<float> scratch(d, 0.f);
     auto book = stats->MakeBuildCodebook(scratch);
-    auto reader = MakeQuantizerReader(book);
+    auto reader = MakeQuantizerReader(nullptr, book);
     reader->StartCluster(centroid);
     return reader;
   }
 };
 
-HnswCodeDistFactory MakeCodeFactory(const bstring& codes, uint32_t record_size,
-                                    const QuantizerStats& stats,
-                                    const std::vector<float>& centroid,
-                                    uint32_t d, const float* resident,
-                                    uint64_t rows,
-                                    std::vector<float>& pair_terms) {
+HnswCodeDistFactory MakeCodeFactory(
+  std::span<const byte_type> codes, uint32_t record_size,
+  const QuantizerStats& stats, const std::vector<float>& centroid, uint32_t d,
+  const float* resident, uint64_t rows, TrackedVector<float>& pair_terms) {
   HnswCodeDistFactory factory{
     .codes = codes.data(),
     .record_size = record_size,
@@ -598,7 +610,11 @@ struct HnswInsertJob {
       _rows{rows},
       _nodes{nodes},
       _sync{workers * graph.M()},
-      _slots(workers) {}
+      _slots{workers} {}
+
+  uint32_t Workers() const noexcept {
+    return static_cast<uint32_t>(_slots.size());
+  }
 
   void SetWindow(const float* base, uint32_t first, uint32_t count) noexcept {
     _window = {.base = base, .first = first, .count = count};
@@ -614,12 +630,12 @@ struct HnswInsertJob {
     _cursor.store(0, std::memory_order_relaxed);
   }
 
-  void RunWorker(size_t worker) noexcept {
+  void RunWorker(size_t worker) {
     RunWorker(worker, [] {});
   }
 
   template<typename Between>
-  void RunWorker(size_t worker, Between&& between) noexcept {
+  void RunWorker(size_t worker, Between&& between) {
     auto begin = _cursor.fetch_add(kHnswInsertGranule);
     if (begin >= _nodes.size()) {
       return;
@@ -646,8 +662,12 @@ struct HnswInsertJob {
   };
 
   struct WorkerSlot {
-    explicit WorkerSlot(typename Factory::Dist d) : dist{std::move(d)} {}
+    explicit WorkerSlot(typename Factory::Dist d, MemoryBudget& parent)
+      : budget{parent},
+        dist{std::move(d)},
+        scratch{TrackedAllocator<>{budget}} {}
 
+    LocalBudget budget;
     typename Factory::Dist dist;
     HnswBuildScratch scratch;
   };
@@ -655,7 +675,8 @@ struct HnswInsertJob {
   WorkerSlot& Slot(size_t worker) {
     auto& slot = _slots[worker];
     if (!slot) {
-      slot = std::make_unique<WorkerSlot>(_factory.Make());
+      slot = std::make_unique<WorkerSlot>(_factory.Make(),
+                                          _graph.Allocator().Budget().Parent());
       slot->scratch.search.visited.Reset(
         _rows, HnswWalkVisits(_ef, _graph.M0()), HnswWalks::Many);
       if (_window.base) {
@@ -676,9 +697,9 @@ struct HnswInsertJob {
   std::vector<std::unique_ptr<WorkerSlot>> _slots;
 };
 
-std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
-                                std::span<const uint8_t> valid, uint32_t m,
-                                uint64_t seed) {
+TrackedVector<uint32_t> SeedGraph(HnswGraphWriter& graph,
+                                  std::span<const uint8_t> valid, uint32_t m,
+                                  uint64_t seed) {
   const auto rows = valid.size();
   graph.Reset(rows, m);
 
@@ -702,12 +723,12 @@ std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
       entry = node;
     }
   }
+  TrackedVector<uint32_t> nodes{graph.Allocator()};
   if (entry == kHnswInvalidNode) {
-    return {};
+    return nodes;
   }
   graph.SetEntryPoint(entry);
 
-  std::vector<uint32_t> nodes;
   nodes.reserve(rows);
   for (size_t i = 0; i < rows; ++i) {
     if (valid[i] == 0 || static_cast<uint32_t>(i) == entry) {
@@ -730,7 +751,7 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
     crew.CanGrow() ? std::min<size_t>(nodes.size(), warmup) : nodes.size();
   {
     auto dist = factory.Make();
-    HnswBuildScratch scratch;
+    HnswBuildScratch scratch{graph.Allocator()};
     scratch.search.visited.Reset(rows, HnswWalkVisits(ef, graph.M0()),
                                  HnswWalks::Many);
     for (size_t i = 0; i < serial; ++i) {
@@ -744,6 +765,7 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
 
   HnswInsertJob<Factory> job{graph,       factory, ef, nodes.subspan(serial),
                              crew.Want(), rows};
+  crew.Limit(job.Workers());
   const auto work = [&job](size_t w) { job.RunWorker(w); };
   crew.Spawn(work);
   job.RunWorker(0, [&] { crew.Grow(work); });
@@ -765,7 +787,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   const auto src_rows = src_graph.Size();
   const auto rows = valid.size();
 
-  std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
+  TrackedVector<uint32_t> remap(src_rows, kHnswInvalidNode, graph.Allocator());
   uint64_t rank = 0;
   auto mask = MakeGenericDocsMask(donor.reader->docs_mask());
   uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
@@ -867,10 +889,10 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   }
 
   auto dist = factory.Make();
-  HnswBuildScratch scratch;
+  HnswBuildScratch scratch{graph.Allocator()};
   scratch.search.visited.Reset(
     rows, HnswWalkVisits(ef_construction, graph.M0()), HnswWalks::Many);
-  HealScratch heal;
+  HealScratch heal{graph.Allocator()};
   heal.seen.Reset(rows, HnswWalkVisits(graph.M0(), graph.M0()),
                   HnswWalks::Many);
   heal.walked.Reset(src_rows, HnswWalkVisits(graph.M0(), graph.M0()),
@@ -887,7 +909,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
     graph.SetEntryPoint(delta_entry);
   }
 
-  std::vector<uint32_t> nodes;
+  TrackedVector<uint32_t> nodes{graph.Allocator()};
   nodes.reserve(rows);
   for (size_t i = 0; i < rows; ++i) {
     if ((i >= donor.out_base && i < donor_end) || valid[i] == 0 ||
@@ -941,6 +963,7 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
                  nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
   HnswInsertJob<Factory> job{graph, factory,     ef_construction,
                              {},    crew.Want(), rows};
+  crew.Limit(job.Workers());
   const auto work = [&job](size_t w) { job.RunWorker(w); };
 
   auto run_span = [&](std::span<const uint32_t> span, bool parallel) {
@@ -957,8 +980,10 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
     crew.Join();
   };
 
-  std::vector<float> window;
-  window.reserve(static_cast<size_t>(kHnswOriginalsWindow) * d);
+  const auto window_rows =
+    static_cast<size_t>(std::min<uint64_t>(kHnswOriginalsWindow, rows));
+  TrackedVector<float> window{graph.Allocator()};
+  window.reserve(window_rows * d);
   std::vector<float> batch_buf;
   size_t next = 0;
   uint64_t warmed = 0;
@@ -986,15 +1011,15 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
   ScanVectors(*src.col, *src.ctx, rows, d, src.normalize, batch_buf,
               [&](const float* src_rows, size_t n, uint64_t first,
                   const duckdb::ValidityMask&) {
+                if (const auto have = window.size() / d;
+                    have != 0 && have + n > window_rows) {
+                  flush_window(win_first, static_cast<uint32_t>(have));
+                  window.clear();
+                }
                 if (window.empty()) {
                   win_first = static_cast<uint32_t>(first);
                 }
                 window.insert(window.end(), src_rows, src_rows + n * d);
-                const auto have = static_cast<uint32_t>(window.size() / d);
-                if (have >= kHnswOriginalsWindow) {
-                  flush_window(win_first, have);
-                  window.clear();
-                }
               });
   if (!window.empty()) {
     flush_window(win_first, static_cast<uint32_t>(window.size() / d));
@@ -1030,14 +1055,18 @@ bool PanoramaEnough(std::span<const uint8_t> valid, uint32_t d) {
   return static_cast<size_t>(absl::c_count(valid, uint8_t{1})) >= floor;
 }
 
-std::vector<float> TrainPanoramaBasis(const std::vector<float>& vectors,
+size_t PanoramaSampleRows(size_t rows, uint32_t d) noexcept {
+  return std::min(rows, std::max(kPanoramaTrainRows, size_t{8} * d));
+}
+
+std::vector<float> TrainPanoramaBasis(std::span<const float> vectors,
                                       std::span<const uint8_t> valid,
-                                      uint32_t d) {
+                                      uint32_t d, TrackedAllocator<> alloc) {
   const size_t rows = valid.size();
   const size_t want = std::max(kPanoramaTrainRows, size_t{8} * d);
   const size_t live = static_cast<size_t>(absl::c_count(valid, uint8_t{1}));
   const size_t step = std::max<size_t>(1, live / want);
-  std::vector<float> sample;
+  TrackedVector<float> sample{alloc};
   sample.reserve(std::min(live, want) * d);
   for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
        ++row) {
@@ -1052,7 +1081,7 @@ std::vector<float> TrainPanoramaBasis(const std::vector<float>& vectors,
   return std::move(TrainPcaRotation(sample.data(), sample.size() / d, d).A);
 }
 
-void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
+void RotateForPanorama(std::span<float> vectors, size_t rows, uint32_t d,
                        std::span<const float> basis, const AnnBuildEnv* env,
                        std::vector<float>& rotation) {
   SDB_ASSERT(basis.size() == size_t{d} * d);
@@ -1072,9 +1101,9 @@ void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
          });
 }
 
-std::vector<float> RowNorms(const std::vector<float>& vectors, size_t rows,
-                            uint32_t d) {
-  std::vector<float> norms(rows);
+TrackedVector<float> RowNorms(std::span<const float> vectors, size_t rows,
+                              uint32_t d, TrackedAllocator<> alloc) {
+  TrackedVector<float> norms(rows, alloc);
   for (size_t row = 0; row < rows; ++row) {
     norms[row] = faiss::fvec_norm_L2sqr(vectors.data() + row * d, d);
   }
@@ -1110,9 +1139,10 @@ void ForEachValidRun(std::span<const uint8_t> valid, Fn&& fn) {
 
 HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
                               const MergeDonor& donor,
-                              const std::vector<float>& vectors,
+                              std::span<const float> vectors,
                               std::span<const uint8_t> valid, uint32_t d,
-                              bool enough, const AnnBuildEnv* env) {
+                              bool enough, const AnnBuildEnv* env,
+                              TrackedAllocator<> alloc) {
   HnswBases::Basis basis;
   if (bases) {
     basis = bases->Find(field);
@@ -1124,7 +1154,7 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
   }
   if (!basis && enough) {
     basis = std::make_shared<const std::vector<float>>(
-      TrainPanoramaBasis(vectors, valid, d));
+      TrainPanoramaBasis(vectors, valid, d, alloc));
   }
   if (basis && bases) {
     basis = bases->Publish(field, std::move(basis));
@@ -1135,13 +1165,13 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
 
 void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
                       uint32_t record_size, size_t rows, uint32_t d,
-                      const AnnBuildEnv* env, std::vector<float>& tails) {
+                      const AnnBuildEnv* env, TrackedVector<float>& tails) {
   const uint32_t stride = HnswCodeTails(d);
   tails.assign(rows * stride, 0.f);
   FanOut(env, (rows + kPanoramaApplyRows - 1) / kPanoramaApplyRows,
          [&](size_t part) {
            const std::vector<float> zero(d, 0.f);
-           auto reader = MakeQuantizerReader(stats.MakeCodebook(zero));
+           auto reader = MakeQuantizerReader(nullptr, stats.MakeCodebook(zero));
            std::vector<float> row(d);
            const size_t first = part * kPanoramaApplyRows;
            const size_t last = std::min(rows, first + kPanoramaApplyRows);
@@ -1155,8 +1185,62 @@ void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
 
 }  // namespace
 
-HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
-  : _info{std::move(info)}, _bases{bases} {}
+HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases,
+                       TrackedAllocator<> alloc)
+  : AnnWriter{alloc},
+    _info{std::move(info)},
+    _bases{bases},
+    _graph{alloc},
+    _vectors{alloc},
+    _norms{alloc},
+    _tails{alloc},
+    _codes{alloc} {}
+
+AnnFlushBound HnswWriter::Bound(const AnnInfo& info, uint64_t rows) {
+  const auto m = std::max(info.m, 1U);
+  const auto d = static_cast<uint32_t>(info.d);
+  const auto metric = EffectiveQuantMetric(info.metric);
+  const bool quant = info.quant.kind != VectorQuantization::None;
+  const uint64_t floats = sizeof(float) * rows * d;
+  const auto upper = HnswUpperLevelsBound(rows, m);
+  const uint64_t graph =
+    rows * (sizeof(uint8_t) + sizeof(uint64_t) + 2 * m * sizeof(uint32_t)) +
+    sizeof(uint64_t) + m * sizeof(uint32_t) * upper +
+    (rows + 1) * sizeof(uint32_t) + (rows + upper) * sizeof(uint8_t);
+  const uint64_t codes = quant
+                           ? rows * QuantizerRecordSize(info.quant, d, metric,
+                                                        /*row_major=*/true)
+                           : 0;
+  const bool rotated =
+    quant ? RotatesCodes(info, d) : RotationApplies(info.metric, d);
+  const uint64_t tails =
+    quant && rotated ? sizeof(float) * rows * HnswCodeTails(d) : 0;
+  const uint64_t norms = !quant && rotated ? sizeof(float) * rows : 0;
+  const uint64_t basis =
+    rotated ? sizeof(float) * PanoramaSampleRows(rows, d) * d : 0;
+  uint64_t streamed = 0;
+  if (quant) {
+    const auto train =
+      QuantizerTrainSamples(info.quant, d, metric, rows, /*row_major=*/true);
+    streamed =
+      2 * sizeof(float) * rows +
+      sizeof(float) * std::min<uint64_t>(kHnswOriginalsWindow, rows) * d +
+      4096 * uint64_t{d};
+    if (train != QuantizerWriter::kTrainStreaming) {
+      streamed += sizeof(float) * std::min<uint64_t>(train, rows) * d;
+    }
+  }
+  const uint64_t seed = sizeof(uint32_t) * rows;
+  const uint64_t workers =
+    std::clamp<uint64_t>(rows / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers);
+  const uint64_t scratch =
+    (workers + 2) * HnswScratchBound(rows, info.ef_construction, 2 * m);
+  return {
+    .compute = rows + floats + codes + tails + norms + basis + streamed +
+               graph + seed + scratch,
+    .kept = graph + codes + tails + (quant ? 0 : floats + norms),
+  };
+}
 
 HnswWriter::~HnswWriter() = default;
 
@@ -1164,7 +1248,7 @@ std::shared_ptr<const QuantizerStats> HnswWriter::SerializeStats() {
   duckdb::MemoryStream blob;
   _qw->Serialize(blob);
   return MakeQuantizerStats(
-    _info.quant.kind, _d,
+    _alloc.Budget().Parent(), _info.quant.kind, _d,
     std::span<const byte_type>{
       irs::bytes_view{blob.GetData(), blob.GetPosition()}}
       .subspan(sizeof(uint64_t)),
@@ -1198,7 +1282,8 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
     if (needs_centroid) {
       _centroid.assign(_d, 0.f);
     }
-    std::vector<float> train_buf;
+    TrackedVector<float> train_buf{_alloc};
+    train_buf.reserve(std::min<uint64_t>(train_rows, _rows) * _d);
     const uint64_t sample =
       train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
     const uint64_t trained_rows = ScanValidVectors(
@@ -1224,11 +1309,10 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
       return false;
     }
     if (train_rows != 0) {
-      _qw->TrainParallel(
-        train_buf.data(), train_buf.size() / _d,
-        [env](size_t tasks, absl::FunctionRef<void(size_t)> task) {
-          FanOut(env, tasks, task);
-        });
+      _qw->TrainParallel(train_buf.data(), train_buf.size() / _d,
+                         [&](size_t tasks, TrainTask task) {
+                           FanOut(env, _alloc.Budget().Parent(), tasks, task);
+                         });
     }
     if (needs_centroid) {
       const float inv = 1.f / static_cast<float>(trained_rows);
@@ -1258,12 +1342,12 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     co_return {};
   }
 
-  std::vector<uint8_t> valid(_rows, 1);
+  TrackedVector<uint8_t> valid(_rows, 1, _alloc);
   std::vector<float> batch_buf;
   const bool normalize = _info.metric == VectorMetric::Cosine;
 
   if (_info.quant.kind != VectorQuantization::None) {
-    _qw = MakeQuantizerWriter(_info.quant, _d,
+    _qw = MakeQuantizerWriter(_alloc, _info.quant, _d,
                               EffectiveQuantMetric(_info.metric), 0,
                               /*row_major=*/true);
   }
@@ -1276,14 +1360,14 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
 
   if (_qw && RotatesCodes(_info, _d)) {
     auto vectors =
-      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, _alloc);
     const bool enough = PanoramaEnough(valid, _d);
     const auto basis = AcquireBasis(_bases, _info.index_id, donor, vectors,
-                                    valid, _d, enough, env);
+                                    valid, _d, enough, env, _alloc);
     if (basis && enough) {
       RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
       const auto stats = EncodeRotated(vectors, valid, env);
-      std::vector<float> pair_terms;
+      TrackedVector<float> pair_terms{_alloc};
       const auto factory = MakeCodeFactory(_codes, _record_size, *stats, {}, _d,
                                            vectors.data(), _rows, pair_terms);
       co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
@@ -1302,16 +1386,17 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _record_size = _qw->BlockSetting().record_size;
     _codes.resize(static_cast<size_t>(_rows) * _record_size);
     encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
-                            _record_size, valid, env);
+                            _record_size, valid, env, _alloc.Budget().Parent());
   } else if (!_qw) {
-    _vectors = LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
+    _vectors =
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, _alloc);
     if (RotationApplies(_info.metric, _d)) {
       const bool enough = PanoramaEnough(valid, _d);
       const auto basis = AcquireBasis(_bases, _info.index_id, donor, _vectors,
-                                      valid, _d, enough, env);
+                                      valid, _d, enough, env, _alloc);
       if (basis && enough) {
         RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
-        _norms = RowNorms(_vectors, valid.size(), _d);
+        _norms = RowNorms(_vectors, valid.size(), _d, _alloc);
       }
     }
   }
@@ -1322,7 +1407,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
 
   if (stats && !raw_build) {
-    std::vector<float> pair_terms;
+    TrackedVector<float> pair_terms{_alloc};
     const auto factory = MakeCodeFactory(
       _codes, _record_size, *stats, _centroid, _d, nullptr, _rows, pair_terms);
     const HnswOriginals originals{
@@ -1341,10 +1426,10 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     "raw-float build of ",
     _rows, " x ", _d, " vectors");
 
-  std::vector<float> build_vectors;
+  TrackedVector<float> build_vectors{_alloc};
   if (raw_build) {
     build_vectors =
-      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf, _alloc);
   }
   const float* base = raw_build ? build_vectors.data() : _vectors.data();
   yaclib::Future<> built;

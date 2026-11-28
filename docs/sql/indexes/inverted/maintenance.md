@@ -108,6 +108,12 @@ A table holds its committed rows in memory, indexed and searchable, together wit
 
 Lower `segment_memory_max` to cap that peak, raise it for larger segments and less compaction work.
 
+[`memory_limit`](../../../configuration/overview.md) caps the memory of all writes, index builds and merges together, on top of the buffer manager, and [`sdb_session_memory_limit`](../../../configuration/overview.md) caps what one session's statements hold. A write, `CREATE INDEX` or `VACUUM` that needs more fails with an out-of-memory error and leaves the table and its index as they were. A background compaction that doesn't fit fails without merging anything and counts in `num_failed_consolidations`; it is retried after its interval plus a delay that doubles with each failure in a row, up to 30 seconds.
+
+Before an `INSERT` or `UPDATE` builds the segment of its rows, and before it commits, it checks that the memory it expects to need is free, and fails with an out-of-memory error at once when it is not, before it writes anything. A text field with positions needs the most, up to 16 bytes per token against the one or two bytes per token the write itself holds; a vector field needs about the size of its vectors plus the graph or centroids its segment builds. Once the log holds a commit, the server applies it whatever memory it takes; if applying it fails, the server stops, and a restart replays the commit from the log.
+
+Replaying the write-ahead log at startup runs within `memory_limit`. When the replay needs more, the server does not start and reports `replaying the logs at startup does not fit in memory_limit`; raise `memory_limit` in the server configuration and start it again.
+
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
   WITH (segment_memory_max = 134217728);  -- 128 MB

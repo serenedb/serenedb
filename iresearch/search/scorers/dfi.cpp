@@ -238,8 +238,8 @@ ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter() const {
   return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>();
 }
 
-ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {
-  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+ScoreBoundSource::ptr DFI::PrepareScoreBoundSource(PlanMemory& memory) const {
+  return memory.Make<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
 bool DFI::Compatible(const ScorerOptions& persisted) const noexcept {

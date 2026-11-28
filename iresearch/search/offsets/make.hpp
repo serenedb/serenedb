@@ -25,6 +25,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/root.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
@@ -38,20 +39,21 @@ using Handles = detail::PhraseHandles;
 
 bool HandlesOf(const TermReader* field, Handles& out);
 
-Root::ptr MakePosting(const PostingMeta& meta, const Handles& handles);
+Root::ptr MakePosting(PlanMemory& memory, const PostingMeta& meta,
+                      const Handles& handles);
 
-Root::ptr Make(const FixedPhraseQuery& query);
-Root::ptr Make(const VariadicPhraseQuery& query);
-Root::ptr Make(const NGramSimilarityQuery& query);
+Root::ptr Make(PlanMemory& memory, const FixedPhraseQuery& query);
+Root::ptr Make(PlanMemory& memory, const VariadicPhraseQuery& query);
+Root::ptr Make(PlanMemory& memory, const NGramSimilarityQuery& query);
 
 template<detail::PhraseMatch M, typename Query>
 struct PhraseMaker {
-  static Root::ptr Make(const Query& query);
+  static Root::ptr Make(PlanMemory& memory, const Query& query);
 };
 
 template<detail::NGramMatch M>
 struct NGramMaker {
-  static Root::ptr Make(const NGramSimilarityQuery& query);
+  static Root::ptr Make(PlanMemory& memory, const NGramSimilarityQuery& query);
 };
 
 }  // namespace irs::offsets

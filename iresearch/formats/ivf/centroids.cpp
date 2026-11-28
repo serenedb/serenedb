@@ -42,6 +42,7 @@
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shuffle.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -55,6 +56,34 @@ constexpr size_t kClusterIters = 15;
 constexpr size_t kLeafClusterIters = 8;
 constexpr size_t kClusterRedos = 1;
 constexpr size_t kLayerRanges = 64;
+constexpr size_t kMaxRowsPerLeaf = 4;
+
+struct TrainShape {
+  size_t sample_size;
+  size_t tau;
+};
+
+TrainShape ShapeOf(size_t rows, const CentroidsBuildParams& params) noexcept {
+  const size_t t = params.posting_size;
+  SDB_ASSERT(t > 0);
+  size_t sample_size = params.sample_factor > 0
+                         ? static_cast<size_t>(params.sample_factor * rows)
+                         : (rows / t) * kTrainPointsPerLeaf;
+  sample_size = std::max<size_t>(sample_size, params.min_train_sample);
+  sample_size = std::min<size_t>(sample_size, kMaxTrainSample);
+  sample_size = std::min<size_t>(sample_size, rows);
+  const size_t tau =
+    rows == 0
+      ? t
+      : std::max<size_t>(
+          1, static_cast<size_t>(static_cast<double>(sample_size) / rows * t));
+  return {.sample_size = sample_size, .tau = tau};
+}
+
+size_t MaxClusterRows(size_t sample_size, size_t leaf_size) noexcept {
+  return kMaxRowsPerLeaf *
+         std::max<size_t>(1, (sample_size + leaf_size - 1) / leaf_size);
+}
 
 struct LayerLayout {
   size_t n_total;
@@ -86,11 +115,12 @@ struct LayerLayout {
   }
 };
 
-std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
-                                        uint64_t rows, uint32_t d,
-                                        ReadContext& ctx, uint64_t n_train,
-                                        uint32_t seed) {
-  std::vector<float> sample(static_cast<size_t>(n_train) * d);
+TrackedVector<float> GatherTrainingSample(const ColumnReader& vector_column,
+                                          uint64_t rows, uint32_t d,
+                                          ReadContext& ctx, uint64_t n_train,
+                                          uint32_t seed,
+                                          TrackedAllocator<> alloc) {
+  TrackedVector<float> sample(static_cast<size_t>(n_train) * d, alloc);
   pcg32 rng{seed};
   uint64_t seen = 0;
   const auto reservoir_sink = [&](uint64_t /*first*/, duckdb::idx_t n,
@@ -124,7 +154,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
     pcg32 seg_rng{seed};
     Shuffle<size_t>(order, seg_rng);
 
-    ColumnReader::VectorScratch scratch{vector_column.Type()};
+    ColumnReader::VectorScratch scratch{vector_column.Type(), ctx.Allocator()};
     auto scan = vector_column.InitScan(ctx);
     for (size_t i = 0; i < n_seg && seen < n_train; ++i) {
       const uint64_t w_begin = child->DataBlockFirstRow(order[i]);
@@ -163,6 +193,7 @@ struct BuildSettings {
   size_t max_fanout;
   VectorMetric metric;
   size_t niter;
+  TrackedAllocator<> alloc;
 
   bool IsLeaf(size_t sample_size) const noexcept {
     return sample_size <= posting_size;
@@ -200,11 +231,12 @@ size_t RemoveEmptyCentroids(std::vector<float>& centroids,
 
 auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
                    size_t n_clusters, VectorMetric metric, size_t niter,
-                   const float* rotation) {
+                   const float* rotation, TrackedAllocator<> alloc) {
   auto centroids = TrainCentroids(
-    metric, data.data(), data.size() / d, static_cast<uint32_t>(n_clusters),
-    static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter),
-    static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rotation);
+    alloc, metric, data.data(), data.size() / d,
+    static_cast<uint32_t>(n_clusters), static_cast<uint32_t>(d), kTrainSeed,
+    static_cast<uint32_t>(niter), static_cast<uint32_t>(kClusterRedos),
+    ClusteringAlgo::Auto, rotation);
   AssignNearestGrouped(metric, centroids, d, data, ids);
   RemoveEmptyCentroids(centroids, ids, d);
   return centroids;
@@ -221,7 +253,7 @@ void ForEachGroup(std::span<const size_t> ids, size_t n_groups, Fn&& fn) {
   }
 }
 
-void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
+void Build(TrackedVector<CentroidsBuilder::Node>& nodes, std::span<float> data,
            size_t d, std::span<size_t> ids, const BuildSettings& settings) {
   std::vector<float> rotation;
   const auto rotation_for = [&](size_t n, size_t k) -> const float* {
@@ -245,6 +277,15 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     .ids = ids,
   }};
 
+  const auto node_centroids = [&](const std::vector<float>& centroids) {
+    return TrackedVector<float>{centroids.begin(), centroids.end(),
+                                settings.alloc};
+  };
+  const auto node_children = [&](size_t rows) {
+    TrackedVector<size_t> children{settings.alloc};
+    children.reserve(rows);
+    return children;
+  };
   while (!centroids_build.empty()) {
     const auto entry = centroids_build.front();
     size_t sample_size = entry.sample.size() / d;
@@ -254,22 +295,26 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
         nodes[entry.parent].leafs++;
         nodes[entry.parent].children.emplace_back(0);
       } else if (sample_size > 0) {
-        auto centroids =
-          TrainCentroids(settings.metric, entry.sample.data(), sample_size,
-                         /*k=*/1, static_cast<uint32_t>(d), kTrainSeed,
-                         static_cast<uint32_t>(kLeafClusterIters),
-                         static_cast<uint32_t>(kClusterRedos),
-                         ClusteringAlgo::Auto, rotation_for(sample_size, 1));
-        nodes.emplace_back(CentroidsBuilder::Node{
-          .centroids = std::move(centroids), .children = {0}, .leafs = 1});
+        auto centroids = TrainCentroids(
+          settings.alloc, settings.metric, entry.sample.data(), sample_size,
+          /*k=*/1, static_cast<uint32_t>(d), kTrainSeed,
+          static_cast<uint32_t>(kLeafClusterIters),
+          static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto,
+          rotation_for(sample_size, 1));
+        auto& node = nodes.emplace_back(CentroidsBuilder::Node{
+          .centroids = node_centroids(centroids),
+          .children = node_children(1),
+          .leafs = 1,
+        });
+        node.children.push_back(0);
       }
       // centroid from parent will route to this posting
       continue;
     }
     const size_t n_clusters = settings.Fanout(sample_size);
-    auto centroids =
-      BuildAndSplit(entry.sample, d, entry.ids, n_clusters, settings.metric,
-                    settings.niter, rotation_for(sample_size, n_clusters));
+    auto centroids = BuildAndSplit(
+      entry.sample, d, entry.ids, n_clusters, settings.metric, settings.niter,
+      rotation_for(sample_size, n_clusters), settings.alloc);
     size_t n_built = centroids.size() / d;
 
     if (n_built == 1) {
@@ -294,8 +339,10 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     if (entry.parent < nodes.size()) {
       nodes[entry.parent].children.emplace_back(nodes.size());
     }
-    nodes.emplace_back(
-      CentroidsBuilder::Node{.centroids = std::move(centroids)});
+    nodes.emplace_back(CentroidsBuilder::Node{
+      .centroids = node_centroids(centroids),
+      .children = node_children(n_built),
+    });
     ForEachGroup(entry.ids, n_built, [&](size_t, size_t start, size_t count) {
       centroids_build.emplace_back(CentroidsEntry{
         .parent = nodes.size() - 1,
@@ -318,13 +365,14 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
 
 std::vector<CentroidsNode> CentroidsNode::Deserialize(
   duckdb::InputFileReader& in, size_t level, size_t d,
-  std::span<const size_t> starts, std::span<const size_t> sizes) {
+  std::span<const size_t> starts, std::span<const size_t> sizes,
+  TrackedAllocator<> alloc) {
   SDB_ASSERT(starts.size() == sizes.size());
   const auto layout = LayerLayout::Read(in, d);
   std::vector<CentroidsNode> nodes;
   nodes.reserve(starts.size());
   for (auto&& [start, size] : std::views::zip(starts, sizes)) {
-    CentroidsNode node{level, d};
+    CentroidsNode node{level, d, alloc};
     node.size = size;
 
     in.Seek(layout.CentroidPos(start, d));
@@ -393,7 +441,8 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
       bufs.centroids.push_back(std::move(pinned));
     }
     if (level > 0) {
-      auto& off = bufs.child_offsets.emplace_back(size + 1);
+      auto& off = bufs.child_offsets.emplace_back(
+        size + 1, bufs.child_offsets.get_allocator());
       in.Seek(layout.OffsetsPos(start));
       in.ReadData(reinterpret_cast<byte_type*>(off.data()),
                   (size + 1) * sizeof(size_t));
@@ -434,7 +483,8 @@ void IVFHeader::Serialize(duckdb::WriteStream& out) const {
 }
 
 CentroidsTree CentroidsTree::Deserialize(duckdb::InputFileReader& in,
-                                         uint64_t root_byte_size) {
+                                         uint64_t root_byte_size,
+                                         TrackedAllocator<> alloc) {
   const uint64_t start = in.Position();
   const auto& file = *in.File();
   file.Prefetch(start, root_byte_size);
@@ -443,7 +493,8 @@ CentroidsTree CentroidsTree::Deserialize(duckdb::InputFileReader& in,
   const size_t n_total_pos = static_cast<size_t>(in.Position());
   const size_t n_total = in.Read<uint64_t>();
   in.Seek(n_total_pos);
-  auto nodes = CentroidsNode::Deserialize(in, level, head.d, {0}, {n_total});
+  auto nodes =
+    CentroidsNode::Deserialize(in, level, head.d, {0}, {n_total}, alloc);
   auto node = std::move(nodes.front());
   const size_t next_level_offset = static_cast<size_t>(in.Position());
   file.Evict(start, root_byte_size);
@@ -452,8 +503,8 @@ CentroidsTree CentroidsTree::Deserialize(duckdb::InputFileReader& in,
 
 void CentroidsTree::Search(std::span<const float> query,
                            duckdb::InputFileReader& in, uint32_t nprobe,
-                           std::vector<uint32_t>& out_ids,
-                           std::vector<float>* out_centroids,
+                           TrackedVector<uint32_t>& out_ids,
+                           TrackedVector<float>* out_centroids,
                            uint32_t beam) const {
   if (_root.size == 0) {
     out_ids.push_back(0);
@@ -473,7 +524,8 @@ void CentroidsTree::Search(std::span<const float> query,
   Resolve(_head.metric, [&]<VectorMetric Metric>() {
     CentroidsNode::Search<Metric>(query, in, width, _root.level,
                                   std::span{&root_view, 1}, 0, _root.size,
-                                  layers, leaves);
+                                  layers, leaves,
+                                  TrackedAllocator<>{out_ids.get_allocator()});
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
     const auto by_dist_desc = [](const CentroidsNode::Candidate& l,
@@ -495,70 +547,74 @@ void CentroidsTree::Search(std::span<const float> query,
   });
 }
 
-void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
-                                 size_t max_fanout) {
+void CentroidsBuilder::BuildTree(TrackedVector<float> sample, size_t leaf_size,
+                                 size_t max_fanout, TrackedAllocator<> alloc) {
+  const size_t n = sample.size() / _d;
+  const auto posting_size = std::max<size_t>(1, leaf_size);
   BuildSettings settings{
-    .posting_size = std::max<size_t>(1, leaf_size),
+    .posting_size = posting_size,
     .max_fanout = max_fanout,
     .metric = _metric,
     .niter = kClusterIters,
+    .alloc = alloc,
   };
-  const size_t n = sample.size() / _d;
-  std::vector<size_t> ids(n);
+  TrackedVector<size_t> ids(n, alloc);
   if (_metric == VectorMetric::Cosine) {
     NormalizeRows(sample.data(), n, _d);
   }
+  _nodes.clear();
   Build(_nodes, sample, _d, ids, settings);
-  _row_bases.resize(_nodes.size());
+  _row_bases.assign(_nodes.size(), 0);
   for (size_t j = 0; j < _nodes.size(); ++j) {
     _row_bases[j] = _n_rows;
     _n_rows += _nodes[j].Rows(_d);
   }
 }
 
-CentroidsBuilder CentroidsBuilder::BuildFromSample(std::vector<float> sample,
-                                                   uint32_t d,
-                                                   VectorMetric metric,
-                                                   size_t leaf_size,
-                                                   size_t max_fanout) {
-  CentroidsBuilder builder;
+CentroidsBuilder CentroidsBuilder::BuildFromSample(
+  TrackedVector<float> sample, uint32_t d, VectorMetric metric,
+  size_t leaf_size, size_t max_fanout, TrackedAllocator<> alloc) {
+  CentroidsBuilder builder{alloc};
   builder._metric = metric;
   builder._d = d;
   builder.BuildTree(std::move(sample), leaf_size,
-                    max_fanout != 0 ? max_fanout : kMaxFanout);
+                    max_fanout != 0 ? max_fanout : kMaxFanout, alloc);
   return builder;
 }
 
 CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                                           ReadContext& ctx, size_t rows,
                                           VectorMetric metric, uint32_t d,
-                                          const CentroidsBuildParams& params) {
-  const size_t t = params.posting_size;
-  SDB_ASSERT(t > 0);
-
-  size_t sample_size = params.sample_factor > 0
-                         ? static_cast<size_t>(params.sample_factor * rows)
-                         : (rows / t) * kTrainPointsPerLeaf;
-  sample_size = std::max<size_t>(sample_size, params.min_train_sample);
-  sample_size = std::min<size_t>(sample_size, kMaxTrainSample);
-  sample_size = std::min<size_t>(sample_size, rows);
-
-  const size_t tau =
-    rows == 0
-      ? t
-      : std::max<size_t>(
-          1, static_cast<size_t>(static_cast<double>(sample_size) / rows * t));
-  auto sample =
-    GatherTrainingSample(vector_column, rows, d, ctx, sample_size, kTrainSeed);
-  return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);
+                                          const CentroidsBuildParams& params,
+                                          TrackedAllocator<> alloc) {
+  const auto shape = ShapeOf(rows, params);
+  auto sample = GatherTrainingSample(vector_column, rows, d, ctx,
+                                     shape.sample_size, kTrainSeed, alloc);
+  return BuildFromSample(std::move(sample), d, metric, shape.tau,
+                         params.max_fanout, alloc);
 }
 
 CentroidsBuilder CentroidsBuilder::CreateFromSample(
-  std::vector<float> sample, uint32_t d, VectorMetric metric,
+  TrackedVector<float> sample, uint32_t d, VectorMetric metric,
   const CentroidsBuildParams& params) {
   SDB_ASSERT(params.posting_size > 0);
+  const TrackedAllocator<> alloc{sample.get_allocator()};
   return BuildFromSample(std::move(sample), d, metric, params.posting_size,
-                         params.max_fanout);
+                         params.max_fanout, alloc);
+}
+
+CentroidsBound CentroidsBuilder::Bound(
+  size_t rows, uint32_t d, VectorMetric metric,
+  const CentroidsBuildParams& params) noexcept {
+  const auto shape = ShapeOf(rows, params);
+  const auto n = shape.sample_size;
+  const auto max_fanout =
+    params.max_fanout != 0 ? params.max_fanout : kMaxFanout;
+  return {
+    .sample_rows = n,
+    .cluster_rows = MaxClusterRows(n, shape.tau),
+    .train_bytes = TrainCentroidsBound(metric, n, max_fanout, d),
+  };
 }
 
 CentroidsSpan CentroidsBuilder::Serialize(duckdb::WriteStream& out) const {

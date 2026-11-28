@@ -36,6 +36,8 @@ namespace irs::codecs::text {
 
 template<typename Leaf>
 struct PlainFetch final : SegmentScanState {
+  explicit PlainFetch(TrackedAllocator<> alloc) : frames{alloc} {}
+
   void Reset(const ColumnSegment&) noexcept {}
 
   void Read(data_ptr_t, const idx_t* rows, idx_t count, duckdb::Vector&,

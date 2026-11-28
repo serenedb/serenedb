@@ -24,7 +24,7 @@
 
 namespace irs::detail {
 
-ScoreFunction MakeWindowScore(ScoreMergeType inner, const score_t* gathered,
-                              score_t constant = 0);
+ScoreFunction MakeWindowScore(PlanMemory& memory, ScoreMergeType inner,
+                              const score_t* gathered, score_t constant = 0);
 
 }  // namespace irs::detail

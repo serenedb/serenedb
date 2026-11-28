@@ -66,13 +66,14 @@ const ColumnReader* FilteredColumn(const ColumnReader& column,
   return DirectExtractLeaf(column, spec.extract_path, *spec.extract_type);
 }
 
-ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
-  : _query{filter.PrepareSegment(segment, {})} {
+ColFilterLeaf::ColFilterLeaf(QueryMemory& query_memory, PlanMemory& plan_memory,
+                             const Filter& filter, const SubReader& segment)
+  : _query{filter.PrepareSegment(segment, {.memory = query_memory})} {
   if (QueryBuilder::IsEmpty(*_query)) {
     return;
   }
-  _set = std::make_unique<detail::LazyBitset>(detail::MakeDocSet(
-    _query.get(), static_cast<doc_id_t>(segment.docs_count())));
+  _set.emplace(detail::MakeDocSet(plan_memory, _query.get(),
+                                  static_cast<doc_id_t>(segment.docs_count())));
 }
 
 bool ColFilterLeaf::Contains(doc_id_t doc) {
@@ -109,7 +110,8 @@ irs::ColumnReader::VectorScratch& ColFilterStateCache::Scratch(
   const duckdb::TableFilter& filter, const duckdb::LogicalType& type) {
   auto& e = Find(filter);
   if (!e.scratch) {
-    e.scratch = std::make_unique<irs::ColumnReader::VectorScratch>(type);
+    e.scratch = std::make_unique<irs::ColumnReader::VectorScratch>(
+      type, TrackedAllocator<>{_budget});
   }
   SDB_ASSERT(e.scratch->vector.GetType() == type,
              "one pushed filter evaluates one column, whose type is fixed");
@@ -133,9 +135,16 @@ std::span<ColFilterLeaf> ColFilterStateCache::Leaves(
   std::span<const std::shared_ptr<const Filter>> leaves) {
   auto& e = Find(filter);
   e.leaves.clear();
+  if (e.query_memory) {
+    e.query_memory->Rewind();
+    e.plan_memory->Rewind();
+  } else {
+    e.query_memory = std::make_unique<QueryMemory>(*_memory);
+    e.plan_memory = std::make_unique<PlanMemory>(*_memory);
+  }
   e.leaves.reserve(leaves.size());
   for (const auto& leaf : leaves) {
-    e.leaves.emplace_back(*leaf, segment);
+    e.leaves.emplace_back(*e.query_memory, *e.plan_memory, *leaf, segment);
   }
   return e.leaves;
 }
@@ -158,6 +167,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
   _context = &context;
   _states = &states;
   _col_reader = &col_reader;
+  _read_ctx = &ctx;
   _cols.clear();
   _rows.clear();
   _cols.reserve(specs.size());
@@ -511,7 +521,7 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
       }
       if (!r.points[j]) {
         r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
-          *_col_reader, *reader, true);
+          *_col_reader, *reader, _read_ctx->Allocator(), true);
       }
       r.points[j]->FetchRow(row, vector, 0);
     }
@@ -602,9 +612,9 @@ bool ColFilterChain::AdmitRow(uint64_t row) {
   for (auto& f : _cols) {
     if (!f.point) {
       f.point = std::make_unique<irs::ColumnReader::PointReader>(
-        *_col_reader, *f.reader, true);
-      f.point_scratch =
-        std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
+        *_col_reader, *f.reader, _read_ctx->Allocator(), true);
+      f.point_scratch = std::make_unique<irs::ColumnReader::VectorScratch>(
+        f.reader->Type(), _read_ctx->Allocator());
       f.point_heap =
         !duckdb::TypeIsConstantSize(f.reader->Type().InternalType());
       auto& executor =
@@ -777,6 +787,7 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
 }
 
 void ColFilterChain::Rewind(irs::ReadContext& ctx) {
+  _read_ctx = &ctx;
   for (auto& f : _cols) {
     f.scan = f.reader->InitScan(ctx);
     f.scan.st.dynamic_filter = f.is_dynamic;

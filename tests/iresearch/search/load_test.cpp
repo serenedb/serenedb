@@ -310,7 +310,9 @@ size_t CompareEmitDocs(tests::LeadCursor& reference_iter, irs::docs::Root& root,
 
 struct IteratorFactory {
   std::string name;
-  std::function<irs::QueryBuilder::ptr(const irs::SubReader&)> prepare;
+  std::function<irs::QueryBuilder::ptr(irs::QueryMemory&,
+                                       const irs::SubReader&)>
+    prepare;
 };
 
 IteratorFactory QueryIterator(bench::Executor& executor,
@@ -318,10 +320,11 @@ IteratorFactory QueryIterator(bench::Executor& executor,
   return {
     .name = std::string{query},
     .prepare =
-      [&executor, query = std::string{query}](const irs::SubReader& segment) {
+      [&executor, query = std::string{query}](irs::QueryMemory& memory,
+                                              const irs::SubReader& segment) {
         auto filter = executor.ParseFilter(query, false);
         SDB_ASSERT(filter);
-        return filter->PrepareSegment(segment, {});
+        return filter->PrepareSegment(segment, {.memory = memory});
       },
   };
 }
@@ -356,14 +359,17 @@ void TestAdvanceVsFillBlock(const irs::CompositeReader& reader,
     reader, factories, window_sizes,
     [](const auto& /*reader*/, const auto& segment, const auto& factory,
        auto max_doc, auto window_size) {
-      auto query = factory.prepare(segment);
+      irs::QueryMemory query_memory;
+      irs::PlanMemory plan_memory;
+      auto query = factory.prepare(query_memory, segment);
       ASSERT_NE(nullptr, query);
-      auto lead = query->PlanLead({});
+      auto lead = query->PlanLead({.memory = plan_memory});
       ASSERT_NE(nullptr, lead);
       tests::LeadCursor reference_iter{std::move(lead)};
-      auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+      auto fill =
+        query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
       ASSERT_NE(nullptr, fill);
-      auto count = query->PlanCount({});
+      auto count = query->PlanCount({.memory = plan_memory});
       ASSERT_NE(nullptr, count);
       WindowFiller filler{std::move(fill)};
 
@@ -386,14 +392,16 @@ void TestAdvanceVsEmitDocs(const irs::CompositeReader& reader,
     reader, factories, window_sizes,
     [](const auto& /*reader*/, const auto& segment, const auto& factory,
        auto /*max_doc*/, auto window_size) {
-      auto query = factory.prepare(segment);
+      irs::QueryMemory query_memory;
+      irs::PlanMemory plan_memory;
+      auto query = factory.prepare(query_memory, segment);
       ASSERT_NE(nullptr, query);
-      auto lead = query->PlanLead({});
+      auto lead = query->PlanLead({.memory = plan_memory});
       ASSERT_NE(nullptr, lead);
       tests::LeadCursor reference_iter{std::move(lead)};
-      auto emit = query->PlanDocs({});
+      auto emit = query->PlanDocs({.memory = plan_memory});
       ASSERT_NE(nullptr, emit);
-      auto count = query->PlanCount({});
+      auto count = query->PlanCount({.memory = plan_memory});
       ASSERT_NE(nullptr, count);
 
       const auto capacity = std::max<uint32_t>(
@@ -415,13 +423,15 @@ void TestSeekVsFillBlock(const irs::CompositeReader& reader,
   ForEachCombination(reader, factories, window_sizes,
                      [](const auto& /*reader*/, const auto& segment,
                         const auto& factory, auto max_doc, auto window_size) {
-                       auto query = factory.prepare(segment);
+                       irs::QueryMemory query_memory;
+                       irs::PlanMemory plan_memory;
+                       auto query = factory.prepare(query_memory, segment);
                        ASSERT_NE(nullptr, query);
-                       auto lead = query->PlanLead({});
+                       auto lead = query->PlanLead({.memory = plan_memory});
                        ASSERT_NE(nullptr, lead);
                        tests::LeadCursor reference_iter{std::move(lead)};
-                       auto fill =
-                         query->PlanFill({}, irs::ScoreMergeType::Noop);
+                       auto fill = query->PlanFill({.memory = plan_memory},
+                                                   irs::ScoreMergeType::Noop);
                        ASSERT_NE(nullptr, fill);
                        WindowFiller filler{std::move(fill)};
 
@@ -437,12 +447,15 @@ void TestInterleavedSeekFillBlock(const irs::CompositeReader& reader,
     reader, factories, window_sizes,
     [](const auto& /*reader*/, const auto& segment, const auto& factory,
        auto max_doc, auto window_size) {
-      auto query = factory.prepare(segment);
+      irs::QueryMemory query_memory;
+      irs::PlanMemory plan_memory;
+      auto query = factory.prepare(query_memory, segment);
       ASSERT_NE(nullptr, query);
-      auto lead = query->PlanLead({});
+      auto lead = query->PlanLead({.memory = plan_memory});
       ASSERT_NE(nullptr, lead);
       tests::LeadCursor reference_iter{std::move(lead)};
-      auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+      auto fill =
+        query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
       ASSERT_NE(nullptr, fill);
       WindowFiller filler{std::move(fill)};
 
@@ -465,12 +478,15 @@ void TestAdvanceSkipFillBlock(const irs::CompositeReader& reader,
       for (auto skip : skip_counts) {
         SCOPED_TRACE(testing::Message() << "advance_skip=" << skip);
 
-        auto query = factory.prepare(segment);
+        irs::QueryMemory query_memory;
+        irs::PlanMemory plan_memory;
+        auto query = factory.prepare(query_memory, segment);
         ASSERT_NE(nullptr, query);
-        auto lead = query->PlanLead({});
+        auto lead = query->PlanLead({.memory = plan_memory});
         ASSERT_NE(nullptr, lead);
         tests::LeadCursor reference_iter{std::move(lead)};
-        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+        auto fill =
+          query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
         ASSERT_NE(nullptr, fill);
         WindowFiller filler{std::move(fill)};
 
@@ -493,12 +509,15 @@ void TestSeekSkipFillBlock(const irs::CompositeReader& reader,
       for (auto delta : skip_deltas) {
         SCOPED_TRACE(testing::Message() << "seek_skip=" << delta);
 
-        auto query = factory.prepare(segment);
+        irs::QueryMemory query_memory;
+        irs::PlanMemory plan_memory;
+        auto query = factory.prepare(query_memory, segment);
         ASSERT_NE(nullptr, query);
-        auto lead = query->PlanLead({});
+        auto lead = query->PlanLead({.memory = plan_memory});
         ASSERT_NE(nullptr, lead);
         tests::LeadCursor reference_iter{std::move(lead)};
-        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+        auto fill =
+          query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
         ASSERT_NE(nullptr, fill);
         WindowFiller filler{std::move(fill)};
 
@@ -928,6 +947,7 @@ constexpr irs::doc_id_t kSeekSkips[] = {10, 100, 1000};
 struct ScoredPrepare {
   irs::Filter::ptr filter;
   irs::StatsArena stats;
+  irs::QueryMemory memory;
   std::optional<irs::PreparedCollector> collector;
   std::vector<irs::QueryBuilder::ptr> queries;
 
@@ -939,8 +959,8 @@ struct ScoredPrepare {
     collector.emplace(*filter, scorer, stats, 1);
     queries.reserve(reader.size());
     for (const auto& sub : reader) {
-      queries.emplace_back(
-        filter->PrepareSegment(sub, {.collector = collector->Get()}));
+      queries.emplace_back(filter->PrepareSegment(
+        sub, {.memory = memory, .collector = collector->Get()}));
     }
     collector->Finish();
   }
@@ -959,25 +979,28 @@ std::vector<irs::doc_id_t> WindowBounds(irs::doc_id_t max_doc,
 void TestCountRangeMatchesWhole(const irs::CompositeReader& reader,
                                 const std::vector<IteratorFactory>& factories,
                                 std::span<const irs::doc_id_t> window_sizes) {
-  ForEachCombination(reader, factories, window_sizes,
-                     [](const auto& /*reader*/, const auto& segment,
-                        const auto& factory, auto max_doc, auto window) {
-                       auto query = factory.prepare(segment);
-                       ASSERT_NE(nullptr, query);
-                       auto whole_plan = query->PlanCount({});
-                       ASSERT_NE(nullptr, whole_plan);
-                       const auto whole = whole_plan->Run(
-                         irs::doc_limits::min(), irs::doc_limits::eof());
+  ForEachCombination(
+    reader, factories, window_sizes,
+    [](const auto& /*reader*/, const auto& segment, const auto& factory,
+       auto max_doc, auto window) {
+      irs::QueryMemory query_memory;
+      irs::PlanMemory plan_memory;
+      auto query = factory.prepare(query_memory, segment);
+      ASSERT_NE(nullptr, query);
+      auto whole_plan = query->PlanCount({.memory = plan_memory});
+      ASSERT_NE(nullptr, whole_plan);
+      const auto whole =
+        whole_plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
 
-                       auto split_plan = query->PlanCount({});
-                       ASSERT_NE(nullptr, split_plan);
-                       uint64_t parts = 0;
-                       const auto bounds = WindowBounds(max_doc, window);
-                       for (size_t i = 1; i != bounds.size(); ++i) {
-                         parts += split_plan->Run(bounds[i - 1], bounds[i]);
-                       }
-                       EXPECT_EQ(whole, parts);
-                     });
+      auto split_plan = query->PlanCount({.memory = plan_memory});
+      ASSERT_NE(nullptr, split_plan);
+      uint64_t parts = 0;
+      const auto bounds = WindowBounds(max_doc, window);
+      for (size_t i = 1; i != bounds.size(); ++i) {
+        parts += split_plan->Run(bounds[i - 1], bounds[i]);
+      }
+      EXPECT_EQ(whole, parts);
+    });
 }
 
 void TestDocsRangeMatchesWhole(const irs::CompositeReader& reader,
@@ -987,13 +1010,15 @@ void TestDocsRangeMatchesWhole(const irs::CompositeReader& reader,
     reader, factories, window_sizes,
     [](const auto& /*reader*/, const auto& segment, const auto& factory,
        auto max_doc, auto window) {
-      auto query = factory.prepare(segment);
+      irs::QueryMemory query_memory;
+      irs::PlanMemory plan_memory;
+      auto query = factory.prepare(query_memory, segment);
       ASSERT_NE(nullptr, query);
       const auto span = static_cast<size_t>(max_doc - irs::doc_limits::min()) +
                         irs::doc_limits::kDocsSlack;
 
       std::vector<irs::doc_id_t> whole(span);
-      auto whole_plan = query->PlanDocs({});
+      auto whole_plan = query->PlanDocs({.memory = plan_memory});
       ASSERT_NE(nullptr, whole_plan);
       whole.resize(
         whole_plan->Run(irs::doc_limits::min(), max_doc, whole.data()));
@@ -1001,7 +1026,7 @@ void TestDocsRangeMatchesWhole(const irs::CompositeReader& reader,
       std::vector<irs::doc_id_t> parts;
       std::vector<irs::doc_id_t> buf(static_cast<size_t>(window) +
                                      irs::doc_limits::kDocsSlack);
-      auto split_plan = query->PlanDocs({});
+      auto split_plan = query->PlanDocs({.memory = plan_memory});
       ASSERT_NE(nullptr, split_plan);
       const auto bounds = WindowBounds(max_doc, window);
       for (size_t i = 1; i != bounds.size(); ++i) {
@@ -1038,9 +1063,10 @@ void TestHitsRangeMatchesWhole(const irs::CompositeReader& reader,
       const auto span = static_cast<size_t>(max_doc - irs::doc_limits::min()) +
                         irs::doc_limits::kScoresSlack;
 
+      irs::PlanMemory plan_memory;
       irs::ColumnArgsFetcher whole_fetcher;
-      auto whole_plan =
-        query->PlanScored({.scorer = scorer, .fetcher = whole_fetcher});
+      auto whole_plan = query->PlanScored(
+        {.memory = plan_memory, .scorer = scorer, .fetcher = whole_fetcher});
       if (!whole_plan) {
         continue;
       }
@@ -1054,8 +1080,8 @@ void TestHitsRangeMatchesWhole(const irs::CompositeReader& reader,
       for (auto window : window_sizes) {
         SCOPED_TRACE(testing::Message() << "window_size=" << window);
         irs::ColumnArgsFetcher fetcher;
-        auto split_plan =
-          query->PlanScored({.scorer = scorer, .fetcher = fetcher});
+        auto split_plan = query->PlanScored(
+          {.memory = plan_memory, .scorer = scorer, .fetcher = fetcher});
         ASSERT_NE(nullptr, split_plan);
         std::vector<irs::doc_id_t> docs;
         std::vector<irs::score_t> scores;
@@ -1114,8 +1140,10 @@ void TestTopRangeMatchesWhole(const irs::CompositeReader& reader,
       const auto max_doc = static_cast<irs::doc_id_t>(segment.docs_count() +
                                                       irs::doc_limits::min());
 
+      irs::PlanMemory plan_memory;
       irs::ColumnArgsFetcher whole_fetcher;
-      auto whole_plan = query->PlanTop({.scorer = scorer,
+      auto whole_plan = query->PlanTop({.memory = plan_memory,
+                                        .scorer = scorer,
                                         .fetcher = whole_fetcher,
                                         .prune = false,
                                         .k = kTopK});
@@ -1139,8 +1167,11 @@ void TestTopRangeMatchesWhole(const irs::CompositeReader& reader,
         const auto bounds = WindowBounds(max_doc, window);
         for (size_t i = 1; i != bounds.size(); ++i) {
           irs::ColumnArgsFetcher fetcher;
-          auto split_plan = query->PlanTop(
-            {.scorer = scorer, .fetcher = fetcher, .prune = false, .k = kTopK});
+          auto split_plan = query->PlanTop({.memory = plan_memory,
+                                            .scorer = scorer,
+                                            .fetcher = fetcher,
+                                            .prune = false,
+                                            .k = kTopK});
           ASSERT_NE(nullptr, split_plan);
           split_plan->Run(bounds[i - 1], bounds[i], collector);
         }

@@ -31,20 +31,24 @@
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::probe {
 
-Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+Node::ptr MakePostingDocs(PlanMemory& memory,
+                          const detail::PostingClause& posting,
                           const SubReader& segment);
 
-Node::ptr MakeAllDocs(const SubReader& segment);
-Node::ptr MakeLiveDocs(const SubReader& segment);
+Node::ptr MakeAllDocs(PlanMemory& memory, const SubReader& segment);
+Node::ptr MakeLiveDocs(PlanMemory& memory, const SubReader& segment);
 
-Node::ptr MakePostingScored(const detail::PostingClause& posting,
+Node::ptr MakePostingScored(PlanMemory& memory,
+                            const detail::PostingClause& posting,
                             const SubReader& segment,
                             const detail::ScoreRecipe& recipe);
 
-Node::ptr MakeAllScored(const SubReader& segment, score_t score);
+Node::ptr MakeAllScored(PlanMemory& memory, const SubReader& segment,
+                        score_t score);
 
 inline auto ScoredClauseOf(const SubReader& segment,
                            const detail::ScoredCtx& ctx,
@@ -52,7 +56,7 @@ inline auto ScoredClauseOf(const SubReader& segment,
   return [&](const detail::PostingClause& posting, const QueryBuilder* child,
              uint64_t interrogations) -> Node::ptr {
     if (child == nullptr) {
-      return MakePostingScored(posting, segment, recipe);
+      return MakePostingScored(ctx.memory, posting, segment, recipe);
     }
     return child->PlanProbe(ctx, interrogations);
   };

@@ -61,7 +61,7 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  NGramState state{ctx.memory};
+  NGramState state{ctx.memory.Arena()};
   state.reader = field;
   if (!detail::ResolvePhrase(field, state.handles)) {
     return QueryBuilder::Empty();
@@ -98,9 +98,8 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
                          ctx.boost * boost, ctx.Record());
   }
 
-  auto query = memory::make_tracked<NGramSimilarityQuery>(
-    ctx.memory, segment, min_match_count, terms_count, std::move(state),
-    ctx.boost * boost);
+  auto query = ctx.memory.Make<NGramSimilarityQuery>(
+    segment, min_match_count, terms_count, std::move(state), ctx.boost * boost);
   query->SetStats(ctx.Record());
   return query;
 }

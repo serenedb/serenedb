@@ -44,7 +44,9 @@ class Segment final : public irs::SubReader {
 
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
 
-  irs::lead::Node::ptr docs_iterator() const final { return nullptr; }
+  irs::lead::Node::ptr docs_iterator(irs::PlanMemory&) const final {
+    return nullptr;
+  }
 
   std::span<const irs::field_id> field_ids() const final { return {}; }
 
@@ -53,6 +55,10 @@ class Segment final : public irs::SubReader {
   }
 
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+
+  irs::NormReader::ptr norms(irs::PlanMemory&, irs::field_id) const final {
+    return nullptr;
+  }
 
  private:
   irs::SegmentInfo _meta;

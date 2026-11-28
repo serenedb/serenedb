@@ -24,11 +24,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <string>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 
@@ -80,12 +80,17 @@ class DictionaryCompressor {
   std::string_view Stored() const noexcept { return _stored; }
 
  protected:
-  explicit DictionaryCompressor(size_t cap) noexcept : _cap{cap} {}
+  explicit DictionaryCompressor(TrackedAllocator<> alloc, size_t cap) noexcept
+    : _cap{cap}, _dictionary{alloc}, _stored{alloc} {}
+
+  TrackedAllocator<> Allocator() const noexcept {
+    return _dictionary.get_allocator();
+  }
 
  private:
   size_t _cap;
-  std::string _dictionary;
-  std::string _stored;
+  TrackedString _dictionary;
+  TrackedString _stored;
 };
 
 class DictionaryDecompressor {
@@ -116,6 +121,13 @@ class DictionaryDecompressor {
   }
 
  protected:
+  explicit DictionaryDecompressor(TrackedAllocator<> alloc) noexcept
+    : _window{alloc} {}
+
+  TrackedAllocator<> Allocator() const noexcept {
+    return _window.get_allocator();
+  }
+
   bool HasDictionary() const noexcept { return _dictionary != 0; }
 
   char* FrameAfterDictionary(size_t size) {
@@ -123,7 +135,7 @@ class DictionaryDecompressor {
   }
 
  private:
-  std::string _window;
+  TrackedString _window;
   size_t _dictionary = 0;
 };
 

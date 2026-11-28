@@ -26,9 +26,9 @@
 
 namespace irs::docs {
 
-Root::ptr Family::MakeAll(const SubReader& segment, const Context&,
+Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
                           ScoreMergeType, score_t) {
-  return memory::make_managed<All>(static_cast<doc_id_t>(segment.docs_count()));
+  return ctx.memory.Make<All>(static_cast<doc_id_t>(segment.docs_count()));
 }
 
 }  // namespace irs::docs

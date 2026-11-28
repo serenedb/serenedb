@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <benchmark/benchmark.h>
 #include <fcntl.h>
@@ -219,17 +220,19 @@ void Write(Data& data) {
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   data.root = path.string();
+  irs::LocalBudget budget{irs::gRootBudget};
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   irs::FileTracker tracker{fs, data.root, "segment"};
   const irs::FlushState state{
     .tracker = tracker,
     .doc_count = data.doc_count,
+    .alloc = irs::TrackedAllocator<>{budget},
   };
-  irs::IdxWriter idx{tracker};
-  irs::term_dict::FieldWriter writer{false};
+  irs::IdxWriter idx{tracker, state.alloc};
+  irs::term_dict::FieldWriter writer{false, state.alloc};
   writer.SetIdxWriter(idx);
-  writer.prepare(state, 1);
+  writer.prepare(state, 1, 0);
   writer.write(
     irs::NumericLayout::kNumbers,
     ValuesReader{data.keys, {.docs = data.docs, .starts = data.starts}});
@@ -306,8 +309,9 @@ void ListDocs(Data& data, std::mt19937_64& rng) {
   data.doc_count = doc - 1;
 }
 
+std::unique_ptr<Data> gData;
+
 const Data& Load(Variant variant) {
-  static std::unique_ptr<Data> gData;
   if (gData && gData->variant == variant) {
     return *gData;
   }
@@ -663,7 +667,12 @@ void Register(Variant v) {
 }
 
 int Main(int argc, char** argv) {
-  irs::DuckDBEngine::Instance().Initialize();
+  auto& engine = irs::DuckDBEngine::Instance();
+  engine.Initialize();
+  absl::Cleanup shutdown = [&] {
+    gData.reset();
+    engine.Shutdown();
+  };
 
   for (const auto lists : {Lists::Singles, Lists::Clustered}) {
     for (size_t s = 0; s != std::size(kShapeNames); ++s) {

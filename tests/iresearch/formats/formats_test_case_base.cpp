@@ -349,10 +349,13 @@ TEST_P(FormatTestCase, fields_read_write) {
 
   // write fields
   {
+    irs::LocalBudget budget{irs::gRootBudget};
+    const irs::TrackedAllocator<> alloc{budget};
     irs::FlushState state{
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 100,
       .index_features = field.index_features,
+      .alloc = alloc,
     };
 
     // should use sorted terms on write
@@ -361,10 +364,10 @@ TEST_P(FormatTestCase, fields_read_write) {
     tests::MockTermReader term_reader{
       terms, irs::FieldMeta{field.id, field.index_features}};
 
-    irs::IdxWriter idx{dir().Tracker("segment_name")};
-    irs::term_dict::FieldWriter writer{/*compaction=*/false};
+    irs::IdxWriter idx{dir().Tracker("segment_name"), alloc};
+    irs::term_dict::FieldWriter writer{/*compaction=*/false, alloc};
     writer.SetIdxWriter(idx);
-    writer.prepare(state, 1);
+    writer.prepare(state, 1, 0);
     writer.write(irs::StringLayout::kStrings, term_reader);
     writer.end();
     idx.Commit(nullptr);
@@ -556,7 +559,8 @@ TEST_P(FormatTestCase, format_utils_footer) {
       stream->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
                         data.size());
     }
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+    irs::format_utils::WriteFooter(
+      *stream, TestAlloc(), [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
     stream->Close();
@@ -592,7 +596,8 @@ TEST_P(FormatTestCase, format_utils_footer_packs_its_meta) {
   const auto write = [&](std::string_view name) {
     auto stream = dir().Create(name);
     ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+    irs::format_utils::WriteFooter(
+      *stream, TestAlloc(), [](duckdb::BinarySerializer& meta) {
       meta.WriteList(
         0, "values", kValues,
         [](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
@@ -639,7 +644,8 @@ TEST_P(FormatTestCase, format_utils_footer_keeps_a_small_meta_plain) {
   const auto write = [&](std::string_view name) {
     auto stream = dir().Create(name);
     ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+    irs::format_utils::WriteFooter(
+      *stream, TestAlloc(), [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
     stream->Close();
@@ -681,7 +687,7 @@ TEST_P(FormatTestCase, format_utils_footer_is_never_larger_packed) {
     auto stream = dir().Create(name);
     ASSERT_NE(nullptr, stream);
     irs::format_utils::WriteFooter(
-      *stream, [&](duckdb::BinarySerializer& meta) {
+      *stream, TestAlloc(), [&](duckdb::BinarySerializer& meta) {
         meta.WriteList(
           0, "values", count,
           [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
@@ -730,7 +736,8 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     auto stream = dir().Create("file");
     ASSERT_NE(nullptr, stream);
     stream->Write<uint64_t>(7);
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+    irs::format_utils::WriteFooter(
+      *stream, TestAlloc(), [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
     stream->Close();
@@ -796,7 +803,7 @@ void RoundTrip(std::string_view segment_name, uint64_t row_count,
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker(segment_name)};
+    irs::ColWriter w{db, dir.Tracker(segment_name), TestAlloc()};
     populate(w);
     w.Commit(row_count);
   }
@@ -862,8 +869,8 @@ TEST_P(FormatTestCase, columns_rw_empty) {
       // expected to return an empty window for any row past RowCount().
       // We don't fetch anything (FetchRow on an empty column is UB by
       // contract), but constructing the reader and not using it must succeed.
-      irs::ColumnReader::BlobPointReader pr0{r, *c0};
-      irs::ColumnReader::BlobPointReader pr1{r, *c1};
+      irs::ColumnReader::BlobPointReader pr0{r, *c0, TestAlloc()};
+      irs::ColumnReader::BlobPointReader pr1{r, *c1, TestAlloc()};
       (void)pr0;
       (void)pr1;
     });
@@ -950,7 +957,7 @@ TEST_P(FormatTestCase, columns_rw) {
   };
 
   {
-    irs::ColWriter w{db, dir.Tracker("_1")};
+    irs::ColWriter w{db, dir.Tracker("_1"), TestAlloc()};
     auto& f0 = irs::tests::OpenBlobColumn(w, kF0);
     auto& f1 = irs::tests::OpenBlobColumn(w, kF1);
     irs::tests::OpenBlobColumn(w, kEmpty);  // empty column in the middle
@@ -989,7 +996,7 @@ TEST_P(FormatTestCase, columns_rw) {
   static constexpr irs::field_id kS2F1 = 1;
   static constexpr irs::field_id kS2F2 = 2;
   {
-    irs::ColWriter w{db, dir.Tracker("_2")};
+    irs::ColWriter w{db, dir.Tracker("_2"), TestAlloc()};
     auto& f0 = irs::tests::OpenBlobColumn(w, kS2F0);
     irs::tests::OpenBlobColumn(w, kS2F1);  // pushed but never written
     auto& f2 = irs::tests::OpenBlobColumn(w, kS2F2);
@@ -1022,7 +1029,7 @@ TEST_P(FormatTestCase, columns_rw) {
     {
       const auto* col = r.Column(kF4);
       ASSERT_NE(col, nullptr);
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       ASSERT_FALSE(pr.IsNullDoc(1));
       const auto v = pr.FetchDoc(1);
       const auto s = irs::ToString<std::string_view>(v.data());
@@ -1082,7 +1089,7 @@ TEST_P(FormatTestCase, columns_rw) {
       ASSERT_NE(col, nullptr);
       // Pass 1: sequential.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         EXPECT_EQ("field0_doc0", irs::tests::ReadStoredStr<std::string>(pr, 1));
         EXPECT_TRUE(pr.IsNullDoc(5));  // doc without value in field0
         EXPECT_EQ("field0_doc33",
@@ -1090,7 +1097,7 @@ TEST_P(FormatTestCase, columns_rw) {
       }
       // Pass 2: fresh reader (simulates "cached" path with a re-issued read).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         EXPECT_EQ("field0_doc0", irs::tests::ReadStoredStr<std::string>(pr, 1));
         EXPECT_TRUE(pr.IsNullDoc(5));
         EXPECT_EQ("field0_doc33",
@@ -1104,7 +1111,7 @@ TEST_P(FormatTestCase, columns_rw) {
     {
       const auto* col = r.Column(kF1);
       ASSERT_NE(col, nullptr);
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       {
         const auto v = pr.FetchDoc(1);
         ASSERT_FALSE(v.empty());
@@ -1207,7 +1214,7 @@ TEST_P(FormatTestCase, columns_rw) {
     {
       const auto* col = r.Column(kS2F0);
       ASSERT_NE(col, nullptr);
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       EXPECT_EQ("segment_2_field1_doc0",
                 irs::tests::ReadStoredStr<std::string>(pr, 1));
       EXPECT_TRUE(pr.IsNullDoc(2));   // no value at doc=2
@@ -1230,8 +1237,8 @@ TEST_P(FormatTestCase, columns_rw) {
     // Multi-column same-segment independence: two BlobPointReaders on
     // different columns interleaved (kF0 and kF2).
     {
-      irs::ColumnReader::BlobPointReader pr_f0{r, *col_f0};
-      irs::ColumnReader::BlobPointReader pr_f2{r, *col_f2};
+      irs::ColumnReader::BlobPointReader pr_f0{r, *col_f0, TestAlloc()};
+      irs::ColumnReader::BlobPointReader pr_f2{r, *col_f2, TestAlloc()};
       EXPECT_EQ("field0_doc0",
                 irs::tests::ReadStoredStr<std::string>(pr_f0, 1));
       EXPECT_EQ("field2_doc1",
@@ -1246,7 +1253,7 @@ TEST_P(FormatTestCase, columns_rw) {
       EXPECT_TRUE(pr_f2.IsNullDoc(33));
       // f2 cache state must not have bled in from f0; verify on a fresh
       // f2 reader (the original one is past doc 1).
-      irs::ColumnReader::BlobPointReader pr_f2_b{r, *col_f2};
+      irs::ColumnReader::BlobPointReader pr_f2_b{r, *col_f2, TestAlloc()};
       EXPECT_EQ("field2_doc1",
                 irs::tests::ReadStoredStr<std::string>(pr_f2_b, 1));
     }
@@ -1257,7 +1264,7 @@ TEST_P(FormatTestCase, columns_rw) {
       const std::vector<std::pair<irs::doc_id_t, std::string_view>> reversed{
         {33, "field0_doc33"}, {2, "field0_doc2"}, {1, "field0_doc0"}};
       for (const auto& [doc, expected] : reversed) {
-        irs::ColumnReader::BlobPointReader pr{r, *col_f0};
+        irs::ColumnReader::BlobPointReader pr{r, *col_f0, TestAlloc()};
         EXPECT_EQ(expected, irs::tests::ReadStoredStr<std::string>(pr, doc));
       }
     }
@@ -1265,12 +1272,12 @@ TEST_P(FormatTestCase, columns_rw) {
     // Boundary docs: doc=min (row 0), doc=33 (last live), doc=34 (last
     // valid row but padded null), and a null in the middle.
     {
-      irs::ColumnReader::BlobPointReader pr{r, *col_f0};
+      irs::ColumnReader::BlobPointReader pr{r, *col_f0, TestAlloc()};
       EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
       EXPECT_EQ("field0_doc0", irs::tests::ReadStoredStr<std::string>(
                                  pr, irs::doc_limits::min()));
       // doc=33 is the last populated doc on f0. Use a fresh reader.
-      irs::ColumnReader::BlobPointReader pr2{r, *col_f0};
+      irs::ColumnReader::BlobPointReader pr2{r, *col_f0, TestAlloc()};
       EXPECT_EQ("field0_doc33",
                 irs::tests::ReadStoredStr<std::string>(pr2, 33));
       EXPECT_TRUE(pr2.IsNullDoc(34));  // padded null at last row index
@@ -1297,7 +1304,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("columns_rw_typed")};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_typed"), TestAlloc()};
 
     // Typed BIGINT column.
     auto& cw_int = w.OpenColumn(kIntId, duckdb::LogicalType::BIGINT);
@@ -1340,7 +1347,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     const auto* col = r.Column(kIntId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
-    irs::ColumnReader::PointReader pr{r, *col};
+    irs::ColumnReader::PointReader pr{r, *col, TestAlloc()};
     duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
     // Scattered sample of rows + full sequential pass.
     const std::vector<uint64_t> probes = {0, 1, 17, 99, 100, 250, 499};
@@ -1353,7 +1360,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   // Sequential read of BIGINT via a fresh PointReader (forward-only).
   {
     const auto* col = r.Column(kIntId);
-    irs::ColumnReader::PointReader pr{r, *col};
+    irs::ColumnReader::PointReader pr{r, *col, TestAlloc()};
     duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
     for (uint64_t i = 0; i < kRowCount; ++i) {
       ASSERT_TRUE(pr.FetchRow(i, out, 0)) << "i=" << i;
@@ -1367,7 +1374,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     const auto* col = r.Column(kStrId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
-    irs::ColumnReader::BlobPointReader pr{r, *col};
+    irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
     for (uint64_t i = 0; i < kRowCount; ++i) {
       const auto v = pr.FetchRow(i);
       ASSERT_FALSE(v.empty()) << "i=" << i;
@@ -1397,7 +1404,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     ASSERT_NE(col, nullptr);
     // Reversed sweep -- one fresh reader per probe to allow backward jumps.
     for (uint64_t i = kRowCount; i-- > 0;) {
-      irs::ColumnReader::PointReader pr{r, *col};
+      irs::ColumnReader::PointReader pr{r, *col, TestAlloc()};
       duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
       ASSERT_TRUE(pr.FetchRow(i, out, 0)) << "i=" << i;
       const auto* got = duckdb::FlatVector::GetData<int64_t>(out);
@@ -1408,7 +1415,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     constexpr uint64_t kPrime = 7;
     for (uint64_t k = 0; k < 30; ++k) {
       const uint64_t i = (k * kPrime) % kRowCount;
-      irs::ColumnReader::PointReader pr{r, *col};
+      irs::ColumnReader::PointReader pr{r, *col, TestAlloc()};
       duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
       ASSERT_TRUE(pr.FetchRow(i, out, 0)) << "k=" << k << " i=" << i;
       const auto* got = duckdb::FlatVector::GetData<int64_t>(out);
@@ -1422,13 +1429,13 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   {
     const auto* col = r.Column(kStrId);
     ASSERT_NE(col, nullptr);
-    irs::ColumnReader::BlobPointReader pr{r, *col};
+    irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
     {
       const auto v = pr.FetchRow(0);
       ASSERT_FALSE(v.empty());
       EXPECT_EQ(irs::ToString<std::string>(v.data()), "row_0");
     }
-    irs::ColumnReader::BlobPointReader pr2{r, *col};
+    irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
     {
       const auto v = pr2.FetchRow(kRowCount - 1);
       ASSERT_FALSE(v.empty());
@@ -1442,7 +1449,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     const auto* col = r.Column(kIntId);
     ASSERT_NE(col, nullptr);
     constexpr uint64_t kStart = 200;
-    irs::ColumnReader::PointReader pr{r, *col};
+    irs::ColumnReader::PointReader pr{r, *col, TestAlloc()};
     duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
     for (uint64_t i = kStart; i < kStart + 6; ++i) {
       ASSERT_TRUE(pr.FetchRow(i, out, 0)) << "i=" << i;
@@ -1459,14 +1466,14 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     const auto* col_str = r.Column(kStrId);
     ASSERT_NE(col_int, nullptr);
     ASSERT_NE(col_str, nullptr);
-    irs::ColumnReader::PointReader pr_int{r, *col_int};
-    irs::ColumnReader::BlobPointReader pr_str{r, *col_str};
+    irs::ColumnReader::PointReader pr_int{r, *col_int, TestAlloc()};
+    irs::ColumnReader::BlobPointReader pr_str{r, *col_str, TestAlloc()};
     duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
     const std::vector<uint64_t> rows = {0, 5, 17, 99, 250, 499};
     for (auto i : rows) {
       // Both reset between probes (forward-only).
-      irs::ColumnReader::PointReader pr_i{r, *col_int};
-      irs::ColumnReader::BlobPointReader pr_s{r, *col_str};
+      irs::ColumnReader::PointReader pr_i{r, *col_int, TestAlloc()};
+      irs::ColumnReader::BlobPointReader pr_s{r, *col_str, TestAlloc()};
       ASSERT_TRUE(pr_i.FetchRow(i, out, 0)) << "i=" << i;
       const auto* got = duckdb::FlatVector::GetData<int64_t>(out);
       EXPECT_EQ(got[0], static_cast<int64_t>(i * 11 + 5)) << "i=" << i;
@@ -1486,7 +1493,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr irs::field_id kRgIntId = 100;
   constexpr irs::field_id kRgStrId = 101;
   {
-    irs::ColWriter w{db, dir.Tracker("columns_rw_typed_rg")};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_typed_rg"), TestAlloc()};
     auto& cw_int = w.OpenColumn(kRgIntId, duckdb::LogicalType::BIGINT,
                                 {.row_group_size = 512});
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
@@ -1531,13 +1538,13 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kRgRowCount - 1};
     for (auto i : boundary_rows) {
-      irs::ColumnReader::PointReader pr_i{rr, *col_int};
+      irs::ColumnReader::PointReader pr_i{rr, *col_int, TestAlloc()};
       duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
       ASSERT_TRUE(pr_i.FetchRow(i, out, 0)) << "i=" << i;
       const auto* got = duckdb::FlatVector::GetData<int64_t>(out);
       EXPECT_EQ(got[0], static_cast<int64_t>(i * 11 + 5)) << "i=" << i;
 
-      irs::ColumnReader::BlobPointReader pr_s{rr, *col_str};
+      irs::ColumnReader::BlobPointReader pr_s{rr, *col_str, TestAlloc()};
       const auto v = pr_s.FetchRow(i);
       ASSERT_FALSE(v.empty()) << "i=" << i;
       EXPECT_EQ(irs::ToString<std::string>(v.data()),
@@ -1548,7 +1555,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     // Seek+iterate spanning a row-group boundary (start before 512, walk
     // through it).
     {
-      irs::ColumnReader::PointReader pr{rr, *col_int};
+      irs::ColumnReader::PointReader pr{rr, *col_int, TestAlloc()};
       duckdb::Vector out{duckdb::LogicalType::BIGINT, /*capacity=*/1};
       for (uint64_t i = 510; i <= 515; ++i) {
         ASSERT_TRUE(pr.FetchRow(i, out, 0)) << "i=" << i;
@@ -1591,7 +1598,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
 
       // Pass 1: not-cached random reads.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (auto doc : kLiveDocs) {
           EXPECT_FALSE(pr.IsNullDoc(doc)) << "doc=" << doc;
           EXPECT_TRUE(pr.FetchDoc(doc).empty()) << "doc=" << doc;
@@ -1606,7 +1613,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       // Pass 2: cached random reads (re-issued on a fresh point reader to
       // exercise that the reader is reusable + deterministic).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (auto doc : kLiveDocs) {
           EXPECT_FALSE(pr.IsNullDoc(doc)) << "doc=" << doc;
           EXPECT_TRUE(pr.FetchDoc(doc).empty()) << "doc=" << doc;
@@ -1615,7 +1622,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
 
       // Pass 3: full sequential check of every doc.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         size_t live_i = 0;
         for (uint64_t i = 0; i < kRowCount; ++i) {
           const auto doc =
@@ -1654,7 +1661,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
         std::vector<irs::doc_id_t> reversed(kLiveDocs.rbegin(),
                                             kLiveDocs.rend());
         for (auto doc : reversed) {
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           EXPECT_FALSE(pr.IsNullDoc(doc)) << "doc=" << doc;
           EXPECT_TRUE(pr.FetchDoc(doc).empty()) << "doc=" << doc;
         }
@@ -1663,7 +1670,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
           const uint64_t i = (k * 3) % kRowCount;
           const auto doc =
             static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           const bool expect_live = std::find(kLiveDocs.begin(), kLiveDocs.end(),
                                              doc) != kLiveDocs.end();
           EXPECT_EQ(pr.IsNullDoc(doc), !expect_live) << "i=" << i;
@@ -1674,12 +1681,12 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       // kLiveDocs.back()==9 is the last live doc; row index kRowCount-1
       // (doc=10) is null (kRowCount=10 rows, indices 0..9, doc=10).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         EXPECT_TRUE(pr.IsNullDoc(irs::doc_limits::min())) << "doc=min";
         EXPECT_FALSE(pr.IsNullDoc(9));  // last live doc
         EXPECT_TRUE(pr.FetchDoc(9).empty());
         // Row index 9 (doc=10) is the last row -- null.
-        irs::ColumnReader::BlobPointReader pr2{r, *col};
+        irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
         EXPECT_TRUE(pr2.IsNullDoc(10));
       }
 
@@ -1699,7 +1706,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("columns_rw_bit_mask_rg")};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_bit_mask_rg"), TestAlloc()};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -1724,7 +1731,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kBigRows - 1};
     for (auto i : boundary_rows) {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       const bool expect_live = (i % 11 == 0);
       EXPECT_EQ(pr.IsNullRow(i), !expect_live) << "i=" << i;
       if (expect_live) {
@@ -1734,7 +1741,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
 
     // Seek+iterate around a boundary (start before 512, walk through it).
     {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       for (uint64_t i = 510; i <= 515; ++i) {
         const bool expect_live = (i % 11 == 0);
         EXPECT_EQ(pr.IsNullRow(i), !expect_live) << "i=" << i;
@@ -1753,7 +1760,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     {
       uint64_t expected_live = 0;
       uint64_t seen_live = 0;
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       for (uint64_t i = 0; i < kBigRows; ++i) {
         const bool expect_live = (i % 11 == 0);
         if (expect_live) {
@@ -1793,7 +1800,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
 
       // Pass 1: full sequential point read.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (uint64_t i = 0; i < kRowCount; ++i) {
           EXPECT_FALSE(pr.IsNullRow(i)) << "i=" << i;
           EXPECT_TRUE(pr.FetchRow(i).empty()) << "i=" << i;
@@ -1802,7 +1809,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
 
       // Pass 2: fresh point reader (re-issued reads -- "cached" analogue).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (uint64_t i = 0; i < kRowCount; ++i) {
           EXPECT_FALSE(pr.IsNullRow(i)) << "i=" << i;
         }
@@ -1828,13 +1835,13 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
       {
         // Reversed.
         for (uint64_t r_i = kRowCount; r_i-- > 0;) {
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           EXPECT_FALSE(pr.IsNullRow(r_i)) << "i=" << r_i;
         }
         // Prime-stepped (17 coprime to 1026).
         for (uint64_t k = 0; k < 50; ++k) {
           const uint64_t i = (k * 17) % kRowCount;
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           EXPECT_FALSE(pr.IsNullRow(i)) << "i=" << i;
           EXPECT_TRUE(pr.FetchRow(i).empty()) << "i=" << i;
         }
@@ -1842,11 +1849,11 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
 
       // Pass 5: boundary rows -- 0, kRowCount-1 (last valid).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         EXPECT_FALSE(pr.IsNullRow(0));
         EXPECT_TRUE(pr.FetchRow(0).empty());
 
-        irs::ColumnReader::BlobPointReader pr2{r, *col};
+        irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
         EXPECT_FALSE(pr2.IsNullRow(kRowCount - 1));
         EXPECT_TRUE(pr2.FetchRow(kRowCount - 1).empty());
       }
@@ -1868,7 +1875,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("columns_rw_dense_mask_rg")};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_dense_mask_rg"), TestAlloc()};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -1890,14 +1897,14 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kBigRows - 1};
     for (auto i : boundary_rows) {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       EXPECT_FALSE(pr.IsNullRow(i)) << "i=" << i;
       EXPECT_TRUE(pr.FetchRow(i).empty()) << "i=" << i;
     }
 
     // Seek+iterate spanning a row-group boundary.
     {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       for (uint64_t i = 510; i <= 515; ++i) {
         EXPECT_FALSE(pr.IsNullRow(i)) << "i=" << i;
         EXPECT_TRUE(pr.FetchRow(i).empty()) << "i=" << i;
@@ -1953,13 +1960,13 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
 
       // Pass 1: scattered random access.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         const std::vector<uint64_t> probes = {0, 7, 25, 12, 49, 1};
         // Probes are out-of-order; PointReader is forward-only across
         // calls but each call creates fresh segments. To test backward
         // probes too we re-instantiate between groups.
         for (auto i : probes) {
-          irs::ColumnReader::BlobPointReader pr2{r, *col};
+          irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
           const auto bytes = pr2.FetchRow(i);
           ASSERT_EQ(bytes.size(), kPayloadSize) << "i=" << i;
           const auto first = static_cast<irs::byte_type>('A' + (i % 26));
@@ -1972,7 +1979,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
 
       // Pass 2: full forward point-read sweep ("iterator next" analogue).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (uint64_t i = 0; i < kRowCount; ++i) {
           const auto bytes = pr.FetchRow(i);
           ASSERT_EQ(bytes.size(), kPayloadSize) << "i=" << i;
@@ -2002,7 +2009,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
       {
         // Reversed.
         for (uint64_t r_i = kRowCount; r_i-- > 0;) {
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           const auto bytes = pr.FetchRow(r_i);
           ASSERT_EQ(bytes.size(), kPayloadSize) << "i=" << r_i;
           const auto first = static_cast<irs::byte_type>('A' + (r_i % 26));
@@ -2012,7 +2019,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
         // Prime-stepped (13 coprime to 50). First 20 steps.
         for (uint64_t k = 0; k < 20; ++k) {
           const uint64_t i = (k * 13) % kRowCount;
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           const auto bytes = pr.FetchRow(i);
           ASSERT_EQ(bytes.size(), kPayloadSize) << "k=" << k << " i=" << i;
           const auto first = static_cast<irs::byte_type>('A' + (i % 26));
@@ -2022,12 +2029,12 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
 
       // Pass 5: boundary docs -- doc=min and last_valid.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         const auto bytes_min = pr.FetchDoc(irs::doc_limits::min());
         ASSERT_EQ(bytes_min.size(), kPayloadSize);
         EXPECT_EQ(bytes_min[0], static_cast<irs::byte_type>('A'));
 
-        irs::ColumnReader::BlobPointReader pr2{r, *col};
+        irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
         const auto bytes_last = pr2.FetchRow(kRowCount - 1);
         ASSERT_EQ(bytes_last.size(), kPayloadSize);
         EXPECT_EQ(bytes_last[0],
@@ -2036,7 +2043,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
 
       // Pass 6: seek+iterate -- fetch K, then K+1..K+5 sequentially.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         constexpr uint64_t kStart = 20;
         for (uint64_t i = kStart; i < kStart + 6; ++i) {
           const auto bytes = pr.FetchRow(i);
@@ -2063,7 +2070,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("columns_rw_big_document_rg")};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_big_document_rg"), TestAlloc()};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     std::string payload(kSmallPayloadSize, '\0');
@@ -2089,7 +2096,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, kBigRows - 1};
     for (auto i : boundary_rows) {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       const auto bytes = pr.FetchRow(i);
       ASSERT_EQ(bytes.size(), kSmallPayloadSize) << "i=" << i;
       const auto first = static_cast<irs::byte_type>('A' + (i % 26));
@@ -2099,7 +2106,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
 
     // Seek+iterate across a boundary.
     {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       for (uint64_t i = 510; i <= 515; ++i) {
         const auto bytes = pr.FetchRow(i);
         ASSERT_EQ(bytes.size(), kSmallPayloadSize) << "i=" << i;
@@ -2120,7 +2127,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   IndexDir dir{db, TestEnv::MemoryRoot()};
 
   {
-    irs::ColWriter w{db, dir.Tracker("_rollback_seg")};
+    irs::ColWriter w{db, dir.Tracker("_rollback_seg"), TestAlloc()};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Rollback();
   }
@@ -2136,7 +2143,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   static constexpr irs::field_id kIdCol = 7;
   static constexpr irs::field_id kNameCol = 8;
   auto write_seg = [&](const SegSpec& seg, uint64_t prefix) {
-    irs::ColWriter w{db, dir.Tracker(seg.name)};
+    irs::ColWriter w{db, dir.Tracker(seg.name), TestAlloc()};
     auto& id_w = irs::tests::OpenBlobColumn(w, kIdCol);
     auto& name_w = irs::tests::OpenBlobColumn(w, kNameCol);
     for (uint64_t i = 0; i < seg.row_count; ++i) {
@@ -2185,8 +2192,8 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     EXPECT_EQ(id_col->RowCount(), seg.row_count) << "seg=" << seg.name;
     EXPECT_EQ(name_col->RowCount(), seg.row_count) << "seg=" << seg.name;
 
-    irs::ColumnReader::BlobPointReader id_pr{r, *id_col};
-    irs::ColumnReader::BlobPointReader name_pr{r, *name_col};
+    irs::ColumnReader::BlobPointReader id_pr{r, *id_col, TestAlloc()};
+    irs::ColumnReader::BlobPointReader name_pr{r, *name_col, TestAlloc()};
     for (uint64_t i = 0; i < seg.row_count; ++i) {
       const auto exp_id = std::to_string(prefix + i);
       const auto exp_name = std::string{"name_"} + std::to_string(prefix + i);
@@ -2207,8 +2214,8 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     // re-checked under the same loop -- verifies that each lookup
     // doesn't disturb the *other* column.
     for (uint64_t r_i = seg.row_count; r_i-- > 0;) {
-      irs::ColumnReader::BlobPointReader id_pr2{r, *id_col};
-      irs::ColumnReader::BlobPointReader name_pr2{r, *name_col};
+      irs::ColumnReader::BlobPointReader id_pr2{r, *id_col, TestAlloc()};
+      irs::ColumnReader::BlobPointReader name_pr2{r, *name_col, TestAlloc()};
       const auto doc = static_cast<irs::doc_id_t>(r_i + irs::doc_limits::min());
       EXPECT_EQ(irs::tests::ReadStoredStr<std::string>(id_pr2, doc),
                 std::to_string(prefix + r_i))
@@ -2220,15 +2227,15 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
 
     // Boundary docs per segment: doc=min, last_valid (doc=seg.row_count).
     {
-      irs::ColumnReader::BlobPointReader id_pr2{r, *id_col};
-      irs::ColumnReader::BlobPointReader name_pr2{r, *name_col};
+      irs::ColumnReader::BlobPointReader id_pr2{r, *id_col, TestAlloc()};
+      irs::ColumnReader::BlobPointReader name_pr2{r, *name_col, TestAlloc()};
       EXPECT_EQ(
         irs::tests::ReadStoredStr<std::string>(id_pr2, irs::doc_limits::min()),
         std::to_string(prefix));
       EXPECT_EQ(irs::tests::ReadStoredStr<std::string>(name_pr2,
                                                        irs::doc_limits::min()),
                 std::string{"name_"} + std::to_string(prefix));
-      irs::ColumnReader::BlobPointReader id_pr3{r, *id_col};
+      irs::ColumnReader::BlobPointReader id_pr3{r, *id_col, TestAlloc()};
       const auto last_doc =
         static_cast<irs::doc_id_t>(seg.row_count + irs::doc_limits::min() - 1);
       EXPECT_EQ(irs::tests::ReadStoredStr<std::string>(id_pr3, last_doc),
@@ -2243,7 +2250,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   constexpr uint64_t kBigRows = 2048;
   constexpr std::string_view kBigSeg = "_big";
   {
-    irs::ColWriter w{db, dir.Tracker(kBigSeg)};
+    irs::ColWriter w{db, dir.Tracker(kBigSeg), TestAlloc()};
     auto& id_w =
       w.OpenColumn(kIdCol, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     auto& name_w = w.OpenColumn(kNameCol, duckdb::LogicalType::BLOB,
@@ -2279,8 +2286,8 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kBigRows - 1};
     for (auto i : boundary_rows) {
-      irs::ColumnReader::BlobPointReader id_pr{r, *id_col};
-      irs::ColumnReader::BlobPointReader name_pr{r, *name_col};
+      irs::ColumnReader::BlobPointReader id_pr{r, *id_col, TestAlloc()};
+      irs::ColumnReader::BlobPointReader name_pr{r, *name_col, TestAlloc()};
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       EXPECT_EQ(irs::tests::ReadStoredStr<std::string>(id_pr, doc),
                 std::to_string(3000 + i))
@@ -2291,7 +2298,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     }
     // Seek+iterate over a boundary.
     {
-      irs::ColumnReader::BlobPointReader id_pr{r, *id_col};
+      irs::ColumnReader::BlobPointReader id_pr{r, *id_col, TestAlloc()};
       for (uint64_t i = 510; i <= 515; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         EXPECT_EQ(irs::tests::ReadStoredStr<std::string>(id_pr, doc),
@@ -2348,8 +2355,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
       EXPECT_EQ(id_col->RowCount(), kRowCount);
       EXPECT_EQ(name_col->RowCount(), kRowCount);
 
-      irs::ColumnReader::BlobPointReader id_pr{r, *id_col};
-      irs::ColumnReader::BlobPointReader name_pr{r, *name_col};
+      irs::ColumnReader::BlobPointReader id_pr{r, *id_col, TestAlloc()};
+      irs::ColumnReader::BlobPointReader name_pr{r, *name_col, TestAlloc()};
       for (uint64_t i = 0; i < kRowCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         const bool with_byte = (i % 2 == 0);
@@ -2370,8 +2377,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
       // into the other.
       for (uint64_t i : {0u, 17u, 32u, 49u, 66u, 99u}) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
-        irs::ColumnReader::BlobPointReader id_pr2{r, *id_col};
-        irs::ColumnReader::BlobPointReader name_pr2{r, *name_col};
+        irs::ColumnReader::BlobPointReader id_pr2{r, *id_col, TestAlloc()};
+        irs::ColumnReader::BlobPointReader name_pr2{r, *name_col, TestAlloc()};
         const bool with_byte = (i % 2 == 0);
         const auto exp_id =
           with_byte ? std::string_view{"x", 1} : std::string_view{};
@@ -2391,7 +2398,7 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
       for (uint64_t r_i = kRowCount; r_i-- > 0;) {
         const auto doc =
           static_cast<irs::doc_id_t>(r_i + irs::doc_limits::min());
-        irs::ColumnReader::BlobPointReader id_pr2{r, *id_col};
+        irs::ColumnReader::BlobPointReader id_pr2{r, *id_col, TestAlloc()};
         const bool with_byte = (r_i % 2 == 0);
         const auto exp_id =
           with_byte ? std::string_view{"x", 1} : std::string_view{};
@@ -2402,12 +2409,12 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
 
       // Boundary docs: doc=min, last_valid (doc = kRowCount).
       {
-        irs::ColumnReader::BlobPointReader id_pr2{r, *id_col};
+        irs::ColumnReader::BlobPointReader id_pr2{r, *id_col, TestAlloc()};
         const auto exp_id_min = std::string_view{"x", 1};
         EXPECT_EQ(irs::tests::ReadStoredStr<std::string_view>(
                     id_pr2, irs::doc_limits::min()),
                   exp_id_min);
-        irs::ColumnReader::BlobPointReader id_pr3{r, *id_col};
+        irs::ColumnReader::BlobPointReader id_pr3{r, *id_col, TestAlloc()};
         const auto last_doc =
           static_cast<irs::doc_id_t>(kRowCount + irs::doc_limits::min() - 1);
         const bool with_byte = ((kRowCount - 1) % 2 == 0);
@@ -2434,7 +2441,7 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("same_col_empty_repeat_rg")};
+    irs::ColWriter w{db, dir.Tracker("same_col_empty_repeat_rg"), TestAlloc()};
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
                               {.row_group_size = 512});
     auto& name_w = w.OpenColumn(kBigNameCol, duckdb::LogicalType::BLOB,
@@ -2481,8 +2488,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
         with_byte ? std::string_view{"x", 1} : std::string_view{};
       const auto exp_name =
         with_byte ? std::string_view{"y", 1} : std::string_view{};
-      irs::ColumnReader::BlobPointReader id_pr{r, *id_col};
-      irs::ColumnReader::BlobPointReader name_pr{r, *name_col};
+      irs::ColumnReader::BlobPointReader id_pr{r, *id_col, TestAlloc()};
+      irs::ColumnReader::BlobPointReader name_pr{r, *name_col, TestAlloc()};
       EXPECT_EQ(irs::tests::ReadStoredStr<std::string_view>(id_pr, doc), exp_id)
         << "i=" << i;
       EXPECT_EQ(irs::tests::ReadStoredStr<std::string_view>(name_pr, doc),
@@ -2528,7 +2535,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
 
       // Pass 1: per-row point read.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (uint64_t i = 0; i < kRowCount; ++i) {
           if (live(i)) {
             ASSERT_FALSE(pr.IsNullRow(i)) << "i=" << i;
@@ -2570,7 +2577,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
         const std::vector<uint64_t> probes = {0,    1023, 1024, 1025,
                                               1026, 2036, 500,  1500};
         for (auto i : probes) {
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           if (live(i)) {
             EXPECT_FALSE(pr.IsNullRow(i)) << "i=" << i;
             const auto v = pr.FetchRow(i);
@@ -2584,16 +2591,16 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
 
       // Pass 4: boundary rows -- row 0, last_valid (kRowCount-1).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         EXPECT_FALSE(pr.IsNullRow(0));
         EXPECT_EQ(pr.FetchRow(0).size(), payload.size());
 
-        irs::ColumnReader::BlobPointReader pr2{r, *col};
+        irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
         EXPECT_FALSE(pr2.IsNullRow(kRowCount - 1));
         EXPECT_EQ(pr2.FetchRow(kRowCount - 1).size(), payload.size());
 
         // Row just before/after the gap.
-        irs::ColumnReader::BlobPointReader pr3{r, *col};
+        irs::ColumnReader::BlobPointReader pr3{r, *col, TestAlloc()};
         EXPECT_FALSE(pr3.IsNullRow(1023));
         EXPECT_TRUE(pr3.IsNullRow(1024));
         EXPECT_FALSE(pr3.IsNullRow(1025));
@@ -2601,7 +2608,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
 
       // Pass 5: seek+iterate spanning the gap.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (uint64_t i = 1022; i <= 1027; ++i) {
           if (live(i)) {
             EXPECT_FALSE(pr.IsNullRow(i)) << "i=" << i;
@@ -2628,7 +2635,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("sparse_dense_block_rg")};
+    irs::ColWriter w{db, dir.Tracker("sparse_dense_block_rg"), TestAlloc()};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -2652,7 +2659,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
 
     // Per-row check across the rg-boundary gap.
     {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       for (uint64_t i = 1022; i <= 1027; ++i) {
         const bool expect_live = (i != 1024);
         EXPECT_EQ(pr.IsNullRow(i), !expect_live) << "i=" << i;
@@ -2667,7 +2674,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
       0,    1,    511,  512,  513,  1023, 1024,        1025,
       1499, 1500, 1501, 1535, 1536, 2047, kBigRows - 1};
     for (auto i : boundary_rows) {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       const bool expect_live = (i != 1024 && i != 1500);
       EXPECT_EQ(pr.IsNullRow(i), !expect_live) << "i=" << i;
       if (expect_live) {
@@ -2719,7 +2726,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
         EXPECT_EQ(col->RowCount(), kRowCount);
 
         // Point-read.
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         EXPECT_FALSE(pr.IsNullRow(0));
         EXPECT_TRUE(pr.FetchRow(0).empty());
         EXPECT_FALSE(pr.IsNullRow(1));
@@ -2761,7 +2768,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
         EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
         // Point-read.
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         EXPECT_FALSE(pr.IsNullRow(0));
         EXPECT_TRUE(pr.FetchRow(0).empty());
         EXPECT_TRUE(pr.IsNullRow(1));
@@ -2800,8 +2807,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
         const auto* sparse_col = r.Column(kSparseId);
         ASSERT_NE(dense_col, nullptr);
         ASSERT_NE(sparse_col, nullptr);
-        irs::ColumnReader::BlobPointReader dpr{r, *dense_col};
-        irs::ColumnReader::BlobPointReader spr{r, *sparse_col};
+        irs::ColumnReader::BlobPointReader dpr{r, *dense_col, TestAlloc()};
+        irs::ColumnReader::BlobPointReader spr{r, *sparse_col, TestAlloc()};
         // Row 0 on both.
         EXPECT_FALSE(dpr.IsNullRow(0));
         EXPECT_TRUE(dpr.FetchRow(0).empty());
@@ -2820,16 +2827,16 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
       // Boundary docs on each column: doc=min, last_valid (= doc=4).
       {
         const auto* dense_col = r.Column(kDenseId);
-        irs::ColumnReader::BlobPointReader dpr{r, *dense_col};
+        irs::ColumnReader::BlobPointReader dpr{r, *dense_col, TestAlloc()};
         EXPECT_FALSE(dpr.IsNullDoc(irs::doc_limits::min()));
-        irs::ColumnReader::BlobPointReader dpr2{r, *dense_col};
+        irs::ColumnReader::BlobPointReader dpr2{r, *dense_col, TestAlloc()};
         // doc=4 (row 3) is null in dense.
         EXPECT_TRUE(dpr2.IsNullDoc(irs::doc_limits::min() + 3));
 
         const auto* sparse_col = r.Column(kSparseId);
-        irs::ColumnReader::BlobPointReader spr{r, *sparse_col};
+        irs::ColumnReader::BlobPointReader spr{r, *sparse_col, TestAlloc()};
         EXPECT_FALSE(spr.IsNullDoc(irs::doc_limits::min()));
-        irs::ColumnReader::BlobPointReader spr2{r, *sparse_col};
+        irs::ColumnReader::BlobPointReader spr2{r, *sparse_col, TestAlloc()};
         EXPECT_FALSE(spr2.IsNullDoc(irs::doc_limits::min() + 3));
       }
 
@@ -2838,8 +2845,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
         const auto* dense_col = r.Column(kDenseId);
         const auto* sparse_col = r.Column(kSparseId);
         for (uint64_t i = kRowCount; i-- > 0;) {
-          irs::ColumnReader::BlobPointReader dpr{r, *dense_col};
-          irs::ColumnReader::BlobPointReader spr{r, *sparse_col};
+          irs::ColumnReader::BlobPointReader dpr{r, *dense_col, TestAlloc()};
+          irs::ColumnReader::BlobPointReader spr{r, *sparse_col, TestAlloc()};
           // Dense: live at 0, 1; null at 2, 3.
           EXPECT_EQ(dpr.IsNullRow(i), i >= 2) << "i=" << i;
           // Sparse: live at 0, 3; null at 1, 2.
@@ -2865,7 +2872,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("border_case_rg")};
+    irs::ColWriter w{db, dir.Tracker("border_case_rg"), TestAlloc()};
     auto& dense = w.OpenColumn(kBigDenseId, duckdb::LogicalType::BLOB,
                                {.row_group_size = 512});
     auto& sparse = w.OpenColumn(kBigSparseId, duckdb::LogicalType::BLOB,
@@ -2904,7 +2911,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kBigRows - 1};
     for (auto i : boundary_rows) {
-      irs::ColumnReader::BlobPointReader pr{r, *dense_col};
+      irs::ColumnReader::BlobPointReader pr{r, *dense_col, TestAlloc()};
       const bool expect_live = (i < 1024);
       EXPECT_EQ(pr.IsNullRow(i), !expect_live) << "i=" << i;
       if (expect_live) {
@@ -2914,7 +2921,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
 
     // Sparse column at boundaries (sparse pattern).
     for (auto i : boundary_rows) {
-      irs::ColumnReader::BlobPointReader pr{r, *sparse_col};
+      irs::ColumnReader::BlobPointReader pr{r, *sparse_col, TestAlloc()};
       const bool expect_live = (i % 137 == 0);
       EXPECT_EQ(pr.IsNullRow(i), !expect_live) << "i=" << i;
       if (expect_live) {
@@ -2955,7 +2962,7 @@ TEST_P(FormatTestCase, columns_issue700) {
 
       // Pass 1: point-read every row.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         for (uint64_t i = 0; i < kRowCount; ++i) {
           const auto bytes = pr.FetchRow(i);
           ASSERT_EQ(bytes.size(), 1u + (i % 5)) << "i=" << i;
@@ -2982,7 +2989,7 @@ TEST_P(FormatTestCase, columns_issue700) {
       // Pass 3: random spot checks that straddle the STANDARD_VECTOR_SIZE
       // boundary.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         const std::vector<uint64_t> probes = {0,
                                               STANDARD_VECTOR_SIZE - 1,
                                               STANDARD_VECTOR_SIZE,
@@ -2992,7 +2999,7 @@ TEST_P(FormatTestCase, columns_issue700) {
                                               kRowCount - 1};
         for (auto i : probes) {
           ASSERT_LT(i, kRowCount);
-          irs::ColumnReader::BlobPointReader pr2{r, *col};
+          irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
           const auto bytes = pr2.FetchRow(i);
           ASSERT_EQ(bytes.size(), 1u + (i % 5)) << "i=" << i;
           EXPECT_EQ(bytes[0], static_cast<irs::byte_type>('0' + (i % 10)));
@@ -3002,7 +3009,7 @@ TEST_P(FormatTestCase, columns_issue700) {
       // Pass 4: reversed walk (random-order via fresh readers).
       {
         for (uint64_t r_i = kRowCount; r_i-- > 0;) {
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           const auto bytes = pr.FetchRow(r_i);
           ASSERT_EQ(bytes.size(), 1u + (r_i % 5)) << "i=" << r_i;
           EXPECT_EQ(bytes[0], static_cast<irs::byte_type>('0' + (r_i % 10)))
@@ -3015,7 +3022,7 @@ TEST_P(FormatTestCase, columns_issue700) {
       {
         for (uint64_t k = 0; k < 100; ++k) {
           const uint64_t i = (k * 11) % kRowCount;
-          irs::ColumnReader::BlobPointReader pr{r, *col};
+          irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
           const auto bytes = pr.FetchRow(i);
           ASSERT_EQ(bytes.size(), 1u + (i % 5)) << "k=" << k << " i=" << i;
           EXPECT_EQ(bytes[0], static_cast<irs::byte_type>('0' + (i % 10)));
@@ -3024,12 +3031,12 @@ TEST_P(FormatTestCase, columns_issue700) {
 
       // Pass 6: boundary docs -- doc=min and last_valid (doc=kRowCount).
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         const auto bytes_min = pr.FetchDoc(irs::doc_limits::min());
         ASSERT_EQ(bytes_min.size(), 1u);
         EXPECT_EQ(bytes_min[0], static_cast<irs::byte_type>('0'));
 
-        irs::ColumnReader::BlobPointReader pr2{r, *col};
+        irs::ColumnReader::BlobPointReader pr2{r, *col, TestAlloc()};
         const auto bytes_last = pr2.FetchRow(kRowCount - 1);
         EXPECT_EQ(bytes_last.size(), 1u + ((kRowCount - 1) % 5));
       }
@@ -3037,7 +3044,7 @@ TEST_P(FormatTestCase, columns_issue700) {
       // Pass 7: seek+iterate -- jump to K then K+1..K+5 sequentially.
       // K placed straddling the STANDARD_VECTOR_SIZE boundary.
       {
-        irs::ColumnReader::BlobPointReader pr{r, *col};
+        irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
         const uint64_t kStart = STANDARD_VECTOR_SIZE - 2;
         for (uint64_t i = kStart; i < kStart + 6; ++i) {
           const auto bytes = pr.FetchRow(i);
@@ -3063,7 +3070,7 @@ TEST_P(FormatTestCase, columns_issue700) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{db, dir.Tracker("issue700_rg")};
+    irs::ColWriter w{db, dir.Tracker("issue700_rg"), TestAlloc()};
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,
                             {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -3102,7 +3109,7 @@ TEST_P(FormatTestCase, columns_issue700) {
                                                  kBigRows - 1};
     for (auto i : boundary_rows) {
       ASSERT_LT(i, kBigRows);
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       const auto bytes = pr.FetchRow(i);
       ASSERT_EQ(bytes.size(), 1u + (i % 5)) << "i=" << i;
       EXPECT_EQ(bytes[0], static_cast<irs::byte_type>('0' + (i % 10)));
@@ -3111,7 +3118,7 @@ TEST_P(FormatTestCase, columns_issue700) {
     // Seek+iterate spanning a row-group boundary (start at 510, walk to
     // 515).
     {
-      irs::ColumnReader::BlobPointReader pr{r, *col};
+      irs::ColumnReader::BlobPointReader pr{r, *col, TestAlloc()};
       for (uint64_t i = 510; i <= 515; ++i) {
         const auto bytes = pr.FetchRow(i);
         ASSERT_EQ(bytes.size(), 1u + (i % 5)) << "i=" << i;

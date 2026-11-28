@@ -66,8 +66,7 @@ class WholeCount : public Root {
 
 template<typename Make>
 Root::ptr MakeWholeCount(uint64_t count, const Context& ctx, Make make) {
-  return memory::make_managed<WholeCount<Make>>(count, ctx.span,
-                                                std::move(make));
+  return ctx.memory.Make<WholeCount<Make>>(count, ctx.span, std::move(make));
 }
 
 }  // namespace irs::count

@@ -39,18 +39,23 @@
 #include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
 class FieldWriter final : public FieldSink {
  public:
-  explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
+  explicit FieldWriter(bool compaction, TrackedAllocator<> alloc);
 
   FieldWriter(const FieldWriter&) = delete;
   FieldWriter& operator=(const FieldWriter&) = delete;
 
+  static uint64_t Bound(uint64_t terms, uint64_t docs, bool ranges,
+                        bool vec) noexcept;
+
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void prepare(const FlushState& state, uint64_t keyed_dicts) final;
+  void prepare(const FlushState& state, uint64_t keyed_dicts,
+               uint64_t terms) final;
   void write(DictRef dict, const BasicTermReader& reader) final;
   void WriteSlot(field_id id, DictRef dict,
                  std::span<const doc_id_t> docs) final;
@@ -77,6 +82,7 @@ class FieldWriter final : public FieldSink {
   void ResetField() noexcept;
   void Reset() noexcept;
 
+  TrackedAllocator<> _alloc;
   PostingsWriter _pw;
   BlockEncoder _encoder;
   BlockRecords _records;
@@ -84,11 +90,11 @@ class FieldWriter final : public FieldSink {
   std::vector<SpanningBlock> _spans;
   std::vector<FieldHead> _heads;
   DictIndexBuilder _index;
-  bstring _key_prefix;
-  bstring _min;
-  bstring _last;
+  TrackedBstring _key_prefix;
+  TrackedBstring _min;
+  TrackedBstring _last;
   Separators _separators;
-  std::vector<DictSections> _sections;
+  TrackedVector<DictSections> _sections;
   PostingMeta _single;
   IdxWriter* _idx = nullptr;
   duckdb::WriteStream* _out = nullptr;

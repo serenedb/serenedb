@@ -21,36 +21,28 @@
 #pragma once
 
 #include <cstddef>
-#include <duckdb/storage/buffer_manager.hpp>
-#include <memory>
 #include <string_view>
-#include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
 class SegmentBuffer {
  public:
-  explicit SegmentBuffer(duckdb::BufferManager& buffers) noexcept
-    : _buffers{&buffers} {}
+  explicit SegmentBuffer(TrackedAllocator<> alloc) noexcept : _data{alloc} {}
 
   SegmentBuffer(const SegmentBuffer&) = delete;
   SegmentBuffer& operator=(const SegmentBuffer&) = delete;
 
-  ~SegmentBuffer() { _buffers->FreeReservedMemory(_capacity); }
-
   template<typename Self>
   auto* Data(this Self& self) noexcept {
-    if constexpr (std::is_const_v<Self>) {
-      return static_cast<const char*>(self._data.get());
-    } else {
-      return self._data.get();
-    }
+    return self._data.data();
   }
 
   char* Extend(size_t n) {
-    if (_size + n > _capacity) {
+    if (_size + n > _data.size()) {
       Grow(_size + n);
     }
     auto* at = Data() + _size;
@@ -75,9 +67,7 @@ class SegmentBuffer {
  private:
   void Grow(size_t need);
 
-  duckdb::BufferManager* _buffers;
-  std::unique_ptr<char[]> _data;
-  size_t _capacity = 0;
+  TrackedScratchVector<char> _data;
   size_t _size = 0;
 };
 

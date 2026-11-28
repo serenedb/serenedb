@@ -95,6 +95,9 @@ class ExtractBinding {
   };
 
   void Resolve();
+  irs::TrackedAllocator<> Allocator() const noexcept {
+    return _state->ctx->Allocator();
+  }
   const duckdb::vector<duckdb::VariantPathComponent>& Components() const;
   const duckdb::vector<duckdb::VariantPathComponent>& ComponentsSuffix(
     size_t skip) const;

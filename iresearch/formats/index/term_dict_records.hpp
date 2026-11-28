@@ -35,6 +35,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -296,6 +297,8 @@ class RecordRun {
     uint32_t pos_offset = 0;
   };
 
+  explicit RecordRun(TrackedAllocator<> alloc);
+
   void Start(IndexFeatures features) noexcept {
     _features = features;
     Clear();
@@ -311,6 +314,13 @@ class RecordRun {
 
  private:
   struct SparseColumn {
+    explicit SparseColumn(TrackedAllocator<> alloc)
+      : keys{alloc},
+        values{
+          TrackedVector<uint64_t>{alloc},
+          TrackedVector<uint64_t>{alloc},
+        } {}
+
     void Clear() noexcept {
       keys.clear();
       values[0].clear();
@@ -322,8 +332,8 @@ class RecordRun {
       values[1].push_back(v1);
     }
 
-    std::vector<uint64_t> keys;
-    std::array<std::vector<uint64_t>, 2> values;
+    TrackedVector<uint64_t> keys;
+    std::array<TrackedVector<uint64_t>, 2> values;
   };
 
   uint64_t SparseBytes(const SparseStats& stats,
@@ -333,14 +343,14 @@ class RecordRun {
 
   IndexFeatures _features = IndexFeatures::None;
   Stats _stats;
-  std::vector<uint8_t> _multi_bits;
-  std::vector<uint64_t> _singles;
-  std::vector<uint64_t> _docs;
-  std::vector<uint64_t> _excess;
-  std::vector<uint64_t> _starts;
-  std::vector<uint64_t> _freq_anchors;
-  std::vector<uint64_t> _vec_starts;
-  std::vector<uint64_t> _lanes;
+  TrackedVector<uint8_t> _multi_bits;
+  TrackedVector<uint64_t> _singles;
+  TrackedVector<uint64_t> _docs;
+  TrackedVector<uint64_t> _excess;
+  TrackedVector<uint64_t> _starts;
+  TrackedVector<uint64_t> _freq_anchors;
+  TrackedVector<uint64_t> _vec_starts;
+  TrackedVector<uint64_t> _lanes;
   SparseColumn _big;
   SparseColumn _crossings;
   SparseColumn _extents;
@@ -348,7 +358,9 @@ class RecordRun {
 
 class BlockRecords {
  public:
-  BlockRecords() { _runs.emplace_back(); }
+  explicit BlockRecords(TrackedAllocator<> alloc) : _runs{alloc} {
+    _runs.emplace_back(alloc);
+  }
 
   RecordRun& Open() noexcept { return _runs[_closed]; }
 
@@ -364,7 +376,7 @@ class BlockRecords {
     }
     _bytes += run.Bytes();
     if (++_closed == _runs.size()) {
-      _runs.emplace_back();
+      _runs.emplace_back(TrackedAllocator<>{_runs.get_allocator()});
     }
     _runs[_closed].Start(_features);
   }
@@ -392,7 +404,7 @@ class BlockRecords {
   uint64_t Bytes() const noexcept { return _bytes; }
 
  private:
-  std::vector<RecordRun> _runs;
+  TrackedVector<RecordRun> _runs;
   size_t _closed = 0;
   uint64_t _bytes = 0;
   IndexFeatures _features = IndexFeatures::None;

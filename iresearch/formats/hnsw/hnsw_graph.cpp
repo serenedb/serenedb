@@ -209,8 +209,9 @@ HnswGraphFrames HnswGraph::SerializePacked(duckdb::WriteStream& out,
   return frames;
 }
 
-HnswGraph HnswGraph::Deserialize(duckdb::InputFileReader& in) {
-  HnswGraph g;
+HnswGraph HnswGraph::Deserialize(duckdb::InputFileReader& in,
+                                 TrackedAllocator<> alloc) {
+  HnswGraph g{alloc};
   g._m = in.Read<uint32_t>();
   g._m0 = 2 * g._m;
   g._entry = in.Read<uint32_t>();
@@ -224,8 +225,9 @@ HnswGraph HnswGraph::Deserialize(duckdb::InputFileReader& in) {
 
 HnswGraph HnswGraph::DeserializePacked(duckdb::InputFileReader& in,
                                        const HnswGraphFrames& frames,
-                                       ParallelFor parallel) {
-  HnswGraph g;
+                                       ParallelFor parallel,
+                                       TrackedAllocator<> alloc) {
+  HnswGraph g{alloc};
   g._m = in.Read<uint32_t>();
   g._m0 = 2 * g._m;
   g._entry = in.Read<uint32_t>();
@@ -249,6 +251,19 @@ uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept {
   const double sample = -std::log(u) * factor;
   return std::min(static_cast<uint32_t>(std::lround(sample)) + 1,
                   kHnswMaxLevel);
+}
+
+uint64_t HnswUpperLevelsBound(uint64_t rows, uint32_t m) noexcept {
+  const double base = std::max(m, 2U);
+  const double expected = std::sqrt(base) / (base - 1);
+  return static_cast<uint64_t>(
+           std::ceil(2 * expected * static_cast<double>(rows))) +
+         kHnswMaxLevel;
+}
+
+uint64_t HnswScratchBound(uint64_t rows, uint32_t ef, uint32_t m0) noexcept {
+  const uint64_t bitset = sizeof(uint64_t) * ((rows + 63) / 64);
+  return 2 * bitset + 64 * (uint64_t{ef} + m0) * sizeof(HnswCandidate);
 }
 
 void HnswSuffixNorms(const float* v, uint32_t d, uint32_t width, uint32_t first,

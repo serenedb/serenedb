@@ -64,6 +64,45 @@ sdb_faults
 (empty)
 
 
+# NAME@N arms NAME; a point that counts its hits fires once, on the Nth.
+statement ok
+SET sdb_faults = 'some4@3';
+
+
+statement error
+SET sdb_faults = 'some4@5';
+----
+db error: ERROR: failure point 'some4@5' already set
+
+
+query
+SHOW sdb_faults
+----
+sdb_faults
+some4
+
+
+statement ok
+SET sdb_faults = '-some4@7';
+
+
+query
+SHOW sdb_faults
+----
+sdb_faults
+(empty)
+
+
+statement error
+SET sdb_faults = '-some4@3';
+----
+db error: ERROR: failure point '-some4@3' not set
+
+
+statement ok
+RESET sdb_faults;
+
+
 # ---------------------------------------------------------------------------
 # `sdb_faults` is superuser-only. The registry behind it is process-global, so
 # an armed point fires in every session: before the gate, a bare LOGIN role

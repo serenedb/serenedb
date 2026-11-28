@@ -32,21 +32,22 @@ bool HandlesOf(const TermReader* field, Handles& out) {
          out.pay != nullptr;
 }
 
-Root::ptr Make(const FixedPhraseQuery& query) {
+Root::ptr Make(PlanMemory& memory, const FixedPhraseQuery& query) {
   return Resolve<detail::PhraseMatchAxis>(query, [&]<detail::PhraseMatch M> {
-    return PhraseMaker<M, FixedPhraseQuery>::Make(query);
+    return PhraseMaker<M, FixedPhraseQuery>::Make(memory, query);
   });
 }
 
-Root::ptr Make(const VariadicPhraseQuery& query) {
+Root::ptr Make(PlanMemory& memory, const VariadicPhraseQuery& query) {
   return Resolve<detail::PhraseMatchAxis>(query, [&]<detail::PhraseMatch M> {
-    return PhraseMaker<M, VariadicPhraseQuery>::Make(query);
+    return PhraseMaker<M, VariadicPhraseQuery>::Make(memory, query);
   });
 }
 
-Root::ptr Make(const NGramSimilarityQuery& query) {
-  return Resolve<detail::NGramMatchAxis>(
-    query, [&]<detail::NGramMatch M> { return NGramMaker<M>::Make(query); });
+Root::ptr Make(PlanMemory& memory, const NGramSimilarityQuery& query) {
+  return Resolve<detail::NGramMatchAxis>(query, [&]<detail::NGramMatch M> {
+    return NGramMaker<M>::Make(memory, query);
+  });
 }
 
 }  // namespace irs::offsets

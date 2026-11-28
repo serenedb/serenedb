@@ -44,12 +44,13 @@ Result BuildPrunedPhrase(const Query& query, const Context& ctx, Make&& make) {
   if (!record.stats) {
     return {};
   }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
+                                    .scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return irs::detail::BuildPhrase<M, true, false, false>(
-    query, [&]<typename Slots>(auto&&... rest) -> Result {
+    ctx.memory, query, [&]<typename Slots>(auto&&... rest) -> Result {
       return make.template operator()<Slots>(
         query.Segment(), *query.state.reader, args, ctx.bounds,
         std::forward<decltype(rest)>(rest)...);
@@ -70,8 +71,8 @@ template<irs::detail::PhraseMatch M, typename Query>
 UnionMember::ptr PhraseMaker<M, Query>::Member(const Query& query,
                                                const Context& ctx) {
   return BuildPrunedPhrase<M, UnionMember::ptr>(
-    query, ctx, []<typename Slots>(auto&&... args) -> UnionMember::ptr {
-      auto member = memory::make_managed<PhraseUnionMember<Slots>>(
+    query, ctx, [&]<typename Slots>(auto&&... args) -> UnionMember::ptr {
+      auto member = ctx.memory.Make<PhraseUnionMember<Slots>>(
         std::forward<decltype(args)>(args)...);
       if (!member->Bounded()) {
         return {};
@@ -84,8 +85,8 @@ template<irs::detail::PhraseMatch M, typename Query>
 PrunedClause::ptr PhraseMaker<M, Query>::Clause(const Query& query,
                                                 const Context& ctx) {
   return BuildPrunedPhrase<M, PrunedClause::ptr>(
-    query, ctx, []<typename Slots>(auto&&... args) -> PrunedClause::ptr {
-      return memory::make_managed<PrunedClauseImpl<PhrasePrunedClause<Slots>>>(
+    query, ctx, [&]<typename Slots>(auto&&... args) -> PrunedClause::ptr {
+      return ctx.memory.Make<PrunedClauseImpl<PhrasePrunedClause<Slots>>>(
         std::forward<decltype(args)>(args)...);
     });
 }

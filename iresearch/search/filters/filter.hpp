@@ -53,7 +53,9 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/parallel_for.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -62,8 +64,8 @@ struct PreparedStateVisitor;
 class QueryProfile;
 
 struct PrepareContext {
+  QueryMemory& memory;
   PrepareCollector* collector = nullptr;
-  IResourceManager& memory = IResourceManager::gNoop;
   const AttributeProvider* ctx = nullptr;
   score_t boost = kNoBoost;
   uint32_t thread = 0;
@@ -95,7 +97,7 @@ enum class QueryKind : uint32_t {
   Ann,
 };
 
-class QueryBuilder : public memory::Managed {
+class QueryBuilder : public memory::Managed, public memory::ArenaOnly {
  public:
   using ptr = memory::managed_ptr<const QueryBuilder>;
 

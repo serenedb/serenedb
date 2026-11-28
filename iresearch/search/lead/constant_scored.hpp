@@ -26,6 +26,7 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
@@ -34,8 +35,10 @@ template<typename Leaf>
 class ConstantScored {
  public:
   template<typename... Args>
-  ConstantScored(score_t constant, Args&&... args)
-    : _leaf{std::forward<Args>(args)...}, _constant{constant} {}
+  ConstantScored(PlanMemory& memory, score_t constant, Args&&... args)
+    : _leaf{std::forward<Args>(args)...},
+      _memory{&memory},
+      _constant{constant} {}
 
   ConstantScored(ConstantScored&&) = delete;
   ConstantScored& operator=(ConstantScored&&) = delete;
@@ -53,14 +56,15 @@ class ConstantScored {
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t) noexcept {}
 
-  ScoreFunction PrepareScore() { return ScoreFunction::Constant(_constant); }
-
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    detail::AppendScorer(out, PrepareScore());
+  ScoreFunction PrepareScore() {
+    return ScoreFunction::Constant(*_memory, _constant);
   }
+
+  void CollectScorers(auto& out) { detail::AppendScorer(out, PrepareScore()); }
 
  private:
   Leaf _leaf;
+  PlanMemory* _memory;
   score_t _constant;
   doc_id_t _doc = doc_limits::invalid();
 };

@@ -48,16 +48,15 @@ void TermQuery::Visit(PreparedStateVisitor& visitor, score_t boost) const {
   visitor.Visit(_state, boost * _boost);
 }
 
-QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
-                                const SubReader& segment,
+QueryBuilder::ptr MakeTermQuery(QueryMemory& memory, const SubReader& segment,
                                 const TermReader* reader,
                                 const PostingMeta& meta, score_t boost,
                                 detail::StatsRecord stats, bool range_posting) {
   if (meta.docs_count == 0) {
     return QueryBuilder::Empty();
   }
-  return memory::make_tracked<TermQuery>(memory, segment, reader, meta, boost,
-                                         stats, range_posting);
+  return memory.Make<TermQuery>(segment, reader, meta, boost, stats,
+                                range_posting);
 }
 
 }  // namespace irs

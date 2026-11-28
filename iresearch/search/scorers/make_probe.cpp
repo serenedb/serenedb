@@ -39,10 +39,10 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
-  ProbeScore(ScoreFunction&& required, std::vector<ScoreFunction>&& probed,
-             ScoreMask* held, score_t constant) noexcept
+  ProbeScore(PlanMemory& memory, ScoreFunction&& required,
+             std::span<ScoreFunction> probed, ScoreMask* held, score_t constant)
     : _required{std::move(required)},
-      _probed{probed.size(),
+      _probed{memory.Arena(), probed.size(),
               [&](ScoreFunction& slot, size_t i) noexcept {
                 slot = std::move(probed[i]);
               }},
@@ -136,29 +136,30 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
   ABSL_CACHELINE_ALIGNED mutable score_t _scratch[kScoreBlock];
 };
 
-bool AnyProbed(const std::vector<ScoreFunction>& probed) noexcept {
+bool AnyProbed(std::span<const ScoreFunction> probed) noexcept {
   return absl::c_any_of(probed,
                         [](const ScoreFunction& s) { return !s.IsDefault(); });
 }
 
 }  // namespace
 
-ScoreFunction MakeProbeScore(ScoreMergeType inner, ScoreFunction&& required,
-                             std::vector<ScoreFunction>&& probed,
-                             ScoreMask* held, score_t constant) {
+ScoreFunction MakeProbeScore(PlanMemory& memory, ScoreMergeType inner,
+                             ScoreFunction&& required,
+                             std::span<ScoreFunction> probed, ScoreMask* held,
+                             score_t constant) {
   if (!AnyProbed(probed)) {
-    probed.clear();
+    probed = {};
     if (constant == 0) {
       return std::move(required);
     }
     if (required.IsDefault()) {
-      return ScoreFunction::Constant(constant);
+      return ScoreFunction::Constant(memory, constant);
     }
   }
   return Resolve(constant != 0, [&]<bool HasConst> {
     return Resolve(inner, [&]<ScoreMergeType M> {
       return ScoreFunction::Make<ProbeScore<M, HasConst>>(
-        std::move(required), std::move(probed), held, constant);
+        memory, memory, std::move(required), probed, held, constant);
     });
   });
 }

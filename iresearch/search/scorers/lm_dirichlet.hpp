@@ -66,7 +66,7 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
 
   ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 
-  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+  ScoreBoundSource::ptr PrepareScoreBoundSource(PlanMemory& memory) const final;
 
   bool HasScoreBounds() const noexcept final { return true; }
 

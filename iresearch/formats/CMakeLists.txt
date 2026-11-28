@@ -13,6 +13,9 @@ target_sources(
         column/codecs/numeric/alprd.cpp
         column/codecs/numeric/numeric.cpp
         column/codecs/registry.cpp
+        column/codecs/seal_bound.cpp
+        column/codecs/text/fsst12_footprint.cpp
+        column/codecs/text/fsst8_footprint.cpp
         column/codecs/text/fsst_front.cpp
         column/codecs/text/fsst_plus.cpp
         column/codecs/text/lz4.cpp

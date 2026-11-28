@@ -38,13 +38,13 @@ namespace hits {
 
 template<template<typename...> typename Shape, typename... Parts,
          typename... Args>
-Root::ptr MakeShape(const Context&, Args&&... args) {
-  return memory::make_managed<Shape<Parts...>>(std::forward<Args>(args)...);
+Root::ptr MakeShape(const Context& ctx, Args&&... args) {
+  return ctx.memory.Make<Shape<Parts...>>(std::forward<Args>(args)...);
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
-Root::ptr MakeEmpty();
+Root::ptr MakeEmpty(PlanMemory& memory);
 
 }  // namespace hits
 }  // namespace irs

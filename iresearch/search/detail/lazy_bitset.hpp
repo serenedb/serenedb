@@ -79,9 +79,9 @@ class LazyBitset {
     }
   }
 
-  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count, GenericDocsMask&& mask,
-             TableFilter* table = nullptr)
-    : _set{docs_count, memory::kAllocateOnly},
+  LazyBitset(PlanMemory& memory, FillNode::ptr&& node, doc_id_t docs_count,
+             GenericDocsMask&& mask, TableFilter* table = nullptr)
+    : _set{memory.Scratch(), docs_count, memory::kAllocateOnly},
       _node{std::move(node)},
       _mask{std::move(mask)},
       _has_removals{!doc_limits::eof(_mask.Probe(doc_limits::min()))},
@@ -90,8 +90,9 @@ class LazyBitset {
     SDB_ASSERT(!_table || _table->Foldable());
   }
 
-  LazyBitset(doc_id_t docs_count, GenericDocsMask&& mask, TableFilter* table)
-    : _set{docs_count, memory::kAllocateOnly},
+  LazyBitset(PlanMemory& memory, doc_id_t docs_count, GenericDocsMask&& mask,
+             TableFilter* table)
+    : _set{memory.Scratch(), docs_count, memory::kAllocateOnly},
       _mask{std::move(mask)},
       _has_removals{!doc_limits::eof(_mask.Probe(doc_limits::min()))},
       _table{table} {
@@ -250,18 +251,19 @@ class LazyBitset {
   doc_id_t _filled = kMin;
 };
 
-inline LazyBitset MakeDocSet(const QueryBuilder* query, doc_id_t docs_count,
+inline LazyBitset MakeDocSet(PlanMemory& memory, const QueryBuilder* query,
+                             doc_id_t docs_count,
                              TableFilter* table = nullptr) {
   if (!query) {
-    return LazyBitset{docs_count, MakeGenericDocsMask(nullptr), table};
+    return LazyBitset{memory, docs_count, MakeGenericDocsMask(nullptr), table};
   }
-  auto node = query->PlanFill({}, ScoreMergeType::Noop);
+  auto node = query->PlanFill({.memory = memory}, ScoreMergeType::Noop);
   SDB_ASSERT(node);
   if (auto* folded = node->Folded()) {
     return LazyBitset{std::move(*folded), MakeGenericDocsMask(nullptr), table};
   }
-  return LazyBitset{std::move(node), docs_count, MakeGenericDocsMask(nullptr),
-                    table};
+  return LazyBitset{memory, std::move(node), docs_count,
+                    MakeGenericDocsMask(nullptr), table};
 }
 
 class CountAgainst {

@@ -35,6 +35,7 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
@@ -328,21 +329,56 @@ duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
   return catalog;
 }
 
+namespace {
+
+duckdb::optional_ptr<TokenizerCatalogEntry> FindDictionary(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog, duckdb::idx_t oid) {
+  return catalog.Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
+    catalog.GetCatalogTransaction(context), oid);
+}
+
+duckdb::optional_ptr<duckdb::Catalog> IndexDictionaryCatalog(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog,
+  const InvertedIndexConfig& config) {
+  auto current = DictionaryCatalog(context, catalog);
+  if (!catalog.GetAttached().IsTemporary()) {
+    return current;
+  }
+  const auto field = absl::c_find_if(config.fields, [](const auto& field) {
+    return field.second.HasTextDictionary();
+  });
+  if (field == config.fields.end()) {
+    return current;
+  }
+  const auto oid = field->second.text_dictionary;
+  if (current && FindDictionary(context, *current, oid)) {
+    return current;
+  }
+  for (const auto& database :
+       duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
+    auto& other = database->GetCatalog();
+    if (&other != current.get() && !database->IsTemporary() &&
+        IsSereneDB(other) && FindDictionary(context, other, oid)) {
+      return other;
+    }
+  }
+  return current;
+}
+
+}  // namespace
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
   const bool temporary = catalog.GetAttached().IsTemporary();
-  auto dictionaries = DictionaryCatalog(context, catalog);
+  auto dictionaries = IndexDictionaryCatalog(context, catalog, config);
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict =
-        dictionaries
-          ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
-              dictionaries->GetCatalogTransaction(context),
-              field.text_dictionary)
-          : nullptr;
+      const auto dict = dictionaries ? FindDictionary(context, *dictionaries,
+                                                      field.text_dictionary)
+                                     : nullptr;
       if (!dict && temporary) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG("text search dictionary with OID ",

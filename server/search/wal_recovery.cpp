@@ -29,6 +29,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -46,10 +47,12 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "runtime/runtime.h"
 #include "search/engine.h"
 #include "search/parallel.h"
 #include "search/store.h"
 #include "search/task.h"
+#include "server/utils/lifecycle.h"
 
 namespace sdb::search {
 namespace {
@@ -88,6 +91,38 @@ std::vector<std::shared_ptr<Store>> DurableStores() {
   return tables;
 }
 
+void OpenLocalFiles(std::span<const std::shared_ptr<Store>> stores) {
+  std::vector<std::weak_ptr<Store>> local;
+  for (const auto& store : stores) {
+    if (!store->Remote()) {
+      local.push_back(store);
+    }
+  }
+  if (local.empty()) {
+    return;
+  }
+  Runtime::Get()
+    .Run([local = std::move(local)] {
+      for (const auto& weak : local) {
+        if (lifecycle::IsStopping() || Runtime::Get().IsStopping()) {
+          return;
+        }
+        const auto store = weak.lock();
+        if (!store) {
+          continue;
+        }
+        try {
+          store->OpenFiles();
+        } catch (const std::exception& e) {
+          SDB_WARN(SEARCH, "table '", store->GetId(),
+                   "': opening its files after startup failed: ",
+                   duckdb::ErrorData{e}.RawMessage());
+        }
+      }
+    })
+    .Detach();
+}
+
 }  // namespace
 
 bool RecoverSearchStorages(
@@ -109,13 +144,9 @@ bool RecoverSearchStorages(
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(db);
   context.RunFunctionInTransaction([&] {
     duckdb::TaskExecutor replays{scheduler};
-    duckdb::TaskExecutor remote_opens{scheduler,
-                                      duckdb::TaskSchedulerType::ASYNC};
     for (auto& table : tables) {
-      table->ScheduleRecovery(context, replays,
-                              table->Remote() ? remote_opens : replays);
+      table->ScheduleRecovery(context, replays);
     }
-    remote_opens.WorkOnTasks();
     replays.WorkOnTasks();
   });
   duckdb::TaskExecutor executor{scheduler};
@@ -142,6 +173,7 @@ bool RecoverSearchStorages(
              replayed_tables.load(std::memory_order_relaxed), " of ",
              tables.size(), " table(s) in ", absl::FormatDuration(duration));
   }
+  OpenLocalFiles(tables);
   return cleaned.load(std::memory_order_relaxed);
 }
 

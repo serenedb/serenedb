@@ -22,7 +22,7 @@ import psycopg
 
 HEADER = struct.Struct("<II")
 U32 = struct.Struct("<I")
-SNAPSHOT_HEADER = struct.Struct("<QQQ")
+SNAPSHOT_HEADER = struct.Struct("<QQQQ")
 SEGMENT_SUFFIXES = (".col", ".idx", ".doc", ".pos", ".pay")
 FOOTER_SUFFIXES = (".col", ".idx")
 SIZE_BUCKETS = [
@@ -376,7 +376,7 @@ def parse_wal(wal, blobs, tag):
         payloads, end = parse_records(buf)
         if not payloads or len(payloads[0]) != SNAPSHOT_HEADER.size:
             raise RuntimeError(f"{snapshot_path} does not start with a snapshot header")
-        covered, number, begin = SNAPSHOT_HEADER.unpack_from(payloads[0])
+        covered, number, begin, _ = SNAPSHOT_HEADER.unpack_from(payloads[0])
         history = PayloadStats()
         tables = PayloadStats()
         for i, payload in enumerate(payloads[1:]):

@@ -179,12 +179,24 @@ DROP SERVER sfd_again_snap;
 system ok
 rm -rf $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_torn && cd $__TEST_DIR__/sfd_torn/engine_v1/store && rm $(cat $__TEST_DIR__/sfd_notes.files)
 
-statement error
+statement ok
 CREATE SERVER sfd_torn FOREIGN DATA WRAPPER serenedb_fdw
   OPTIONS (path '${__TEST_DIR__}/sfd_torn', database 'sfd_shop');
-----
-db error: ERROR: cannot open the files of relation <slt:ignore>: <slt:ignore>No such file or directory
 
+statement error
+SELECT count(*), max(body) FROM sfd_torn.public.notes;
+----
+db error: ERROR: <slt:ignore>No such file or directory
+
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM sfd_torn.public.docs;
+----
+n	s
+100	5050
+
+statement ok
+DROP SERVER sfd_torn;
 
 query
 SELECT count(*) AS n FROM sdb_databases() WHERE database_name IN ('sfd_snap', 'sfd_again_snap', 'sfd_torn');

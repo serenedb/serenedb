@@ -4763,6 +4763,7 @@ TEST(DirectoryTest, memory_reader_reads_removed_files) {
   }
   const auto reader =
     ::tests::OpenReader(files, irs::tests::DefaultReaderOptions());
+  reader.LoadStats();
 
   files.Fs().RemoveDirectory(files.Root());
   ASSERT_TRUE(files.Files().empty());

@@ -252,6 +252,9 @@ void InitCatalog(bool default_database, bool initialized) {
           [&] { clean = ReplayRecord(context, target, payload); });
       },
       &CatalogPart);
+    if (const auto oids = log->SnapshotOids(); oids != 0) {
+      duckdb::DatabaseManager::Get(instance).ClaimOid(oids - 1);
+    }
     transactions.SetReplaying(false);
     if (clean) {
       log->Append(StartupRecord());

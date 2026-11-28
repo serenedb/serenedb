@@ -153,9 +153,11 @@ class Log {
 
   Lsn Append(RecordBuffer record);
 
-  void WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
-                     CatalogPart part, Compact compact);
+  void WriteSnapshot(Lsn covered, uint64_t oids,
+                     std::span<const RecordBuffer> records, CatalogPart part,
+                     Compact compact);
   void DropCovered();
+  uint64_t SnapshotOids() const noexcept { return _snapshot_oids; }
 
   static constexpr uint64_t kTailBytes = uint64_t{16} << 20;
 
@@ -260,6 +262,7 @@ class Log {
   std::atomic<uint64_t> _covered_number{0};
   std::atomic<uint64_t> _snapshot_bytes{0};
   std::atomic<uint64_t> _history_bytes{0};
+  uint64_t _snapshot_oids = 0;
   absl::Mutex _files_mutex;
   uint64_t _snapshot ABSL_GUARDED_BY(_files_mutex) = 0;
   std::vector<std::vector<uint8_t>> _history ABSL_GUARDED_BY(_files_mutex);

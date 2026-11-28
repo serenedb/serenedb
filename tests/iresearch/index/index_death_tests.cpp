@@ -190,7 +190,7 @@ void IndexDeathTest::OpenReader(
 
   while (!fs.NoFailures()) {
     ASSERT_SQL_ERROR(
-      (tests::OpenReader(dir, irs::tests::DefaultReaderOptions())),
+      (tests::OpenReader(dir, irs::tests::DefaultReaderOptions()).LoadStats()),
       ERRCODE_IO_ERROR);
   }
 

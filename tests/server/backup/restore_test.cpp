@@ -111,7 +111,7 @@ class RestoreTest : public ::testing::Test {
       _ends.push_back(log.Append(Bytes(Half('C'))));
       if (snapshot) {
         log.WriteSnapshot(
-          _ends[1], {}, [](std::span<uint8_t> payload) { return payload; },
+          _ends[1], 0, {}, [](std::span<uint8_t> payload) { return payload; },
           &Keep);
         log.DropCovered();
       }

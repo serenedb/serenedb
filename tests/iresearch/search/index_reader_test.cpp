@@ -173,6 +173,86 @@ TEST(composite_reader_test, term_ranges_span_segments) {
   EXPECT_FALSE(reader.GetTermRange(kBoth, irs::StringLayout::kNulls));
 }
 
+TEST(composite_reader_test, loads_stats_on_first_use) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+  CommitNames(*writer, {"B", "D"}, irs::IndexFeatures::None);
+  CommitNames(*writer, {"A", "A"}, irs::IndexFeatures::None);
+  const auto committed = dir.Committed();
+  ASSERT_EQ(2, committed.size());
+
+  OpenedFiles fs{dir.Fs()};
+  std::vector<irs::SegmentReader> segments;
+  std::set<std::string> columns;
+  std::set<std::string> indexes;
+  for (const auto& meta : committed) {
+    segments.emplace_back(irs::SegmentReaderImpl::Open(
+      dir.Db(), fs, dir.Root(), meta, irs::tests::DefaultReaderOptions(),
+      nullptr));
+    columns.merge(FilesOf(meta, irs::kColFile));
+    indexes.merge(
+      FilesOf(meta, static_cast<uint8_t>(meta.kinds & ~irs::kColFile)));
+  }
+  const irs::CompositeReader reader{std::move(segments), /*stats=*/true};
+  EXPECT_EQ(4, reader.docs_count());
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+
+  ASSERT_NE(nullptr, reader.GetColumnStats(kName));
+  EXPECT_EQ(columns, fs.Take());
+
+  const auto* terms = reader.GetTermRange(kName, irs::StringLayout::kStrings);
+  ASSERT_NE(nullptr, terms);
+  EXPECT_EQ(irs::ViewCast<char>(terms->min), "A");
+  EXPECT_EQ(irs::ViewCast<char>(terms->max), "D");
+  EXPECT_EQ(4, terms->docs);
+  EXPECT_EQ(indexes, fs.Take());
+}
+
+TEST(composite_reader_test, builds_no_stats_from_unopened_segments) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+  CommitNames(*writer, {"B", "D"}, irs::IndexFeatures::None);
+  CommitNames(*writer, {"A", "A"}, irs::IndexFeatures::None);
+  const auto committed = dir.Committed();
+  ASSERT_EQ(2, committed.size());
+
+  OpenedFiles fs{dir.Fs()};
+  const auto open = [&](const irs::SegmentMeta& meta) {
+    return irs::SegmentReader{irs::SegmentReaderImpl::Open(
+      dir.Db(), fs, dir.Root(), meta, irs::tests::DefaultReaderOptions(),
+      nullptr)};
+  };
+  const auto first = open(committed[0]);
+  const auto second = open(committed[1]);
+  const irs::SegmentReader added[]{second};
+  const irs::CompositeReader base{{first}, /*stats=*/true};
+  ASSERT_NE(nullptr, base.GetColumnStats(kName));
+  ASSERT_NE(nullptr, base.GetTermRange(kName, irs::StringLayout::kStrings));
+  fs.Take();
+
+  const irs::CompositeReader next{base, {first, second}, added, {}, {}};
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+  const auto* terms = next.GetTermRange(kName, irs::StringLayout::kStrings);
+  ASSERT_NE(nullptr, terms);
+  EXPECT_EQ(irs::ViewCast<char>(terms->min), "A");
+  EXPECT_EQ(4, terms->docs);
+
+  second.GetImpl()->OpenFiles();
+  fs.Take();
+  const irs::CompositeReader opened{base, {first, second}, added, {}, {}};
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+  const auto* updated = opened.GetTermRange(kName, irs::StringLayout::kStrings);
+  ASSERT_NE(nullptr, updated);
+  EXPECT_EQ(irs::ViewCast<char>(updated->min), "A");
+  EXPECT_EQ(irs::ViewCast<char>(updated->max), "D");
+  EXPECT_EQ(4, updated->docs);
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+}
+
 TEST(composite_reader_test, open) {
   tests::JsonDocGenerator gen(
     TestBase::resource("simple_sequential.json"),

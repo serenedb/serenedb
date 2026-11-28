@@ -4562,6 +4562,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
                                               irs::IndexFeatures::Offs;
 
   size_t count = 0;
+  size_t merged_files = 0;
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       uint64_t id = 0;
@@ -4650,6 +4651,12 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     AssertSnapshotEquality(*writer);  // commit compaction
 
     ASSERT_EQ(count, dir.RemoveReleased());
+    for (const auto& meta : dir.Committed()) {
+      if (meta.docs_count == 2) {
+        merged_files = static_cast<size_t>(std::popcount(meta.kinds));
+      }
+    }
+    ASSERT_NE(0, merged_files);
 
     // validate structure
     tests::index_t expected;
@@ -4801,7 +4808,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
     fs.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
-    ASSERT_EQ(2 * count, dir.RemoveReleased());
+    ASSERT_EQ(count + merged_files, dir.RemoveReleased());
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit compaction
     ASSERT_EQ(0,
@@ -9035,7 +9042,12 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
   // validate that all files from old segments have been removed
   count = 0;
   absl::c_for_each(directory.Files(), get_number_of_files_in_segments);
-  ASSERT_EQ(count, one_segment_files_count);
+  const auto committed = directory.Committed();
+  ASSERT_EQ(1, committed.size());
+  const auto files =
+    static_cast<size_t>(std::popcount(committed.front().kinds));
+  ASSERT_GE(one_segment_files_count, files);
+  ASSERT_EQ(count, files);
 }
 
 TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {

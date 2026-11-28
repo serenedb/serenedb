@@ -1,9 +1,10 @@
 """What boot does with a data directory that lost files.
 
-A table or index whose files are missing refuses to start, since coming
-back without its data would turn a lost file into silent data loss. A missing
-catalog log beside the index files refuses to start too, and so does a data
-directory of an earlier layout, which boot leaves as it found it.
+A table or index whose files are missing starts, and the queries that read
+those files fail, naming the missing file, instead of returning the table
+without its data. A missing catalog log beside the index files refuses to
+start, and so does a data directory of an earlier layout, which boot leaves
+as it found it.
 """
 
 from __future__ import annotations
@@ -105,22 +106,20 @@ def test_missing_segment_file(tmp_path: Path) -> None:
                 "CREATE TABLE docs(id BIGINT PRIMARY KEY, body TEXT) ")
             conn.execute("INSERT INTO docs VALUES (1, 'kept')")
             conn.execute("VACUUM (FLUSH_TABLE) docs")
-            oid = conn.execute(
-                "SELECT table_oid FROM sdb_tables() "
-                "WHERE table_name = 'docs'").fetchone()[0]
     finally:
         server.stop()
     lost = min((datadir / "engine_v1" / "store").iterdir())
     lost.unlink()
 
-    refused = _Server(datadir)
+    restarted = _Server(datadir)
     try:
-        assert not refused.wait_ready(timeout=30)
-        assert refused.proc.wait(timeout=30) != 0
-        assert f"cannot open the files of relation {oid}" in refused.output()
-        assert str(lost) in refused.output()
+        assert restarted.wait_ready(), restarted.output()
+        with restarted.connect() as conn:
+            with pytest.raises(psycopg.Error) as failed:
+                conn.execute("SELECT id, body FROM docs").fetchall()
+            assert lost.name in str(failed.value)
     finally:
-        refused.stop()
+        restarted.stop()
 
 
 def _contents(root: Path) -> dict[str, bytes]:

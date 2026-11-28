@@ -151,11 +151,11 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 
 ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                      std::string_view root, std::string_view segment_name,
-                     bool present, duckdb::MappedFileAccess access)
+                     FileSizes sizes, duckdb::MappedFileAccess access)
   : _db{&db},
-    _file{present ? fs.OpenInputFile(fs.JoinPath(root, FileName(segment_name)),
-                                     access)
-                  : nullptr},
+    _file{sizes.file != 0 ? fs.OpenInputFile(
+                              fs.JoinPath(root, FileName(segment_name)), access)
+                          : nullptr},
     _ctx{db, _file.get()} {
   ColFooter footer;
   if (!_file) {
@@ -163,7 +163,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
     return;
   }
   format_utils::ReadFooter(
-    *_file, FileName(segment_name),
+    *_file, FileName(segment_name), sizes,
     [&](duckdb::BinaryDeserializer& in, uint64_t data_size) {
       in.Set<duckdb::DatabaseInstance&>(db);
       in.ReadOptionalList(

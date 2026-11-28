@@ -60,9 +60,7 @@ void TableReplay::Drop(std::span<const uint64_t> segments,
 void TableReplay::Add(const LoggedSegment& segment) {
   _replayed = true;
   _top = std::max(_top, segment.id);
-  auto& added = _segments[segment.id];
-  added.kinds = segment.kinds;
-  added.rows = segment.rows;
+  _segments[segment.id].logged = segment;
 }
 
 void TableReplay::Append(
@@ -188,8 +186,8 @@ std::vector<std::shared_ptr<TableUnit>> TableReplay::Units(
     SDB_ENSURE(segment.opened.reader, "segment ", id,
                " of the log was never opened");
     auto unit = table.SegmentUnit(std::move(segment.opened));
-    SDB_ENSURE(unit->id == id && unit->docs == segment.rows,
-               "the log gives segment ", id, " ", segment.rows,
+    SDB_ENSURE(unit->id == id && unit->docs == segment.logged.rows,
+               "the log gives segment ", id, " ", segment.logged.rows,
                " rows, its files segment ", unit->id, " ", unit->docs);
     finish(std::move(unit), segment.deleted, segment.patches);
   }

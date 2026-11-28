@@ -1399,7 +1399,8 @@ def test_a_restart_lists_each_directory_one_level_deep(tmp_path: Path, kind: str
             again.stop()
 
 
-def test_a_restart_opens_its_tables_at_once(tmp_path: Path) -> None:
+def test_a_restart_reads_no_segment_and_a_query_opens_its_segments_at_once(
+        tmp_path: Path) -> None:
     each = 3
     datadir = tmp_path / "data"
     with FakeS3() as fake:
@@ -1412,17 +1413,13 @@ def test_a_restart_opens_its_tables_at_once(tmp_path: Path) -> None:
                 conn.execute(
                     "CREATE TEXT SEARCH DICTIONARY words AS "
                     "split_by_non_alpha(case := 'lower')")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT) "
+                             "WITH (compaction_interval = 0) TABLESPACE idx")
+                conn.execute("CREATE INDEX docs_body ON docs "
+                             "USING inverted(body words)")
                 for i in range(each):
-                    conn.execute(f"CREATE TABLE docs{i}(id INTEGER, body TEXT) "
-                                 "TABLESPACE idx")
-                    conn.execute(f"CREATE INDEX docs{i}_body ON docs{i} "
-                                 "USING inverted(body words)")
-                    conn.execute(f"INSERT INTO docs{i} VALUES ({i}, 'quick brown fox')")
-                    conn.execute(f"VACUUM (FLUSH_TABLE) docs{i}")
-                    conn.execute(f"CREATE TABLE notes{i}(id INTEGER, body TEXT) "
-                                 "TABLESPACE idx")
-                    conn.execute(f"INSERT INTO notes{i} VALUES ({i}, 'kept on s3')")
-                    conn.execute(f"VACUUM (FLUSH_TABLE) notes{i}")
+                    conn.execute(f"INSERT INTO docs VALUES ({i}, 'quick brown fox')")
+                    conn.execute("VACUUM (FLUSH_TABLE) docs")
         finally:
             server.stop()
         fake.latency = 0.5
@@ -1431,28 +1428,23 @@ def test_a_restart_opens_its_tables_at_once(tmp_path: Path) -> None:
         again = _Server(datadir)
         try:
             assert again.wait_ready(), again.output()
-            log, fake.log = fake.log, None
+            started, fake.log = fake.log, []
             trace, fake.trace = fake.trace, None
-            fake.latency = 0
             with again.connect() as conn:
-                for i in range(each):
-                    assert conn.execute(
-                        f"SELECT id FROM docs{i}_body WHERE body @@ 'fox'"
-                    ).fetchall() == [(i,)]
-                    assert conn.execute(
-                        f"SELECT id, body FROM notes{i}"
-                    ).fetchall() == [(i, "kept on s3")]
+                assert conn.execute(
+                    "SELECT id FROM docs_body WHERE body @@ 'fox' ORDER BY id"
+                ).fetchall() == [(i,) for i in range(each)]
+            read, fake.log = fake.log, None
+            fake.latency = 0
         finally:
             again.stop()
-    assert not [entry for entry in log if entry["key"].endswith("/")], log
-    assert not [entry for entry in trace if entry["method"] == "LIST"], trace
-    checks = [entry for entry in trace
-              if entry["method"] == "HEAD" and entry["key"].endswith("/")]
-    assert len(checks) == 1, trace
+    assert started == [], started
+    assert [entry["method"] for entry in trace] == ["HEAD"], trace
+    assert trace[0]["key"].endswith("/"), trace
     opens: dict[str, dict] = {}
-    for entry in sorted(log, key=lambda entry: entry["began"]):
+    for entry in sorted(read, key=lambda entry: entry["began"]):
         opens.setdefault(entry["key"].rsplit("/", 1)[1].split(".", 1)[0], entry)
-    assert len(opens) == 2 * each, log
+    assert len(opens) == each, read
     assert max(entry["began"] for entry in opens.values()) < min(
         entry["ended"] for entry in opens.values()), opens
 

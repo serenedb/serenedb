@@ -372,10 +372,10 @@ TEST_P(FormatTestCase, fields_read_write) {
 
   // read field
   {
-    irs::SegmentMeta meta;
-    meta.name = "segment_name";
+    const auto meta = dir().Meta("segment_name");
 
-    irs::IdxReader idx{dir().Fs(), dir().Root(), "segment_name", true, nullptr};
+    irs::IdxReader idx{dir().Fs(), dir().Root(), "segment_name",
+                       irs::SizesOf(meta, irs::kIdxFile), nullptr};
     irs::term_dict::FieldReader reader_obj;
     auto* reader = &reader_obj;
     reader->prepare(irs::ReaderState{.db = dir().Db(),
@@ -551,23 +551,30 @@ TEST_P(FormatTestCase, format_utils_footer) {
   constexpr std::string_view kData = "segment data";
   const auto write = [&](std::string_view name, std::string_view data) {
     auto stream = dir().Create(name);
-    ASSERT_NE(nullptr, stream);
+    EXPECT_NE(nullptr, stream);
     if (!data.empty()) {
       stream->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
                         data.size());
     }
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
-      meta.WriteProperty<uint32_t>(0, "value", 42);
-    });
+    const auto footer = irs::format_utils::WriteFooter(
+      *stream, [](duckdb::BinarySerializer& meta) {
+        meta.WriteProperty<uint32_t>(0, "value", 42);
+      });
+    const irs::FileSizes sizes{.file = stream->Position(), .footer = footer};
     stream->Close();
+    return sizes;
   };
-  const auto read = [&](std::string_view name, std::string_view data) {
+  const auto read = [&](std::string_view name, std::string_view data,
+                        irs::FileSizes sizes) {
     const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
     ASSERT_TRUE(file);
+    ASSERT_EQ(sizes.file, file->GetSize());
+    ASSERT_EQ(data.size() + sizes.footer + irs::format_utils::kFooterCrcLen,
+              sizes.file);
     uint32_t value = 0;
     uint64_t data_size = 0;
     const auto footer = irs::format_utils::ReadFooter(
-      *file, name, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
+      *file, name, sizes, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
         value = meta.ReadProperty<uint32_t>(0, "value");
         data_size = size;
       });
@@ -580,33 +587,34 @@ TEST_P(FormatTestCase, format_utils_footer) {
     ASSERT_EQ(static_cast<uint32_t>(crc), footer.data_expected_crc32c);
   };
 
-  write("file", kData);
-  read("file", kData);
-
-  write("no_data", {});
-  read("no_data", {});
+  read("file", kData, write("file", kData));
+  read("no_data", {}, write("no_data", {}));
 }
 
 TEST_P(FormatTestCase, format_utils_footer_packs_its_meta) {
   constexpr uint32_t kValues = 10000;
   const auto write = [&](std::string_view name) {
     auto stream = dir().Create(name);
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
-      meta.WriteList(
-        0, "values", kValues,
-        [](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteElement<uint32_t>(static_cast<uint32_t>(i % 100));
-        });
-    });
+    EXPECT_NE(nullptr, stream);
+    const auto footer = irs::format_utils::WriteFooter(
+      *stream, [](duckdb::BinarySerializer& meta) {
+        meta.WriteList(
+          0, "values", kValues,
+          [](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<uint32_t>(static_cast<uint32_t>(i % 100));
+          });
+      });
+    const irs::FileSizes sizes{.file = stream->Position(), .footer = footer};
     stream->Close();
+    return sizes;
   };
-  const auto read = [&](std::string_view name) -> uint64_t {
+  const auto read = [&](std::string_view name,
+                        irs::FileSizes sizes) -> uint64_t {
     const auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
     EXPECT_TRUE(stream);
     std::vector<uint32_t> values;
     irs::format_utils::ReadFooter(
-      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
+      *stream, name, sizes, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
         meta.ReadList(
           0, "values",
           [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -620,54 +628,58 @@ TEST_P(FormatTestCase, format_utils_footer_packs_its_meta) {
     return stream->GetSize();
   };
 
-  write("packed");
-  const auto packed = read("packed");
+  const auto packed = read("packed", write("packed"));
 
   constexpr std::string_view kUnpacked = "irs::FooterMetaUnpacked";
   if (!duckdb::FaultPoints::Arm(kUnpacked)) {
     GTEST_SKIP() << "this build has no fault injection";
   }
+  irs::FileSizes unpacked_sizes;
   {
     absl::Cleanup disarm = [&] { duckdb::FaultPoints::Disarm(kUnpacked); };
-    write("unpacked");
+    unpacked_sizes = write("unpacked");
   }
-  const auto unpacked = read("unpacked");
+  const auto unpacked = read("unpacked", unpacked_sizes);
   EXPECT_LT(packed * 4, unpacked);
 }
 
 TEST_P(FormatTestCase, format_utils_footer_keeps_a_small_meta_plain) {
   const auto write = [&](std::string_view name) {
     auto stream = dir().Create(name);
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
-      meta.WriteProperty<uint32_t>(0, "value", 42);
-    });
+    EXPECT_NE(nullptr, stream);
+    const auto footer = irs::format_utils::WriteFooter(
+      *stream, [](duckdb::BinarySerializer& meta) {
+        meta.WriteProperty<uint32_t>(0, "value", 42);
+      });
+    const irs::FileSizes sizes{.file = stream->Position(), .footer = footer};
     stream->Close();
+    return sizes;
   };
-  const auto read = [&](std::string_view name) -> uint64_t {
+  const auto read = [&](std::string_view name,
+                        irs::FileSizes sizes) -> uint64_t {
     const auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
     EXPECT_TRUE(stream);
     uint32_t value = 0;
     irs::format_utils::ReadFooter(
-      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
+      *stream, name, sizes, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
         value = meta.ReadProperty<uint32_t>(0, "value");
       });
     EXPECT_EQ(value, 42U);
     return stream->GetSize();
   };
 
-  write("small");
-  const auto small = read("small");
+  const auto small = read("small", write("small"));
 
   constexpr std::string_view kUnpacked = "irs::FooterMetaUnpacked";
   if (!duckdb::FaultPoints::Arm(kUnpacked)) {
     GTEST_SKIP() << "this build has no fault injection";
   }
+  irs::FileSizes unpacked;
   {
     absl::Cleanup disarm = [&] { duckdb::FaultPoints::Disarm(kUnpacked); };
-    write("unpacked");
+    unpacked = write("unpacked");
   }
-  EXPECT_EQ(small, read("unpacked"));
+  EXPECT_EQ(small, read("unpacked", unpacked));
 }
 
 TEST_P(FormatTestCase, format_utils_footer_is_never_larger_packed) {
@@ -679,8 +691,8 @@ TEST_P(FormatTestCase, format_utils_footer_is_never_larger_packed) {
   const auto write = [&](std::string_view name, uint32_t count,
                          uint32_t period) {
     auto stream = dir().Create(name);
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteFooter(
+    EXPECT_NE(nullptr, stream);
+    const auto footer = irs::format_utils::WriteFooter(
       *stream, [&](duckdb::BinarySerializer& meta) {
         meta.WriteList(
           0, "values", count,
@@ -688,15 +700,17 @@ TEST_P(FormatTestCase, format_utils_footer_is_never_larger_packed) {
             list.WriteElement<uint32_t>(static_cast<uint32_t>(i % period));
           });
       });
+    const irs::FileSizes sizes{.file = stream->Position(), .footer = footer};
     stream->Close();
+    return sizes;
   };
-  const auto read = [&](std::string_view name, uint32_t count,
-                        uint32_t period) -> uint64_t {
+  const auto read = [&](std::string_view name, irs::FileSizes sizes,
+                        uint32_t count, uint32_t period) -> uint64_t {
     const auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
     EXPECT_TRUE(stream);
     std::vector<uint32_t> values;
     irs::format_utils::ReadFooter(
-      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
+      *stream, name, sizes, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
         meta.ReadList(
           0, "values",
           [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -713,26 +727,31 @@ TEST_P(FormatTestCase, format_utils_footer_is_never_larger_packed) {
     for (uint32_t count = 0; count != 160; ++count) {
       const auto packed = absl::StrCat("packed_", period, "_", count);
       const auto unpacked = absl::StrCat("unpacked_", period, "_", count);
-      write(packed, count, period);
+      const auto packed_sizes = write(packed, count, period);
+      irs::FileSizes unpacked_sizes;
       {
         ASSERT_TRUE(duckdb::FaultPoints::Arm(kUnpacked));
         absl::Cleanup disarm = [&] { duckdb::FaultPoints::Disarm(kUnpacked); };
-        write(unpacked, count, period);
+        unpacked_sizes = write(unpacked, count, period);
       }
-      EXPECT_LE(read(packed, count, period), read(unpacked, count, period))
+      EXPECT_LE(read(packed, packed_sizes, count, period),
+                read(unpacked, unpacked_sizes, count, period))
         << "period " << period << ", " << count << " values";
     }
   }
 }
 
 TEST_P(FormatTestCase, format_utils_footer_damaged) {
+  irs::FileSizes sizes;
   {
     auto stream = dir().Create("file");
     ASSERT_NE(nullptr, stream);
     stream->Write<uint64_t>(7);
-    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
-      meta.WriteProperty<uint32_t>(0, "value", 42);
-    });
+    sizes.footer = irs::format_utils::WriteFooter(
+      *stream, [](duckdb::BinarySerializer& meta) {
+        meta.WriteProperty<uint32_t>(0, "value", 42);
+      });
+    sizes.file = stream->Position();
     stream->Close();
   }
 
@@ -744,6 +763,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     bytes.resize(file->GetSize());
     stream.ReadData(bytes.data(), bytes.size());
   }
+  ASSERT_EQ(sizes.file, bytes.size());
 
   const auto write = [&](std::string_view name, irs::bytes_view data) {
     auto stream = dir().Create(name);
@@ -753,30 +773,44 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     }
     stream->Close();
   };
-  const auto read = [&](std::string_view name) {
+  const auto read = [&](std::string_view name, irs::FileSizes recorded) {
     const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
     ASSERT_TRUE(file);
     irs::format_utils::ReadFooter(
-      *file, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
+      *file, name, recorded, [](duckdb::BinaryDeserializer& meta, uint64_t) {
         meta.ReadProperty<uint32_t>(0, "value");
       });
   };
 
+  write("intact", bytes);
+  read("intact", sizes);
+
   auto flipped = bytes;
   flipped[sizeof(uint64_t)] ^= 1;
   write("flipped", flipped);
-  ASSERT_SQL_ERROR(read("flipped"), ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(read("flipped", sizes), ERRCODE_INDEX_CORRUPTED);
 
-  auto long_footer = bytes;
-  long_footer[long_footer.size() - 1] = 0xFF;
-  write("long_footer", long_footer);
-  ASSERT_SQL_ERROR(read("long_footer"), ERRCODE_INDEX_CORRUPTED);
+  auto bad_checksum = bytes;
+  bad_checksum[bad_checksum.size() - 1] ^= 1;
+  write("bad_checksum", bad_checksum);
+  ASSERT_SQL_ERROR(read("bad_checksum", sizes), ERRCODE_INDEX_CORRUPTED);
+
+  write("long_footer", bytes);
+  ASSERT_SQL_ERROR(
+    read("long_footer",
+         {.file = sizes.file, .footer = static_cast<uint32_t>(sizes.file)}),
+    ERRCODE_INDEX_CORRUPTED);
+
+  write("short_footer", bytes);
+  ASSERT_SQL_ERROR(
+    read("short_footer", {.file = sizes.file, .footer = sizes.footer - 1}),
+    ERRCODE_INDEX_CORRUPTED);
 
   write("truncated", irs::bytes_view{bytes}.substr(0, bytes.size() - 1));
-  ASSERT_SQL_ERROR(read("truncated"), ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(read("truncated", sizes), ERRCODE_INDEX_CORRUPTED);
 
   write("empty", {});
-  ASSERT_SQL_ERROR(read("empty"), ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(read("empty", sizes), ERRCODE_INDEX_CORRUPTED);
 }
 
 }  // namespace tests

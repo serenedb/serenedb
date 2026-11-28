@@ -73,7 +73,8 @@ What costs requests to the object store:
 | A query | reads of the blocks that are not cached |
 | A flush or a merge | the upload of each new index file: one request for a file up to 5 MiB, parts for a larger one; with the external file cache on, the table or index opens the files it wrote without a request |
 | A checkpoint | none |
-| Opening a table or an index at startup | one check that the `store` directory of its tablespace exists, once for each tablespace, then for each index file a check of its size and a read of its footer. Tables, indexes and their segments open in parallel, so startup waits for the slowest of them rather than for all of them in turn |
+| Opening a table or an index at startup | one check that the `store` directory of its tablespace exists, once for each tablespace |
+| The first query that reads an index file | a check of its size and a read of its footer. A query that needs a table's statistics reads the footers of all its files at once, in parallel |
 | Startup after a crash | also a listing of the `store` directory of each tablespace, to remove the files an interrupted write left behind; a listing returns only the entries one level down |
 | Cleanup | one request for up to 1000 files (256 on Azure) that no query uses anymore |
 

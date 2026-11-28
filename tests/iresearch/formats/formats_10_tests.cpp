@@ -97,8 +97,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
     // read postings
     {
-      irs::SegmentMeta meta;
-      meta.name = "segment_name";
+      const auto meta = dir->Meta("segment_name");
 
       const irs::ReaderState state{
         .db = dir->Db(),
@@ -115,7 +114,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
       // prepare reader
       irs::PostingsReader reader;
-      reader.prepare(state, field.index_features);
+      reader.prepare(state);
 
       auto records = tests::ReadRecords(in);
       const auto* begin = records.data.get();
@@ -322,8 +321,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // read postings
   {
-    irs::SegmentMeta meta;
-    meta.name = "segment_name";
+    const auto meta = dir().Meta("segment_name");
 
     const irs::ReaderState state{
       .db = dir().Db(),
@@ -339,7 +337,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
     // prepare reader
     irs::PostingsReader reader;
-    reader.prepare(state, field.index_features);
+    reader.prepare(state);
 
     auto records = tests::ReadRecords(in);
     const auto* begin = records.data.get();
@@ -454,8 +452,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
   // read postings
   {
-    irs::SegmentMeta meta;
-    meta.name = "segment_name";
+    const auto meta = dir().Meta("segment_name");
 
     const irs::ReaderState state{
       .db = dir().Db(),
@@ -471,7 +468,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // prepare reader
     irs::PostingsReader reader;
-    reader.prepare(state, field.index_features);
+    reader.prepare(state);
 
     auto records = tests::ReadRecords(in);
     const auto* begin = records.data.get();
@@ -756,11 +753,10 @@ TEST_P(Format10TestCase, ires336) {
     idx.Commit(nullptr);
   }
 
-  irs::SegmentMeta meta;
-  meta.name = segment_name;
+  const auto meta = dir->Meta(segment_name);
 
-  irs::IdxReader idx_reader{dir->Fs(), dir->Root(), segment_name, true,
-                            nullptr};
+  irs::IdxReader idx_reader{dir->Fs(), dir->Root(), segment_name,
+                            irs::SizesOf(meta, irs::kIdxFile), nullptr};
   irs::term_dict::FieldReader fr_obj;
   auto* fr = &fr_obj;
   fr->prepare(irs::ReaderState{.db = dir->Db(),
@@ -963,8 +959,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
       // read postings and test reset
       {
-        irs::SegmentMeta meta;
-        meta.name = "segment_name";
+        const auto meta = dir->Meta("segment_name");
 
         const irs::ReaderState state{
           .db = dir->Db(),
@@ -980,7 +975,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         const auto tmp = irs::ReadString<std::string>(in);
 
         irs::PostingsReader reader;
-        reader.prepare(state, field.index_features);
+        reader.prepare(state);
 
         auto records = tests::ReadRecords(in);
         const auto* begin = records.data.get();
@@ -1078,45 +1073,6 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
     test_reset(docs, kPos);
     test_reset(docs, kOffs);
   }
-}
-
-TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
-  auto dir = get_directory(*this);
-  irs::SegmentMeta meta;
-
-  const auto prepare = [&](std::string_view name, bool unknown_field) {
-    meta.name = name;
-    {
-      auto out = dir->Create(absl::StrCat(name, ".doc"));
-      EXPECT_NE(nullptr, out);
-      if (unknown_field) {
-        irs::format_utils::WriteFooter(
-          *out, [](duckdb::BinarySerializer& footer) {
-            footer.WriteProperty<uint32_t>(0, "layout", 1);
-          });
-      } else {
-        irs::format_utils::WriteFooter(*out);
-      }
-      out->Close();
-    }
-    std::string message;
-    try {
-      irs::PostingsReader reader;
-      reader.prepare(
-        irs::ReaderState{
-          .db = dir->Db(), .fs = dir->Fs(), .root = dir->Root(), .meta = meta},
-        irs::IndexFeatures::None);
-    } catch (const irs::SqlException& e) {
-      EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
-      message = e.what();
-    }
-    return message;
-  };
-
-  EXPECT_EQ("", prepare("known", false));
-  const auto message = prepare("unknown", true);
-  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
-    << message;
 }
 
 static constexpr auto kTestDirs = tests::kDirParams;

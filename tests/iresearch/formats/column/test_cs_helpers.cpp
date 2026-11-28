@@ -45,9 +45,9 @@ std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
   if (!dir.Has(FileName(segment_name))) {
     return nullptr;
   }
-  return std::make_unique<ColReader>(dir.Db(), dir.Fs(), dir.Root(),
-                                     segment_name, true,
-                                     duckdb::MappedFileAccess::SEQUENTIAL);
+  return std::make_unique<ColReader>(
+    dir.Db(), dir.Fs(), dir.Root(), segment_name,
+    dir.Sizes(segment_name, kColFile), duckdb::MappedFileAccess::SEQUENTIAL);
 }
 
 ColReader OpenColReader(const ::tests::IndexDir& dir,
@@ -56,7 +56,9 @@ ColReader OpenColReader(const ::tests::IndexDir& dir,
                    dir.Fs(),
                    dir.Root(),
                    segment_name,
-                   dir.Has(FileName(segment_name)),
+                   dir.Has(FileName(segment_name))
+                     ? dir.Sizes(segment_name, kColFile)
+                     : FileSizes{},
                    duckdb::MappedFileAccess::SEQUENTIAL};
 }
 

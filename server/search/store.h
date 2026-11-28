@@ -317,9 +317,9 @@ class Store final : public std::enable_shared_from_this<Store>,
   TableReplay* Replay();
   void CollectFiles(irs::containers::FlatHashSet<std::string>& files) const;
   void ScheduleRecovery(duckdb::ClientContext& context,
-                        duckdb::TaskExecutor& replays,
-                        duckdb::TaskExecutor& opens);
+                        duckdb::TaskExecutor& replays);
   bool FinishReplay();
+  void OpenFiles() const;
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
                                                   catalog::WalkCounters& walks);
@@ -382,7 +382,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool OwnsFiles() const noexcept { return _on_disk && !_read_only; }
   bool CloseFiles();
   absl::Status RemoveReleased();
-  void ClaimColumnOids(const irs::CompositeReader& reader) const;
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }

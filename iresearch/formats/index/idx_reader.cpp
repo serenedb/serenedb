@@ -66,9 +66,9 @@ void ReadGraphFrames(duckdb::BinaryDeserializer& graph,
 #endif
 
 IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
-                     std::string_view segment_name, bool present,
+                     std::string_view segment_name, FileSizes sizes,
                      HnswBases* hnsw_bases) {
-  if (!present) {
+  if (sizes.file == 0) {
     return;
   }
   const auto filename = FileName(segment_name, kIdxFormatExt);
@@ -77,7 +77,8 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
 
   IdxFooter footer;
   format_utils::ReadFooter(
-    *_file, filename, [&](duckdb::BinaryDeserializer& in, uint64_t data_size) {
+    *_file, filename, sizes,
+    [&](duckdb::BinaryDeserializer& in, uint64_t data_size) {
 #ifndef IRESEARCH_NO_VECTOR
       in.ReadOptionalList(
         kIdxFieldIvf, "ivf",

@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <array>
+#include <bit>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -36,6 +38,22 @@ inline constexpr uint8_t kIdxFile = 1 << 1;
 inline constexpr uint8_t kDocFile = 1 << 2;
 inline constexpr uint8_t kPosFile = 1 << 3;
 inline constexpr uint8_t kPayFile = 1 << 4;
+inline constexpr size_t kFileKinds = 5;
+
+constexpr size_t KindIndex(uint8_t kind) noexcept {
+  return static_cast<size_t>(std::countr_zero(kind));
+}
+
+struct FileSizes {
+  bool operator==(const FileSizes&) const = default;
+
+  uint64_t file = 0;
+  uint32_t footer = 0;
+};
+
+using SegmentFileSizes = std::array<FileSizes, kFileKinds>;
+
+uint64_t SegmentBytes(const SegmentFileSizes& files) noexcept;
 
 std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds);
 

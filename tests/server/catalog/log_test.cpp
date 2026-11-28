@@ -132,7 +132,8 @@ class LogTest : public ::testing::Test {
 
   static void Snapshot(Log& log, Lsn covered) {
     log.WriteSnapshot(
-      covered, {}, [](std::span<uint8_t> payload) { return payload; }, &Keep);
+      covered, 0, {}, [](std::span<uint8_t> payload) { return payload; },
+      &Keep);
   }
 
   struct Written {

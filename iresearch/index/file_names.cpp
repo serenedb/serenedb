@@ -53,6 +53,14 @@ constexpr std::array kSegmentFileKinds{
 
 }  // namespace
 
+uint64_t SegmentBytes(const SegmentFileSizes& files) noexcept {
+  uint64_t bytes = 0;
+  for (const auto& file : files) {
+    bytes += file.file;
+  }
+  return bytes;
+}
+
 std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds) {
   std::vector<std::string> files;
   for (const auto& [kind, ext] : kSegmentFileKinds) {

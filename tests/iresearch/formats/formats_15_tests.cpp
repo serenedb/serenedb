@@ -382,8 +382,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
     out->Close();
   }
 
-  irs::SegmentMeta meta;
-  meta.name = "segment_name";
+  const auto meta = dir.Meta("segment_name");
 
   const irs::ReaderState state{
     .db = dir.Db(), .fs = dir.Fs(), .root = dir.Root(), .meta = meta};
@@ -394,7 +393,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(in);
 
   auto reader = std::make_unique<irs::PostingsReader>();
-  reader->prepare(state, features);
+  reader->prepare(state);
 
   auto records = tests::ReadRecords(in);
   const auto* begin = records.data.get();

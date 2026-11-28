@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
+#include <bit>
 #include <deque>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -531,6 +532,19 @@ void WriteTableDelta(duckdb::BinarySerializer& object,
         segment.WriteProperty<uint64_t>(100, "segment", added.id);
         segment.WriteProperty<uint8_t>(101, "kinds", added.kinds);
         segment.WriteProperty<uint32_t>(102, "rows", added.rows);
+        size_t kind = 0;
+        segment.WriteList(
+          103, "files", static_cast<duckdb::idx_t>(std::popcount(added.kinds)),
+          [&](duckdb::BinarySerializer::List& files, duckdb::idx_t) {
+            while ((added.kinds & (1U << kind)) == 0) {
+              ++kind;
+            }
+            const auto& sizes = added.files[kind++];
+            files.WriteObject([&](duckdb::BinarySerializer& file) {
+              file.WriteProperty<uint64_t>(100, "size", sizes.file);
+              file.WriteProperty<uint32_t>(101, "footer", sizes.footer);
+            });
+          });
       });
     });
   object.WriteOptionalList(
@@ -570,6 +584,26 @@ void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
         added.id = segment.ReadProperty<uint64_t>(100, "segment");
         added.kinds = segment.ReadProperty<uint8_t>(101, "kinds");
         added.rows = segment.ReadProperty<uint32_t>(102, "rows");
+        size_t kind = 0;
+        segment.ReadList(
+          103, "files",
+          [&](duckdb::BinaryDeserializer::List& files, duckdb::idx_t) {
+            while (kind != irs::kFileKinds &&
+                   (added.kinds & (1U << kind)) == 0) {
+              ++kind;
+            }
+            if (kind == irs::kFileKinds) {
+              Corrupted("more files than the kinds of a segment");
+            }
+            auto& sizes = added.files[kind++];
+            files.ReadObject([&](duckdb::BinaryDeserializer& file) {
+              sizes.file = file.ReadProperty<uint64_t>(100, "size");
+              sizes.footer = file.ReadProperty<uint32_t>(101, "footer");
+            });
+          });
+        if (added.kinds >= (1U << kind)) {
+          Corrupted("fewer files than the kinds of a segment");
+        }
         if (replay) {
           replay->Add(added);
         }

@@ -93,51 +93,53 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
   EnsureOut();
 
   const auto& written = _footer;
-  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
-    footer.WriteOptionalList(
-      kIdxFieldIvf, "ivf", written.ivf.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        const auto& e = written.ivf[i];
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          obj.WriteProperty<uint64_t>(0, "id", e.id);
-          obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
-          obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
-          obj.WriteProperty<uint64_t>(5, "root_byte_size",
-                                      e.meta.root_byte_size);
+  const auto footer_len =
+    format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
+      footer.WriteOptionalList(
+        kIdxFieldIvf, "ivf", written.ivf.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          const auto& e = written.ivf[i];
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            obj.WriteProperty<uint64_t>(0, "id", e.id);
+            obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
+            obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
+            obj.WriteProperty<uint64_t>(5, "root_byte_size",
+                                        e.meta.root_byte_size);
+          });
         });
-      });
-    footer.WriteOptionalList(
-      kIdxFieldHnsw, "hnsw", written.hnsw.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        const auto& e = written.hnsw[i];
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          obj.WriteProperty<uint64_t>(0, "id", e.id);
-          obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
-          const auto& h = e.meta.header;
-          obj.WriteProperty<uint32_t>(3, "d", h.d);
-          obj.WriteProperty<uint8_t>(4, "metric",
-                                     static_cast<uint8_t>(h.metric));
-          obj.WriteProperty<uint8_t>(5, "quant", static_cast<uint8_t>(h.quant));
-          obj.WriteProperty<uint32_t>(6, "ef_construction", h.ef_construction);
-          obj.WriteProperty<uint32_t>(7, "record_size", h.record_size);
-          obj.WriteProperty<uint64_t>(8, "rows", h.rows);
-          obj.WriteProperty<bool>(9, "rotated", h.rotated);
-          obj.WriteOptionalObject(
-            kHnswMetaGraphCompression, "graph_compression",
-            e.meta.graph_compression.Packed(),
-            [&](duckdb::BinarySerializer& graph) {
-              WriteGraphFrames(graph, e.meta.graph_compression);
-            });
+      footer.WriteOptionalList(
+        kIdxFieldHnsw, "hnsw", written.hnsw.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          const auto& e = written.hnsw[i];
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            obj.WriteProperty<uint64_t>(0, "id", e.id);
+            obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
+            const auto& h = e.meta.header;
+            obj.WriteProperty<uint32_t>(3, "d", h.d);
+            obj.WriteProperty<uint8_t>(4, "metric",
+                                       static_cast<uint8_t>(h.metric));
+            obj.WriteProperty<uint8_t>(5, "quant",
+                                       static_cast<uint8_t>(h.quant));
+            obj.WriteProperty<uint32_t>(6, "ef_construction",
+                                        h.ef_construction);
+            obj.WriteProperty<uint32_t>(7, "record_size", h.record_size);
+            obj.WriteProperty<uint64_t>(8, "rows", h.rows);
+            obj.WriteProperty<bool>(9, "rotated", h.rotated);
+            obj.WriteOptionalObject(
+              kHnswMetaGraphCompression, "graph_compression",
+              e.meta.graph_compression.Packed(),
+              [&](duckdb::BinarySerializer& graph) {
+                WriteGraphFrames(graph, e.meta.graph_compression);
+              });
+          });
         });
-      });
-    footer.WriteOptionalObject(kIdxFieldTerms, "terms",
-                               !written.terms.fields.empty(),
-                               [&](duckdb::BinarySerializer& terms) {
-                                 term_dict::WriteTerms(terms, written.terms);
-                               });
-  });
-  _tracker.Written(_out->Position());
-  auto file = format_utils::CloseOutput(*_out);
+      footer.WriteOptionalObject(kIdxFieldTerms, "terms",
+                                 !written.terms.fields.empty(),
+                                 [&](duckdb::BinarySerializer& terms) {
+                                   term_dict::WriteTerms(terms, written.terms);
+                                 });
+    });
+  auto file = format_utils::CloseOutput(*_out, _tracker, kIdxFile, footer_len);
   _out.reset();
   return std::make_unique<IdxReader>(std::move(file), std::move(_footer),
                                      hnsw_bases);

@@ -99,6 +99,7 @@ TEST(ObjectStoreIndexTest, a_single_block_field_prefetches_nothing) {
   const auto restarted = dir.Reopened();
   const auto reader =
     tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
+  reader.LoadStats();
   DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.ResetRequests();
 
@@ -138,6 +139,7 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   const auto restarted = dir.Reopened();
   const auto reader =
     tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
+  reader.LoadStats();
   DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.ResetRequests();
 

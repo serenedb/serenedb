@@ -190,7 +190,7 @@ void IndexDeathTest::OpenReader(
 
   while (!fs.NoFailures()) {
     ASSERT_SQL_ERROR(
-      (tests::OpenReader(dir, irs::tests::DefaultReaderOptions())),
+      (tests::OpenReader(dir, irs::tests::DefaultReaderOptions()).LoadStats()),
       ERRCODE_IO_ERROR);
   }
 
@@ -587,6 +587,7 @@ TEST_F(index_death_test_formats_15,
     while (!fs.NoFailures()) {
       const auto failures_before = fs.NumFailures();
       ASSERT_TRUE(InsertWithName(*writer, *doc));
+      ASSERT_TRUE(InsertWithName(*writer, *doc));
       ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
       ASSERT_LT(fs.NumFailures(), failures_before);
     }
@@ -619,6 +620,7 @@ TEST_F(index_death_test_formats_15,
                                tests::IndexWriter& writer) {
     while (!fs.NoFailures()) {
       const auto failures_before = fs.NumFailures();
+      ASSERT_TRUE(InsertWithName(writer, *doc1));
       ASSERT_TRUE(InsertWithName(writer, *doc1));
       ASSERT_SQL_ERROR(writer.RefreshBegin(), ERRCODE_IO_ERROR);
       ASSERT_LT(fs.NumFailures(), failures_before);

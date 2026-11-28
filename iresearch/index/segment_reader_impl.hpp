@@ -37,6 +37,7 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/storage.hpp"
+#include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
@@ -106,45 +107,74 @@ class SegmentReaderImpl final : public SubReader {
   }
   std::span<const FieldPatch> Patches() const noexcept { return _patches; }
 
+  void OpenFiles() const;
+  bool FilesOpened() const noexcept { return _parts->Opened(); }
+
   lead::Node::ptr docs_iterator() const final;
 
   std::span<const TermReader* const> fields(field_id id) const final {
     if (_pieces) {
       return _pieces->fields(id);
     }
-    if (!_field_reader) {
-      return {};
-    }
-    return _field_reader->fields(id);
+    const auto* index = _parts->GetIndex();
+    return index ? index->fields.fields(id)
+                 : std::span<const TermReader* const>{};
   }
 
   std::span<const field_id> field_ids() const final {
     if (_pieces) {
       return _pieces->field_ids();
     }
-    if (!_field_reader) {
-      return {};
-    }
-    return _field_reader->field_ids();
+    const auto* index = _parts->GetIndex();
+    return index ? index->fields.field_ids() : std::span<const field_id>{};
   }
 
   NormReader::ptr norms(field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
-  const ColReader* GetColReader() const final {
-    return _readers ? _readers->col_reader.get() : nullptr;
-  }
+  const ColReader* GetColReader() const final;
 
  private:
-  struct Readers {
-    std::unique_ptr<ColReader> col_reader;
-    std::unique_ptr<IdxReader> idx_reader;
-    std::shared_ptr<Readers> base;
+  struct Index {
+    std::unique_ptr<IdxReader> idx;
+    term_dict::FieldReader fields;
+  };
 
-    const IdxReader* Idx() const noexcept {
-      return idx_reader ? idx_reader.get() : base ? base->Idx() : nullptr;
+  class Parts {
+   public:
+    Parts(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+          std::string_view root, const SegmentMeta& meta,
+          HnswBases* hnsw_bases);
+    Parts(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+          std::string_view root, const SegmentMeta& meta, SegmentInputs inputs,
+          HnswBases* hnsw_bases);
+    explicit Parts(std::unique_ptr<ColReader> columns);
+
+    const ColReader& Columns() const;
+    const Index* GetIndex() const;
+    bool Opened() const noexcept {
+      return _columns_once.Done() && _index_once.Done();
     }
+
+   private:
+    void PrepareFields(Index& index, PostingsInputs* postings) const;
+
+    duckdb::DatabaseInstance* _db = nullptr;
+    duckdb::FileSystem* _fs = nullptr;
+    std::string _root;
+    SegmentMeta _meta;
+    HnswBases* _hnsw_bases = nullptr;
+    bool _indexed = false;
+    mutable BlockingOnce _columns_once;
+    mutable std::unique_ptr<ColReader> _columns;
+    mutable BlockingOnce _index_once;
+    mutable std::unique_ptr<Index> _index;
+  };
+
+  struct PatchedColumns {
+    BlockingOnce once;
+    std::unique_ptr<ColReader> columns;
   };
 
   std::shared_ptr<const FileTracker> _files;
@@ -154,8 +184,8 @@ class SegmentReaderImpl final : public SubReader {
   uint64_t _patch_tick = 0;
   uint64_t _patched_docs = 0;
   std::vector<FieldPatch> _patches;
-  std::shared_ptr<Readers> _readers;
-  std::shared_ptr<term_dict::FieldReader> _field_reader;
+  std::shared_ptr<const Parts> _parts;
+  std::shared_ptr<PatchedColumns> _patched;
   std::shared_ptr<const PieceFields> _pieces;
 };
 

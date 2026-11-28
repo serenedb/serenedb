@@ -769,19 +769,19 @@ std::shared_ptr<TableState> Table::SameUnits() const {
   return std::make_shared<TableState>(*Head().state);
 }
 
-OwnSegment Table::OpenSegment(uint64_t id, uint8_t kinds,
-                              irs::doc_id_t rows) const {
+OwnSegment Table::OpenSegment(const LoggedSegment& segment) const {
   OwnSegment opened;
   auto& meta = opened.meta;
-  meta.name = irs::FileName(id);
-  meta.kinds = kinds;
-  meta.docs_count = rows;
-  meta.live_docs_count = rows;
+  meta.name = irs::FileName(segment.id);
+  meta.kinds = segment.kinds;
+  meta.files = segment.files;
+  meta.docs_count = segment.rows;
+  meta.live_docs_count = segment.rows;
+  meta.byte_size = irs::SegmentBytes(segment.files);
   opened.reader = irs::SegmentReaderImpl::Open(
     irs::DuckDBEngine::Instance().instance(), _fs, _root, meta, _options,
-    std::make_shared<const irs::FileTracker>(_fs, _root, meta.name, kinds,
-                                             _released));
-  meta.byte_size = opened.reader->Meta().byte_size;
+    std::make_shared<const irs::FileTracker>(_fs, _root, meta.name,
+                                             segment.kinds, _released));
   return opened;
 }
 
@@ -1076,7 +1076,10 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
       dead.insert(id);
       continue;
     }
-    delta.add.push_back({.id = id, .kinds = segment.meta.kinds, .rows = rows});
+    delta.add.push_back({.id = id,
+                         .kinds = segment.meta.kinds,
+                         .rows = rows,
+                         .files = segment.meta.files});
   }
   if (commit.piece) {
     SDB_ASSERT(rows.chunks != 0);
@@ -1330,8 +1333,10 @@ Table::Replacement Table::PrepareReplace(
     if (unit->piece || Dead(*unit)) {
       continue;
     }
-    delta.add.push_back(
-      {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
+    delta.add.push_back({.id = unit->id,
+                         .kinds = unit->meta.kinds,
+                         .rows = unit->docs,
+                         .files = unit->meta.files});
     UnitDelta changes{.unit = unit->id};
     if (unit->deleted && !unit->deleted->Empty()) {
       changes.deleted = unit->deleted;
@@ -1395,6 +1400,7 @@ void Table::Reopen(Tick tick, std::span<const uint64_t> units) {
     irs::SegmentMeta meta;
     meta.name = irs::FileName(id);
     meta.kinds = unit->meta.kinds;
+    meta.files = unit->meta.files;
     meta.docs_count = unit->docs;
     meta.live_docs_count = unit->docs;
     unit->reader = irs::SegmentReaderImpl::Open(db, _fs, _root, meta, _options,

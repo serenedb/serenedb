@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "iresearch/index/document_mask.hpp"
+#include "iresearch/index/file_names.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -48,13 +50,24 @@ static_assert(std::is_nothrow_move_assignable_v<SegmentInfo>);
 struct SegmentMeta : SegmentInfo {
   bool operator==(const SegmentMeta& rhs) const {
     return SegmentInfo::operator==(rhs) && kinds == rhs.kinds &&
+           files == rhs.files &&
            (docs_mask == rhs.docs_mask ||
             (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask));
   }
 
   uint8_t kinds = 0;
+  SegmentFileSizes files;
   std::shared_ptr<const DocumentMask> docs_mask;
 };
+
+inline FileSizes SizesOf(const SegmentMeta& meta, uint8_t kind) noexcept {
+  if ((meta.kinds & kind) == 0) {
+    return {};
+  }
+  const auto sizes = meta.files[KindIndex(kind)];
+  SDB_ASSERT(sizes.file != 0);
+  return sizes;
+}
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {
   return meta.docs_mask ? static_cast<doc_id_t>(meta.docs_mask->Count()) : 0;

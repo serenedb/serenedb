@@ -166,7 +166,7 @@ void IndexBuilder::WriteSegmentList() {
       SDB_ASSERT(!meta.docs_mask);
       uint64_t id = 0;
       irs::ParseSegmentId(meta.name, id);
-      irs::AppendSegmentList(text, id, meta.kinds, meta.docs_count);
+      irs::AppendSegmentList(text, id, meta, meta.docs_count);
     }
   }
   irs::WriteWhole(_fs, _fs.JoinPath(_root, kSegmentListFile), text, true);

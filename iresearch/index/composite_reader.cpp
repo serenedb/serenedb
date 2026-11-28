@@ -24,12 +24,16 @@
 #include "composite_reader.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/function_ref.h>
 
 #include <algorithm>
 #include <cmath>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
+#include "iresearch/store/storage.hpp"
+#include "iresearch/utils/duckdb_engine.hpp"
 
 namespace irs {
 namespace {
@@ -56,13 +60,30 @@ uint64_t DistinctOfOverlapping(uint64_t terms, uint64_t docs, uint64_t sum) {
   return static_cast<uint64_t>(std::llround(high));
 }
 
+bool Opened(const SegmentReader& reader) noexcept {
+  return reader.GetImpl()->FilesOpened();
+}
+
+void OpenInParallel(std::span<const SegmentReader> readers,
+                    absl::FunctionRef<void(const SubReader&)> open) {
+  std::vector<const SegmentReader*> closed;
+  for (const auto& reader : readers) {
+    if (!Opened(reader)) {
+      closed.push_back(&reader);
+    }
+  }
+  ForEach(DuckDBEngine::Instance().instance(), true, closed.size(),
+          [&](size_t i) { open(*closed[i]); });
+}
+
 }  // namespace
 
 CompositeReader::CompositeReader(std::vector<SegmentReader> readers, bool stats)
-  : _readers{std::move(readers)}, _stats{stats} {
+  : _readers{std::move(readers)} {
   Count();
-  if (_stats) {
-    Build();
+  if (stats) {
+    _columns = std::make_unique<Lazy<Columns>>();
+    _terms = std::make_unique<Lazy<Terms>>();
   }
 }
 
@@ -71,47 +92,29 @@ CompositeReader::CompositeReader(const CompositeReader& base,
                                  std::span<const SegmentReader> added,
                                  std::span<const PatchedReader> patched,
                                  std::span<const SegmentReader> removed)
-  : _readers{std::move(readers)}, _stats{base._stats} {
+  : _readers{std::move(readers)} {
   Count();
-  if (!_stats) {
+  if (!base._columns) {
     return;
   }
-  _terms.reserve(base._terms.size());
-  for (const auto& [key, terms] : base._terms) {
-    _terms.try_emplace(key, TermStats{.segments = terms.segments});
-  }
-  for (const auto& reader : removed) {
-    RemoveTerms(*reader);
-  }
-  for (const auto& reader : added) {
-    AddTerms(*reader, /*keep_sorted=*/true);
-  }
-  if (!removed.empty() && _docs != base._docs) {
-    for (const auto& reader : _readers) {
-      AddColumns(*reader, /*new_docs=*/true);
-    }
-    Publish();
+  _columns = std::make_unique<Lazy<Columns>>();
+  _terms = std::make_unique<Lazy<Terms>>();
+  if (!absl::c_all_of(added, Opened) ||
+      !absl::c_all_of(patched, [](const PatchedReader& reader) {
+        return Opened(reader.after);
+      })) {
     return;
   }
-  _columns.reserve(base._columns.size());
-  for (const auto& [field, column] : base._columns) {
-    _columns.try_emplace(
-      field, ColumnStats{
-               .merged = column.merged->ToUnique(),
-               .distinct = column.distinct ? column.distinct->Copy() : nullptr,
-               .docs = column.docs});
+  if (base._terms->once.Done()) {
+    _terms->once.Call(
+      [&] { _terms->stats = UpdateTerms(base._terms->stats, added, removed); });
   }
-  for (const auto& reader : removed) {
-    RemoveColumns(*reader);
+  if (base._columns->once.Done()) {
+    _columns->once.Call([&] {
+      _columns->stats = UpdateColumns(base._columns->stats, base._docs, added,
+                                      patched, removed);
+    });
   }
-  for (const auto& reader : added) {
-    AddColumns(*reader, /*new_docs=*/true);
-  }
-  for (const auto& [before, after] : patched) {
-    RemoveColumns(*before);
-    AddColumns(*after, /*new_docs=*/true);
-  }
-  Publish();
 }
 
 void CompositeReader::Count() noexcept {
@@ -125,24 +128,115 @@ void CompositeReader::Count() noexcept {
   }
 }
 
-void CompositeReader::Build() {
-  for (const auto& reader : _readers) {
-    AddTerms(*reader, /*keep_sorted=*/false);
-    AddColumns(*reader, /*new_docs=*/true);
+const CompositeReader::Columns* CompositeReader::LoadedColumns() const {
+  if (!_columns) {
+    return nullptr;
   }
-  for (auto& [key, terms] : _terms) {
-    absl::c_stable_sort(terms.segments, kByMin);
-  }
-  Publish();
+  _columns->once.Call([&] { _columns->stats = BuildColumns(); });
+  return &_columns->stats;
 }
 
-void CompositeReader::AddTerms(const SubReader& reader, bool keep_sorted) {
+const CompositeReader::Terms* CompositeReader::LoadedTerms() const {
+  if (!_terms) {
+    return nullptr;
+  }
+  _terms->once.Call([&] { _terms->stats = BuildTerms(); });
+  return &_terms->stats;
+}
+
+void CompositeReader::LoadColumnStats() const { LoadedColumns(); }
+
+void CompositeReader::LoadTermStats() const { LoadedTerms(); }
+
+void CompositeReader::LoadStats() const {
+  LoadedColumns();
+  LoadedTerms();
+}
+
+CompositeReader::Columns CompositeReader::BuildColumns() const {
+  OpenInParallel(_readers,
+                 [](const SubReader& reader) { reader.GetColReader(); });
+  Columns columns;
+  for (const auto& reader : _readers) {
+    AddColumns(columns, *reader);
+  }
+  PublishColumns(columns);
+  return columns;
+}
+
+CompositeReader::Terms CompositeReader::BuildTerms() const {
+  OpenInParallel(_readers, [](const SubReader& reader) { reader.field_ids(); });
+  Terms terms;
+  for (const auto& reader : _readers) {
+    AddTerms(terms, *reader, /*keep_sorted=*/false);
+  }
+  for (auto& [key, stats] : terms) {
+    absl::c_stable_sort(stats.segments, kByMin);
+  }
+  PublishTerms(terms);
+  return terms;
+}
+
+CompositeReader::Columns CompositeReader::UpdateColumns(
+  const Columns& base, uint64_t base_docs, std::span<const SegmentReader> added,
+  std::span<const PatchedReader> patched,
+  std::span<const SegmentReader> removed) const {
+  Columns columns;
+  if (!removed.empty() && _docs != base_docs) {
+    for (const auto& reader : _readers) {
+      AddColumns(columns, *reader);
+    }
+    PublishColumns(columns);
+    return columns;
+  }
+  columns.reserve(base.size());
+  for (const auto& [field, column] : base) {
+    columns.try_emplace(
+      field, ColumnStats{
+               .merged = column.merged->ToUnique(),
+               .distinct = column.distinct ? column.distinct->Copy() : nullptr,
+               .docs = column.docs});
+  }
+  for (const auto& reader : removed) {
+    RemoveColumns(columns, *reader);
+  }
+  for (const auto& reader : added) {
+    AddColumns(columns, *reader);
+  }
+  for (const auto& [before, after] : patched) {
+    RemoveColumns(columns, *before);
+    AddColumns(columns, *after);
+  }
+  PublishColumns(columns);
+  return columns;
+}
+
+CompositeReader::Terms CompositeReader::UpdateTerms(
+  const Terms& base, std::span<const SegmentReader> added,
+  std::span<const SegmentReader> removed) {
+  Terms terms;
+  terms.reserve(base.size());
+  for (const auto& [key, stats] : base) {
+    terms.try_emplace(key, TermStats{.segments = stats.segments});
+  }
+  for (const auto& reader : removed) {
+    RemoveTerms(terms, *reader);
+  }
+  for (const auto& reader : added) {
+    AddTerms(terms, *reader, /*keep_sorted=*/true);
+  }
+  PublishTerms(terms);
+  return terms;
+}
+
+void CompositeReader::AddTerms(Terms& terms, const SubReader& reader,
+                               bool keep_sorted) {
   for (const auto id : reader.field_ids()) {
     for (const auto* field : reader.fields(id)) {
       if (field->size() == 0) {
         continue;
       }
-      auto& segments = _terms[std::pair{id, field->meta().dict}].segments;
+      auto& segments = terms[std::pair{id, field->meta().dict}].segments;
       const SegmentTerms added{.field = field,
                                .min = field->min(),
                                .max = field->max(),
@@ -157,32 +251,32 @@ void CompositeReader::AddTerms(const SubReader& reader, bool keep_sorted) {
   }
 }
 
-void CompositeReader::RemoveTerms(const SubReader& reader) {
+void CompositeReader::RemoveTerms(Terms& terms, const SubReader& reader) {
   for (const auto id : reader.field_ids()) {
     for (const auto* field : reader.fields(id)) {
       if (field->size() == 0) {
         continue;
       }
-      const auto it = _terms.find(std::pair{id, field->meta().dict});
-      SDB_ASSERT(it != _terms.end());
+      const auto it = terms.find(std::pair{id, field->meta().dict});
+      SDB_ASSERT(it != terms.end());
       auto& segments = it->second.segments;
-      std::erase_if(segments, [&](const SegmentTerms& terms) {
-        return terms.field == field;
+      std::erase_if(segments, [&](const SegmentTerms& segment) {
+        return segment.field == field;
       });
       if (segments.empty()) {
-        _terms.erase(it);
+        terms.erase(it);
       }
     }
   }
 }
 
-void CompositeReader::AddColumns(const SubReader& reader, bool new_docs) {
+void CompositeReader::AddColumns(Columns& columns, const SubReader& reader) {
   const auto* col_reader = reader.GetColReader();
   if (!col_reader) {
     return;
   }
   for (const auto& column : col_reader->Columns()) {
-    auto& stats = _columns[column->Id()];
+    auto& stats = columns[column->Id()];
     if (!stats.merged) {
       stats.merged = column->MergedStatistics().ToUnique();
     } else {
@@ -195,20 +289,18 @@ void CompositeReader::AddColumns(const SubReader& reader, bool new_docs) {
         stats.distinct->Merge(*distinct);
       }
     }
-    if (new_docs) {
-      stats.docs += reader.docs_count();
-    }
+    stats.docs += reader.docs_count();
   }
 }
 
-void CompositeReader::RemoveColumns(const SubReader& reader) {
+void CompositeReader::RemoveColumns(Columns& columns, const SubReader& reader) {
   const auto* col_reader = reader.GetColReader();
   if (!col_reader) {
     return;
   }
   for (const auto& column : col_reader->Columns()) {
-    const auto it = _columns.find(column->Id());
-    SDB_ASSERT(it != _columns.end() && it->second.docs >= reader.docs_count());
+    const auto it = columns.find(column->Id());
+    SDB_ASSERT(it != columns.end() && it->second.docs >= reader.docs_count());
     auto& stats = it->second;
     stats.docs -= reader.docs_count();
     stats.merged->SubtractAdditiveStatistics(column->MergedStatistics());
@@ -219,8 +311,8 @@ void CompositeReader::RemoveColumns(const SubReader& reader) {
   }
 }
 
-void CompositeReader::Publish() {
-  for (auto& [field, column] : _columns) {
+void CompositeReader::PublishColumns(Columns& columns) const {
+  for (auto& [field, column] : columns) {
     column.published = column.merged->ToUnique();
     if (column.docs < _docs) {
       column.published->SetHasNull();
@@ -230,10 +322,13 @@ void CompositeReader::Publish() {
         std::min<uint64_t>(column.distinct->GetCount(), _live));
     }
   }
-  for (auto& [key, terms] : _terms) {
-    const auto& segments = terms.segments;
+}
+
+void CompositeReader::PublishTerms(Terms& terms) {
+  for (auto& [key, stats] : terms) {
+    const auto& segments = stats.segments;
     SDB_ASSERT(!segments.empty());
-    auto& range = terms.range;
+    auto& range = stats.range;
     range = {.min = segments.front().min, .max = segments.front().max};
     const SegmentTerms* largest = nullptr;
     uint64_t sum = 0;
@@ -257,14 +352,22 @@ void CompositeReader::Publish() {
 
 const duckdb::BaseStatistics* CompositeReader::GetColumnStats(
   field_id field) const {
-  const auto it = _columns.find(field);
-  return it == _columns.end() ? nullptr : it->second.published.get();
+  const auto* columns = LoadedColumns();
+  if (!columns) {
+    return nullptr;
+  }
+  const auto it = columns->find(field);
+  return it == columns->end() ? nullptr : it->second.published.get();
 }
 
 const FieldTermRange* CompositeReader::GetTermRange(field_id field,
                                                     DictRef dict) const {
-  const auto it = _terms.find(std::pair{field, dict});
-  return it == _terms.end() ? nullptr : &it->second.range;
+  const auto* terms = LoadedTerms();
+  if (!terms) {
+    return nullptr;
+  }
+  const auto it = terms->find(std::pair{field, dict});
+  return it == terms->end() ? nullptr : &it->second.range;
 }
 
 }  // namespace irs

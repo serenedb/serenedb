@@ -272,6 +272,7 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   const auto root = BenchDir(codec).string();
   const auto rows = Rows();
   const auto type = TypeOf(codec);
+  irs::FileSizes sizes;
   {
     irs::FileTracker tracker{fs, root, kSeg};
     irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
@@ -290,9 +291,10 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
       pos += take;
     }
     w.Commit(rows);
+    sizes = tracker.Files()[irs::KindIndex(irs::kColFile)];
   }
   seg->reader = std::make_unique<irs::ColReader>(
-    CsDb(), fs, root, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
+    CsDb(), fs, root, kSeg, sizes, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (!seg->col) {
     std::fprintf(stderr, "BuildSeg: column missing\n");

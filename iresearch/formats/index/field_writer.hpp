@@ -69,6 +69,7 @@ class FieldWriter final : public FieldSink {
   void FeedIndex();
   bool Append(bytes_view term, const PostingMeta& meta);
   void Cut();
+  duckdb::WriteStream& Out();
   void WriteBlock(uint64_t size);
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
                 uint64_t docs_sum);

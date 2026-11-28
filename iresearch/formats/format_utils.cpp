@@ -29,6 +29,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/storage/external_file_cache/input_file_reader.hpp>
@@ -40,6 +41,18 @@
 
 namespace irs::format_utils {
 namespace {
+
+class EmptyMapping final : public duckdb::MemoryMappedFile {
+ public:
+  explicit EmptyMapping(std::string path)
+    : duckdb::MemoryMappedFile{
+        std::move(path), duckdb::FileFlags::FILE_FLAGS_READ, nullptr, 0} {}
+
+  void Sync() final {}
+  bool Trim(duckdb::idx_t, duckdb::idx_t) final { return false; }
+  bool OnDiskFile() const final { return false; }
+  void Close() final {}
+};
 
 constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
 constexpr duckdb::field_id_t kFieldMeta = 1;
@@ -83,8 +96,8 @@ void ReadMeta(duckdb::BinaryDeserializer& meta, duckdb::InputFileReader& stream,
   deserializer.End();
 }
 
-void WriteFooterImpl(duckdb::BufferedFileWriter& out,
-                     const FooterWriter* write) {
+uint32_t WriteFooterImpl(duckdb::BufferedFileWriter& out,
+                         const FooterWriter* write) {
   const uint32_t data_crc32c = out.Checksum();
   const auto begin = out.Position();
   duckdb::BinarySerializer serializer{out};
@@ -106,41 +119,41 @@ void WriteFooterImpl(duckdb::BufferedFileWriter& out,
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(), "footer of ", size,
              " bytes does not fit its 32-bit length");
   out.Write<uint32_t>(out.Checksum());
-  out.Write<uint32_t>(static_cast<uint32_t>(size));
+  return static_cast<uint32_t>(size);
+}
+
+void CheckSize(const duckdb::InputFile& file, std::string_view name,
+               FileSizes sizes) {
+  if (file.GetSize() != sizes.file) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+      ERR_MSG("index file '", name, "' is ", file.GetSize(),
+              " bytes, but the log recorded it as ", sizes.file, " bytes"));
+  }
 }
 
 Footer ReadFooterImpl(const duckdb::InputFile& file, std::string_view name,
-                      const FooterReader* read) {
+                      FileSizes sizes, const FooterReader* read) {
+  CheckSize(file, name, sizes);
   const auto length = file.GetSize();
-  if (length < kTrailerLen) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("footer: '", name, "' of ", length,
-                            " bytes is too short for a trailer"));
-  }
-  const uint64_t trailer_offset = length - kTrailerLen;
-  const auto trailer = file.Pin(trailer_offset, kTrailerLen);
-  const auto footer_expected_crc32c =
-    absl::little_endian::Load32(trailer.Ptr());
-  const auto footer_len =
-    absl::little_endian::Load32(trailer.Ptr() + sizeof(uint32_t));
-  if (footer_len > trailer_offset) {
+  const uint64_t footer_len = sizes.footer;
+  if (length < kFooterCrcLen || footer_len > length - kFooterCrcLen) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-      ERR_MSG("footer: '", name, "' of ", length, " bytes claims a footer of ",
-              footer_len, " bytes"));
+      ERR_MSG("footer: '", name, "' of ", length,
+              " bytes cannot hold a footer of ", footer_len, " bytes"));
   }
-  Footer footer{.data_len = trailer_offset - footer_len};
-  const bool in_trailer_page =
-    footer.data_len / duckdb::PageResidency::PAGE_SIZE ==
-    trailer_offset / duckdb::PageResidency::PAGE_SIZE;
-  if (!in_trailer_page) {
-    file.Prefetch(footer.data_len, footer_len);
+  const uint64_t footer_and_crc = footer_len + kFooterCrcLen;
+  Footer footer{.data_len = length - footer_and_crc};
+  if (footer.data_len / duckdb::PageResidency::PAGE_SIZE !=
+      (length - 1) / duckdb::PageResidency::PAGE_SIZE) {
+    file.Prefetch(footer.data_len, footer_and_crc);
   }
-  const auto footer_bytes = file.Pin(footer.data_len, footer_len);
+  const auto footer_bytes = file.Pin(footer.data_len, footer_and_crc);
   const auto* footer_data = footer_bytes.Ptr();
   if (static_cast<uint32_t>(absl::ComputeCrc32c(
         {reinterpret_cast<const char*>(footer_data), footer_len})) !=
-      footer_expected_crc32c) {
+      absl::little_endian::Load32(footer_data + footer_len)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INDEX_CORRUPTED),
       ERR_MSG("footer: '", name, "' does not match its checksum"));
@@ -165,27 +178,38 @@ Footer ReadFooterImpl(const duckdb::InputFile& file, std::string_view name,
                             duckdb::ErrorData{e}.RawMessage(),
                             "; it was written by a newer release of SereneDB"));
   }
-  file.Evict(footer.data_len, footer_len);
+  file.Evict(footer.data_len, footer_and_crc);
   return footer;
 }
 
 }  // namespace
 
-void WriteFooter(duckdb::BufferedFileWriter& out) {
-  WriteFooterImpl(out, nullptr);
+uint32_t WriteFooter(duckdb::BufferedFileWriter& out) {
+  return WriteFooterImpl(out, nullptr);
 }
 
-void WriteFooter(duckdb::BufferedFileWriter& out, FooterWriter write) {
-  WriteFooterImpl(out, &write);
-}
-
-Footer ReadFooter(const duckdb::InputFile& file, std::string_view name) {
-  return ReadFooterImpl(file, name, nullptr);
+uint32_t WriteFooter(duckdb::BufferedFileWriter& out, FooterWriter write) {
+  return WriteFooterImpl(out, &write);
 }
 
 Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
-                  FooterReader read) {
-  return ReadFooterImpl(file, name, &read);
+                  FileSizes sizes) {
+  return ReadFooterImpl(file, name, sizes, nullptr);
+}
+
+Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
+                  FileSizes sizes, FooterReader read) {
+  return ReadFooterImpl(file, name, sizes, &read);
+}
+
+duckdb::shared_ptr<duckdb::InputFile> EmptyInput(
+  duckdb::DatabaseInstance& db, std::string path,
+  const duckdb::InputFile* sibling) {
+  if (sibling && !sibling->IsMapped()) {
+    return duckdb::ExternalFileCache::Get(db).CreateUnbackedFile(path);
+  }
+  return duckdb::make_shared_ptr<duckdb::InputFile>(
+    duckdb::make_uniq<EmptyMapping>(std::move(path)));
 }
 
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
@@ -197,9 +221,9 @@ std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                       std::move(writer));
 }
 
-std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
-  const FlushState& state, std::string_view ext, uint8_t kind) {
-  auto& tracker = state.tracker;
+std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(FileTracker& tracker,
+                                                          std::string_view ext,
+                                                          uint8_t kind) {
   auto out =
     OpenOutput(tracker.Fs(), tracker.Root(), FileName(tracker.Name(), ext));
   tracker.Add(kind);
@@ -210,6 +234,25 @@ duckdb::shared_ptr<duckdb::InputFile> CloseOutput(
   duckdb::BufferedFileWriter& out) {
   out.Close();
   return out.fs.OpenInputFile(out.path, duckdb::MappedFileAccess::RANDOM);
+}
+
+duckdb::shared_ptr<duckdb::InputFile> CloseOutput(
+  duckdb::BufferedFileWriter& out, FileTracker& tracker, uint8_t kind,
+  uint32_t footer) {
+  tracker.Closed(kind, {.file = out.Position(), .footer = footer});
+  return CloseOutput(out);
+}
+
+void LazyOutput::Open() {
+  SDB_ASSERT(_tracker);
+  _out = PrepareOutput(*_tracker, _ext, _kind);
+}
+
+duckdb::shared_ptr<duckdb::InputFile> LazyOutput::Close(uint32_t footer) {
+  SDB_ASSERT(_out);
+  auto file = CloseOutput(*_out, *_tracker, _kind, footer);
+  _out.reset();
+  return file;
 }
 
 }  // namespace irs::format_utils

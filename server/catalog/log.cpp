@@ -54,6 +54,7 @@ struct SnapshotHeader {
   Lsn covered = 0;
   uint64_t number = 0;
   Lsn begin = 0;
+  uint64_t oids = 0;
 };
 
 struct LinkedChunk {
@@ -351,6 +352,7 @@ struct Scanned {
   Lsn covered = 0;
   uint64_t snapshot = 0;
   uint64_t snapshot_bytes = 0;
+  uint64_t oids = 0;
   size_t torn_from = 0;
   size_t torn_to = 0;
 };
@@ -370,6 +372,7 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
     .covered = snapshot.covered,
     .snapshot = past.sequence,
     .snapshot_bytes = past.bytes.size(),
+    .oids = snapshot.oids,
   };
   std::vector<uint8_t> last;
   size_t last_parsed = 0;
@@ -589,6 +592,7 @@ void Log::Replay(Apply apply, CatalogPart part) {
               removed;
   }
   _snapshot = scanned.snapshot;
+  _snapshot_oids = scanned.oids;
   _covered.store(scanned.covered, std::memory_order_release);
   _covered_number.store(scanned.first, std::memory_order_relaxed);
   _snapshot_bytes.store(scanned.snapshot_bytes, std::memory_order_relaxed);
@@ -875,10 +879,11 @@ void Log::FoldTail(Lsn bound, CatalogPart part, Compact compact) {
   _history_bytes.store(TotalBytes(_history), std::memory_order_relaxed);
 }
 
-void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
-                        CatalogPart part, Compact compact) {
+void Log::WriteSnapshot(Lsn covered, uint64_t oids,
+                        std::span<const RecordBuffer> records, CatalogPart part,
+                        Compact compact) {
   absl::MutexLock files{&_files_mutex};
-  SnapshotHeader header{.covered = covered};
+  SnapshotHeader header{.covered = covered, .oids = oids};
   {
     absl::MutexLock lock{&_mutex};
     SDB_ASSERT(covered <= _durable.load(std::memory_order_acquire));

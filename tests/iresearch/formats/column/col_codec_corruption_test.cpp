@@ -135,6 +135,7 @@ class ColCodecCorruptionTest : public TestBase {
       }
       ASSERT_TRUE(w.Commit(0));
     }
+    _sizes = dir.Sizes(kSeg, irs::kColFile);
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -166,6 +167,7 @@ class ColCodecCorruptionTest : public TestBase {
   void Read(const std::filesystem::path& path, const Case& c,
             const Value& probe, std::set<std::string>& messages) {
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, _sizes);
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -336,6 +338,7 @@ class ColCodecCorruptionTest : public TestBase {
 
   duckdb::DuckDB _db;
   size_t _next = 0;
+  irs::FileSizes _sizes;
 };
 
 Value Null(const LogicalType& type) { return Value{type}; }
@@ -976,6 +979,7 @@ TEST_F(ColCodecCorruptionTest, TextSegmentsRejectALargerFieldAtTheirLastEntry) {
       ASSERT_NO_FATAL_FAILURE(RewritePacked(path / irs::FileName(kSeg), offset,
                                             size, lengths, change));
       tests::IndexDir dir{Db(), path.string()};
+      dir.Adopt(kSeg, irs::kColFile, _sizes);
       irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
@@ -1170,6 +1174,7 @@ TEST_F(ColCodecCorruptionTest,
       io.write(reinterpret_cast<const char*>(&h), sizeof(h));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, _sizes);
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -1222,6 +1227,7 @@ TEST_F(ColCodecCorruptionTest,
       io.write(reinterpret_cast<const char*>(&value), sizeof(value));
     }
     tests::IndexDir dir{Db(), path.string()};
+    dir.Adopt(kSeg, irs::kColFile, _sizes);
     irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -1268,6 +1274,7 @@ TEST_F(ColCodecCorruptionTest, OnpairFramesShorterThanTheirPaddingAreRefused) {
     io.write(reinterpret_cast<const char*>(&frame), sizeof(frame));
   }
   tests::IndexDir dir{Db(), path.string()};
+  dir.Adopt(kSeg, irs::kColFile, _sizes);
   irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);

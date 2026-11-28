@@ -50,7 +50,7 @@ num_buffered_docs	0
 num_docs	3
 num_failed_cleanups	0
 num_failed_consolidations	0
-num_files	3
+num_files	2
 num_live_docs	3
 num_segments	1
 
@@ -76,7 +76,7 @@ num_buffered_docs	0
 num_docs	5
 num_failed_cleanups	0
 num_failed_consolidations	0
-num_files	6
+num_files	4
 num_live_docs	5
 num_segments	2
 
@@ -96,7 +96,7 @@ num_buffered_docs	0
 num_docs	5
 num_failed_cleanups	0
 num_failed_consolidations	0
-num_files	3
+num_files	2
 num_live_docs	5
 num_segments	1
 

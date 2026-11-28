@@ -290,7 +290,9 @@ const Seg& GetSeg(Shape shape) {
   irs::FileTracker tracker{fs, slot->root, kSeg};
   Write(tracker, GetData(shape));
   slot->reader = std::make_unique<irs::ColReader>(
-    CsDb(), fs, slot->root, kSeg, true, duckdb::MappedFileAccess::RANDOM);
+    CsDb(), fs, slot->root, kSeg,
+    tracker.Files()[irs::KindIndex(irs::kColFile)],
+    duckdb::MappedFileAccess::RANDOM);
   slot->col = slot->reader->Column(kField);
   if (slot->col == nullptr) {
     std::fprintf(stderr, "column missing\n");

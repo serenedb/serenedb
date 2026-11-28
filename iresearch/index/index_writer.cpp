@@ -109,6 +109,9 @@ void CompactFiles(duckdb::FileSystem& fs, std::string_view root,
   for (const auto& name : SegmentFiles(meta.name, meta.kinds)) {
     paths.push_back(fs.JoinPath(root, name));
   }
+  if (paths.empty()) {
+    return;
+  }
   try {
     SDB_IF_FAILURE("IndexWriter::CompactOutOfMemory") {
       throw duckdb::OutOfMemoryException("intentional debug error");
@@ -255,7 +258,6 @@ void IndexWriter::SegmentContext::Flush() {
     writer_meta = {};
     return;
   }
-  SDB_ASSERT(writer_meta.kinds != 0);
   SDB_ASSERT(writer_meta.live_docs_count <= writer_meta.docs_count);
   auto reader = owner.OpenWritten(writer_meta, std::move(written));
   flushed.emplace_back(std::move(writer_meta), std::move(docs_mask),
@@ -477,8 +479,10 @@ std::shared_ptr<const SegmentReaderImpl> IndexWriter::OpenWritten(
   }
   written.inputs = {};
   CompactFiles(_fs, _root, meta);
-  return SegmentReaderImpl::Open(_db, _fs, _root, meta, _reader_options,
-                                 std::move(written.files));
+  auto reader = SegmentReaderImpl::Open(_db, _fs, _root, meta, _reader_options,
+                                        std::move(written.files));
+  reader->OpenFiles();
+  return reader;
 }
 
 void IndexWriter::CompactionFloorGuard::Release() noexcept {

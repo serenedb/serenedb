@@ -300,6 +300,7 @@ bool Stale() { return std::getenv("SDB_BENCH_STALE") != nullptr; }
 
 struct ColSeg {
   std::filesystem::path path;
+  irs::FileSizes sizes;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t bytes = 0;
@@ -328,7 +329,7 @@ void MakeSegDirectory(ColSeg& seg, const ColArm& arm) {
 void OpenReader(ColSeg& seg) {
   seg.reader = std::make_unique<irs::ColReader>(
     CsDb(), duckdb::FileSystem::GetFileSystem(CsDb()), seg.path.string(), kSeg,
-    true, duckdb::MappedFileAccess::RANDOM);
+    seg.sizes, duckdb::MappedFileAccess::RANDOM);
   seg.col = seg.reader->Column(kField);
   if (seg.col == nullptr) {
     std::fprintf(stderr, "col_codecs_real: column missing\n");
@@ -415,7 +416,7 @@ struct Built {
   uint64_t ours = 0;
 };
 
-void ColBuild(irs::FileTracker& tracker, const ColArm& arm) {
+irs::FileSizes ColBuild(irs::FileTracker& tracker, const ColArm& arm) {
   const auto& data = Data();
   irs::ColWriter w{CsDb(), tracker, Tier()};
   auto& cw = w.OpenColumn(
@@ -430,13 +431,14 @@ void ColBuild(irs::FileTracker& tracker, const ColArm& arm) {
     pos += data.counts[i];
   }
   w.Commit(pos);
+  return tracker.Files()[irs::KindIndex(irs::kColFile)];
 }
 
 Built Measure(duckdb::FileSystem& fs, std::string_view root,
-              const ColArm& arm) {
+              irs::FileSizes sizes, const ColArm& arm) {
   const auto& data = Data();
-  irs::ColReader reader{CsDb(), fs,   root,
-                        kSeg,   true, duckdb::MappedFileAccess::SEQUENTIAL};
+  irs::ColReader reader{CsDb(), fs,    root,
+                        kSeg,   sizes, duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = reader.Column(kField);
   if (col == nullptr) {
     std::fprintf(stderr, "col_codecs_real: column missing\n");
@@ -767,8 +769,8 @@ ColSeg& GetColSeg(const ColArm* arm) {
     auto& fs = duckdb::FileSystem::GetFileSystem(CsDb());
     const auto root = slot->path.string();
     irs::FileTracker tracker{fs, root, kSeg};
-    ColBuild(tracker, *arm);
-    const auto built = Measure(fs, root, *arm);
+    slot->sizes = ColBuild(tracker, *arm);
+    const auto built = Measure(fs, root, slot->sizes, *arm);
     slot->bytes = built.bytes;
     slot->ours = built.ours;
     OpenReader(*slot);
@@ -799,8 +801,8 @@ void ColSeal(benchmark::State& state, const ColArm* arm) {
   }
   duckdb::MemoryFileSystem fs;
   irs::FileTracker tracker{fs, kRoot, kSeg};
-  ColBuild(tracker, *arm);
-  const auto built = Measure(fs, kRoot, *arm);
+  const auto sizes = ColBuild(tracker, *arm);
+  const auto built = Measure(fs, kRoot, sizes, *arm);
   Counters(state, built.bytes, built.ours);
 }
 

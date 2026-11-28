@@ -21,13 +21,24 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <initializer_list>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iterator>
+#include <optional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <utility>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "hook_file_system.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "index_dir.hpp"
@@ -58,6 +69,56 @@ auto StoreName() {
       irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
+}
+
+class OpenedFiles final : public tests::HookFileSystem {
+ public:
+  using tests::HookFileSystem::HookFileSystem;
+
+  void OnOpen(std::string_view name) final { _opened.emplace(name); }
+
+  std::set<std::string> Take() { return std::exchange(_opened, {}); }
+
+ private:
+  std::set<std::string> _opened;
+};
+
+std::set<std::string> FilesOf(const irs::SegmentMeta& meta, uint8_t kinds) {
+  auto files = irs::SegmentFiles(meta.name, kinds);
+  return {std::make_move_iterator(files.begin()),
+          std::make_move_iterator(files.end())};
+}
+
+void CommitNames(tests::IndexWriter& writer,
+                 std::initializer_list<std::string_view> names,
+                 std::optional<irs::IndexFeatures> indexed) {
+  auto batch = writer.GetBatch();
+  for (const auto name : names) {
+    tests::StringField field{"name", name};
+    field.id = kName;
+    auto doc = batch.Insert();
+    if (indexed) {
+      field.index_features = *indexed;
+      ASSERT_TRUE(tests::InsertField(doc, field));
+    }
+    irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), field);
+  }
+  ASSERT_TRUE(batch.Commit());
+  ASSERT_TRUE(writer.RefreshCommit());
+}
+
+std::string CorruptionOf(const tests::IndexDir& dir,
+                         const irs::SegmentMeta& meta) {
+  const auto reader =
+    irs::SegmentReaderImpl::Open(dir.Db(), dir.Fs(), dir.Root(), meta,
+                                 irs::tests::DefaultReaderOptions(), nullptr);
+  try {
+    reader->Column(kName);
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << e.what();
+    return std::string{e.message()};
+  }
+  return {};
 }
 
 }  // namespace
@@ -110,6 +171,86 @@ TEST(composite_reader_test, term_ranges_span_segments) {
   EXPECT_EQ(first->docs, 1);
   EXPECT_FALSE(reader.GetTermRange(kAbsent, irs::StringLayout::kStrings));
   EXPECT_FALSE(reader.GetTermRange(kBoth, irs::StringLayout::kNulls));
+}
+
+TEST(composite_reader_test, loads_stats_on_first_use) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+  CommitNames(*writer, {"B", "D"}, irs::IndexFeatures::None);
+  CommitNames(*writer, {"A", "A"}, irs::IndexFeatures::None);
+  const auto committed = dir.Committed();
+  ASSERT_EQ(2, committed.size());
+
+  OpenedFiles fs{dir.Fs()};
+  std::vector<irs::SegmentReader> segments;
+  std::set<std::string> columns;
+  std::set<std::string> indexes;
+  for (const auto& meta : committed) {
+    segments.emplace_back(irs::SegmentReaderImpl::Open(
+      dir.Db(), fs, dir.Root(), meta, irs::tests::DefaultReaderOptions(),
+      nullptr));
+    columns.merge(FilesOf(meta, irs::kColFile));
+    indexes.merge(
+      FilesOf(meta, static_cast<uint8_t>(meta.kinds & ~irs::kColFile)));
+  }
+  const irs::CompositeReader reader{std::move(segments), /*stats=*/true};
+  EXPECT_EQ(4, reader.docs_count());
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+
+  ASSERT_NE(nullptr, reader.GetColumnStats(kName));
+  EXPECT_EQ(columns, fs.Take());
+
+  const auto* terms = reader.GetTermRange(kName, irs::StringLayout::kStrings);
+  ASSERT_NE(nullptr, terms);
+  EXPECT_EQ(irs::ViewCast<char>(terms->min), "A");
+  EXPECT_EQ(irs::ViewCast<char>(terms->max), "D");
+  EXPECT_EQ(4, terms->docs);
+  EXPECT_EQ(indexes, fs.Take());
+}
+
+TEST(composite_reader_test, builds_no_stats_from_unopened_segments) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+  CommitNames(*writer, {"B", "D"}, irs::IndexFeatures::None);
+  CommitNames(*writer, {"A", "A"}, irs::IndexFeatures::None);
+  const auto committed = dir.Committed();
+  ASSERT_EQ(2, committed.size());
+
+  OpenedFiles fs{dir.Fs()};
+  const auto open = [&](const irs::SegmentMeta& meta) {
+    return irs::SegmentReader{irs::SegmentReaderImpl::Open(
+      dir.Db(), fs, dir.Root(), meta, irs::tests::DefaultReaderOptions(),
+      nullptr)};
+  };
+  const auto first = open(committed[0]);
+  const auto second = open(committed[1]);
+  const irs::SegmentReader added[]{second};
+  const irs::CompositeReader base{{first}, /*stats=*/true};
+  ASSERT_NE(nullptr, base.GetColumnStats(kName));
+  ASSERT_NE(nullptr, base.GetTermRange(kName, irs::StringLayout::kStrings));
+  fs.Take();
+
+  const irs::CompositeReader next{base, {first, second}, added, {}, {}};
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+  const auto* terms = next.GetTermRange(kName, irs::StringLayout::kStrings);
+  ASSERT_NE(nullptr, terms);
+  EXPECT_EQ(irs::ViewCast<char>(terms->min), "A");
+  EXPECT_EQ(4, terms->docs);
+
+  second.GetImpl()->OpenFiles();
+  fs.Take();
+  const irs::CompositeReader opened{base, {first, second}, added, {}, {}};
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+  const auto* updated = opened.GetTermRange(kName, irs::StringLayout::kStrings);
+  ASSERT_NE(nullptr, updated);
+  EXPECT_EQ(irs::ViewCast<char>(updated->min), "A");
+  EXPECT_EQ(irs::ViewCast<char>(updated->max), "D");
+  EXPECT_EQ(4, updated->docs);
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
 }
 
 TEST(composite_reader_test, open) {
@@ -343,6 +484,99 @@ TEST(segment_reader_test, open_invalid_segment) {
   }
 }
 
+TEST(segment_reader_test, writes_only_files_with_data) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+  constexpr auto kPositions =
+    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
+  CommitNames(*writer, {"A", "B"}, std::nullopt);
+  CommitNames(*writer, {"A", "B"}, irs::IndexFeatures::None);
+  CommitNames(*writer, {"A", "A"}, irs::IndexFeatures::None);
+  CommitNames(*writer, {"A", "B"}, kPositions);
+
+  const auto committed = dir.Committed();
+  ASSERT_EQ(4, committed.size());
+  EXPECT_EQ(irs::kColFile, committed[0].kinds);
+  EXPECT_EQ(irs::kColFile | irs::kIdxFile, committed[1].kinds);
+  EXPECT_EQ(irs::kColFile | irs::kIdxFile | irs::kDocFile, committed[2].kinds);
+  EXPECT_EQ(irs::kColFile | irs::kIdxFile | irs::kPosFile, committed[3].kinds);
+  size_t written = 0;
+  for (const auto& meta : committed) {
+    for (const auto& name : FilesOf(meta, meta.kinds)) {
+      EXPECT_TRUE(dir.Has(name)) << name;
+      ++written;
+    }
+  }
+  EXPECT_EQ(written, dir.Files().size());
+}
+
+TEST(segment_reader_test, opens_files_on_first_use) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  CommitNames(*tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                        irs::tests::DefaultWriterOptions()),
+              {"A", "B", "A"}, irs::IndexFeatures::None);
+  const auto committed = dir.Committed();
+  ASSERT_EQ(1, committed.size());
+  const auto& meta = committed.front();
+  ASSERT_EQ(irs::kColFile | irs::kIdxFile | irs::kDocFile, meta.kinds);
+
+  OpenedFiles fs{dir.Fs()};
+  const auto reader =
+    irs::SegmentReaderImpl::Open(dir.Db(), fs, dir.Root(), meta,
+                                 irs::tests::DefaultReaderOptions(), nullptr);
+  EXPECT_EQ(3, reader->docs_count());
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+
+  ASSERT_NE(nullptr, reader->Column(kName));
+  EXPECT_EQ(FilesOf(meta, irs::kColFile), fs.Take());
+
+  const auto* field = reader->field(kName);
+  ASSERT_NE(nullptr, field);
+  EXPECT_EQ(2, field->size());
+  EXPECT_EQ(FilesOf(meta, irs::kIdxFile | irs::kDocFile), fs.Take());
+
+  EXPECT_NE(nullptr, reader->Column(kName));
+  EXPECT_NE(nullptr, reader->field(kName));
+  EXPECT_EQ(std::set<std::string>{}, fs.Take());
+}
+
+TEST(segment_reader_test, reads_footers_at_recorded_sizes) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  CommitNames(*tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                        irs::tests::DefaultWriterOptions()),
+              {"A", "B", "A"}, irs::IndexFeatures::None);
+  const auto committed = dir.Committed();
+  ASSERT_EQ(1, committed.size());
+  const auto& meta = committed.front();
+  ASSERT_EQ(irs::kColFile | irs::kIdxFile | irs::kDocFile, meta.kinds);
+  for (const auto kind : {irs::kColFile, irs::kIdxFile, irs::kDocFile}) {
+    const auto name = irs::SegmentFiles(meta.name, kind).front();
+    const auto sizes = meta.files[irs::KindIndex(kind)];
+    EXPECT_EQ(dir.Open(name, duckdb::MappedFileAccess::NORMAL)->GetSize(),
+              sizes.file)
+      << name;
+    EXPECT_LT(0U, sizes.footer) << name;
+    EXPECT_LT(sizes.footer, sizes.file) << name;
+  }
+  EXPECT_EQ("", CorruptionOf(dir, meta));
+
+  auto longer = meta;
+  ++longer.files[irs::KindIndex(irs::kColFile)].file;
+  const auto size_error = CorruptionOf(dir, longer);
+  EXPECT_NE(std::string::npos, size_error.find("but the log recorded it as"))
+    << size_error;
+
+  auto shorter_footer = meta;
+  --shorter_footer.files[irs::KindIndex(irs::kColFile)].footer;
+  const auto footer_error = CorruptionOf(dir, shorter_footer);
+  EXPECT_NE(std::string::npos, footer_error.find("does not match its checksum"))
+    << footer_error;
+}
+
 TEST(segment_reader_test, open) {
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
@@ -422,6 +656,7 @@ TEST(segment_reader_test, open) {
     meta.live_docs_count = 5;
     meta.name = irs::FileName(1);
     meta.kinds = dir.Committed().front().kinds;
+    meta.files = dir.Committed().front().files;
 
     auto rdr =
       irs::SegmentReaderImpl::Open(dir.Db(), dir.Fs(), dir.Root(), meta,

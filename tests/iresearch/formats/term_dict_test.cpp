@@ -386,9 +386,10 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
 
   void Open(const tests::IndexDir& from) {
     _reader.reset();
-    _meta.name = kSegment;
+    _meta = from.Meta(kSegment);
     _idx = std::make_unique<irs::IdxReader>(from.Fs(), from.Root(), kSegment,
-                                            true, nullptr);
+                                            irs::SizesOf(_meta, irs::kIdxFile),
+                                            nullptr);
     _reader = std::make_unique<irs::term_dict::FieldReader>();
     _reader->prepare(irs::ReaderState{.db = from.Db(),
                                       .fs = from.Fs(),
@@ -416,7 +417,8 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
   }
 
   irs::term_dict::TermsMeta TakeTerms() {
-    return irs::IdxReader{dir().Fs(), dir().Root(), kSegment, true, nullptr}
+    return irs::IdxReader{dir().Fs(), dir().Root(), kSegment,
+                          dir().Sizes(kSegment, irs::kIdxFile), nullptr}
       .TakeTerms();
   }
 
@@ -442,9 +444,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
       ASSERT_TRUE(file);
       duckdb::InputFileReader in{*file};
       const uint64_t length = file->GetSize();
-      in.Seek(length - sizeof(uint32_t));
-      const uint64_t footer = in.Read<uint32_t>();
-      data.resize(std::min(keep, length - 2 * sizeof(uint32_t) - footer));
+      const uint64_t footer = dir().Sizes(kSegment, irs::kIdxFile).footer;
+      data.resize(
+        std::min(keep, length - irs::format_utils::kFooterCrcLen - footer));
       in.Seek(0);
       in.ReadData(data.data(), data.size());
     }
@@ -453,9 +455,12 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     auto out = dir().Create(name);
     ASSERT_NE(nullptr, out);
     out->WriteData(data.data(), data.size());
-    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
-      meta.WriteObject(irs::kIdxFieldTerms, "terms", write);
-    });
+    const auto footer =
+      irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
+        meta.WriteObject(irs::kIdxFieldTerms, "terms", write);
+      });
+    dir().Adopt(kSegment, irs::kIdxFile,
+                {.file = out->Position(), .footer = footer});
     out->Close();
   }
 

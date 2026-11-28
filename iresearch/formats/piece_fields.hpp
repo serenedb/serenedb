@@ -120,7 +120,7 @@ class PieceFields final {
 
   PieceTermReader& Add(FieldMeta meta, uint32_t width);
   void Seal(PieceTermReader& reader, uint64_t docs, uint64_t total_freq);
-  void Open(const ReaderState& state, IndexFeatures features);
+  void Open(const ReaderState& state);
   size_t Bytes() const noexcept;
 
  private:
@@ -148,8 +148,6 @@ class PieceFieldWriter final : public FieldSink {
   void WriteSlot(field_id id, DictRef dict, TermPostings& docs) final;
   void end() final;
 
-  IndexFeatures Features() const noexcept { return _features; }
-
   PostingsInputs TakePostings() noexcept { return _pw.TakeInputs(); }
 
  private:
@@ -158,7 +156,6 @@ class PieceFieldWriter final : public FieldSink {
 
   PostingsWriter _pw;
   PieceFields* _fields;
-  IndexFeatures _features = IndexFeatures::None;
   const bool _compaction;
 };
 

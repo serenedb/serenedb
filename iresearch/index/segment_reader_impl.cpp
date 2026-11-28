@@ -69,49 +69,99 @@ class SegmentAllDocs : public lead::Node {
 
 }  // namespace
 
+SegmentReaderImpl::Parts::Parts(duckdb::DatabaseInstance& db,
+                                duckdb::FileSystem& fs, std::string_view root,
+                                const SegmentMeta& meta, HnswBases* hnsw_bases)
+  : _db{&db},
+    _fs{&fs},
+    _root{root},
+    _meta{meta},
+    _hnsw_bases{hnsw_bases},
+    _indexed{true} {
+  _meta.docs_mask.reset();
+}
+
+SegmentReaderImpl::Parts::Parts(duckdb::DatabaseInstance& db,
+                                duckdb::FileSystem& fs, std::string_view root,
+                                const SegmentMeta& meta, SegmentInputs inputs,
+                                HnswBases* hnsw_bases)
+  : Parts{db, fs, root, meta, hnsw_bases} {
+  SDB_ASSERT(inputs.col && inputs.idx);
+  _columns = std::move(inputs.col);
+  _columns_once.Call([] {});
+  _index = std::make_unique<Index>();
+  _index->idx = std::move(inputs.idx);
+  PrepareFields(*_index, &inputs.postings);
+  _index_once.Call([] {});
+}
+
+SegmentReaderImpl::Parts::Parts(std::unique_ptr<ColReader> columns)
+  : _columns{std::move(columns)} {
+  _columns_once.Call([] {});
+  _index_once.Call([] {});
+}
+
+void SegmentReaderImpl::Parts::PrepareFields(Index& index,
+                                             PostingsInputs* postings) const {
+  index.fields.prepare(ReaderState{
+    .db = *_db,
+    .fs = *_fs,
+    .root = _root,
+    .meta = _meta,
+    .idx = index.idx.get(),
+    .postings = postings,
+  });
+}
+
+const ColReader& SegmentReaderImpl::Parts::Columns() const {
+  _columns_once.Call([&] {
+    _columns = std::make_unique<ColReader>(*_db, *_fs, _root, _meta.name,
+                                           SizesOf(_meta, kColFile),
+                                           duckdb::MappedFileAccess::RANDOM);
+  });
+  return *_columns;
+}
+
+const SegmentReaderImpl::Index* SegmentReaderImpl::Parts::GetIndex() const {
+  if (!_indexed) {
+    return nullptr;
+  }
+  _index_once.Call([&] {
+    auto index = std::make_unique<Index>();
+    index->idx = std::make_unique<IdxReader>(
+      *_fs, _root, _meta.name, SizesOf(_meta, kIdxFile), _hnsw_bases);
+    PrepareFields(*index, nullptr);
+    _index = std::move(index);
+  });
+  return _index.get();
+}
+
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
   const SegmentMeta& meta, const IndexReaderOptions& options,
   std::shared_ptr<const FileTracker> files) {
-  SegmentInputs inputs{
-    .col = std::make_unique<ColReader>(db, fs, root, meta.name,
-                                       (meta.kinds & kColFile) != 0,
-                                       duckdb::MappedFileAccess::RANDOM),
-    .idx = std::make_unique<IdxReader>(
-      fs, root, meta.name, (meta.kinds & kIdxFile) != 0, options.hnsw_bases),
-  };
-  return Open(db, fs, root, meta, options, std::move(files), std::move(inputs));
+  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
+  reader->_files = std::move(files);
+  ParseSegmentId(meta.name, reader->_id);
+  reader->_parts =
+    std::make_shared<const Parts>(db, fs, root, meta, options.hnsw_bases);
+  if (reader->_info.byte_size == 0) {
+    reader->_info.byte_size = SegmentBytes(meta.files);
+  }
+  return reader;
 }
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
   const SegmentMeta& meta, const IndexReaderOptions& options,
   std::shared_ptr<const FileTracker> files, SegmentInputs inputs) {
-  SDB_ASSERT(inputs.col && inputs.idx);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_files = std::move(files);
   ParseSegmentId(meta.name, reader->_id);
-  reader->_readers = std::make_shared<Readers>();
-  reader->_readers->col_reader = std::move(inputs.col);
-  reader->_readers->idx_reader = std::move(inputs.idx);
-  reader->_field_reader = std::make_shared<term_dict::FieldReader>();
-  reader->_field_reader->prepare(ReaderState{
-    .db = db,
-    .fs = fs,
-    .root = root,
-    .meta = meta,
-    .idx = reader->_readers->idx_reader.get(),
-    .postings = inputs.postings.doc ? &inputs.postings : nullptr,
-  });
+  reader->_parts = std::make_shared<const Parts>(
+    db, fs, root, meta, std::move(inputs), options.hnsw_bases);
   if (reader->_info.byte_size == 0) {
-    const auto handles = reader->_field_reader->Postings().Handles();
-    for (const auto* file : {reader->_readers->col_reader->File(),
-                             reader->_readers->idx_reader->File(), handles.doc,
-                             handles.pos, handles.pay}) {
-      if (file) {
-        reader->_info.byte_size += file->GetSize();
-      }
-    }
+    reader->_info.byte_size = SegmentBytes(meta.files);
   }
   return reader;
 }
@@ -120,8 +170,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
   const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
-  reader->_readers = std::make_shared<Readers>();
-  reader->_readers->col_reader = std::move(columns);
+  reader->_parts = std::make_shared<const Parts>(std::move(columns));
   return reader;
 }
 
@@ -130,8 +179,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
   std::shared_ptr<const PieceFields> fields) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
-  reader->_readers = std::make_shared<Readers>();
-  reader->_readers->col_reader = std::move(columns);
+  reader->_parts = std::make_shared<const Parts>(std::move(columns));
   reader->_pieces = std::move(fields);
   return reader;
 }
@@ -148,9 +196,9 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   reader->_patch_tick = _patch_tick;
   reader->_patched_docs = _patched_docs;
   reader->_patches = _patches;
-  reader->_field_reader = _field_reader;
+  reader->_parts = _parts;
+  reader->_patched = _patched;
   reader->_pieces = _pieces;
-  reader->_readers = _readers;
   return reader;
 }
 
@@ -162,42 +210,52 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_files = _files;
   reader->_id = _id;
-  reader->_field_reader = _field_reader;
+  reader->_parts = _parts;
   reader->_pieces = _pieces;
-  const auto& root = _readers->base ? _readers->base : _readers;
   if (patches.empty()) {
-    reader->_readers = root;
     return reader;
   }
   reader->_patches.assign(patches.begin(), patches.end());
-  std::vector<std::shared_ptr<const ColumnReader>> replaced;
-  replaced.reserve(patches.size());
   for (const auto& [field, patch] : patches) {
     reader->_patch_tick = std::max(reader->_patch_tick, patch->MaxTick());
     reader->_patched_docs = std::max(reader->_patched_docs, patch->Count());
-    if (const auto* column = root->col_reader->Column(field)) {
-      SDB_ASSERT(column->Type() == patch->Type());
-      replaced.push_back(std::make_shared<PatchedColumnReader>(*column, patch));
-      continue;
-    }
-    replaced.push_back(std::make_shared<PatchedColumnReader>(
-      std::make_unique<NullColumnReader>(root->col_reader->Database(), field,
-                                         patch->Type(), _info.docs_count),
-      patch));
   }
-  auto readers = std::make_shared<Readers>();
-  readers->col_reader =
-    std::make_unique<ColReader>(*root->col_reader, std::move(replaced));
-  readers->base = root;
-  reader->_readers = std::move(readers);
+  reader->_patched = std::make_shared<PatchedColumns>();
   return reader;
 }
 
-NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  if (!_readers) {
-    return {};
+void SegmentReaderImpl::OpenFiles() const {
+  _parts->Columns();
+  _parts->GetIndex();
+}
+
+const ColReader* SegmentReaderImpl::GetColReader() const {
+  if (!_patched) {
+    return &_parts->Columns();
   }
-  const auto* nc = _readers->col_reader->NormColumn(field);
+  _patched->once.Call([&] {
+    const auto& base = _parts->Columns();
+    std::vector<std::shared_ptr<const ColumnReader>> replaced;
+    replaced.reserve(_patches.size());
+    for (const auto& [field, patch] : _patches) {
+      if (const auto* column = base.Column(field)) {
+        SDB_ASSERT(column->Type() == patch->Type());
+        replaced.push_back(
+          std::make_shared<PatchedColumnReader>(*column, patch));
+        continue;
+      }
+      replaced.push_back(std::make_shared<PatchedColumnReader>(
+        std::make_unique<NullColumnReader>(base.Database(), field,
+                                           patch->Type(), _info.docs_count),
+        patch));
+    }
+    _patched->columns = std::make_unique<ColReader>(base, std::move(replaced));
+  });
+  return _patched->columns.get();
+}
+
+NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
+  const auto* nc = GetColReader()->NormColumn(field);
   if (!nc) {
     return {};
   }
@@ -205,15 +263,15 @@ NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
-  return _readers->col_reader->Column(field);
+  return GetColReader()->Column(field);
 }
 
 const AnnIndex* SegmentReaderImpl::Ann(field_id field) const {
-  const auto* idx = _readers ? _readers->Idx() : nullptr;
-  if (!idx) {
+  const auto* index = _parts->GetIndex();
+  if (!index) {
     return nullptr;
   }
-  return idx->Ann(field);
+  return index->idx->Ann(field);
 }
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {

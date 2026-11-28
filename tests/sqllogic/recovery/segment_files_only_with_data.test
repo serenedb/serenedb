@@ -1,0 +1,99 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE sfd_rows (id BIGINT, body TEXT);
+
+
+statement ok
+INSERT INTO sfd_rows SELECT i, 'w' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sfd_rows;
+
+
+query
+SELECT regexp_extract(file, '[.]([a-z]+)$', 1) AS kind, count(*) AS files
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+GROUP BY ALL ORDER BY kind;
+----
+kind	files
+col	1
+
+
+statement ok
+CREATE TABLE sfd_tags (id BIGINT, tag TEXT);
+
+
+statement ok
+CREATE INDEX sfd_tags_idx ON sfd_tags USING inverted (tag);
+
+
+statement ok
+INSERT INTO sfd_tags SELECT i, 'unique' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sfd_tags;
+
+
+query
+SELECT regexp_extract(file, '[.]([a-z]+)$', 1) AS kind, count(*) AS files
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+GROUP BY ALL ORDER BY kind;
+----
+kind	files
+col	2
+idx	1
+
+
+statement ok
+INSERT INTO sfd_tags SELECT i, 'shared' FROM range(1000, 1010) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sfd_tags;
+
+
+query
+SELECT regexp_extract(file, '[.]([a-z]+)$', 1) AS kind, count(*) AS files
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+GROUP BY ALL ORDER BY kind;
+----
+kind	files
+col	3
+doc	1
+idx	2
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM sfd_rows;
+----
+n	lo	hi
+1000	0	999
+
+
+connection after_crash
+query
+SELECT id FROM sfd_tags WHERE tag @@ 'unique5';
+----
+id
+5
+
+
+connection after_crash
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM sfd_tags WHERE tag @@ 'shared';
+----
+n	lo	hi
+10	1000	1009

@@ -106,6 +106,7 @@ struct LoggedSegment {
   uint64_t id = 0;
   uint8_t kinds = 0;
   irs::doc_id_t rows = 0;
+  irs::SegmentFileSizes files;
 };
 
 using ChunkVisit = absl::FunctionRef<void(duckdb::DataChunk& chunk)>;
@@ -323,7 +324,7 @@ class Table final {
   StoreStats Stats() const;
   uint64_t LiveDocs() const;
   uint64_t ByteSize() const;
-  OwnSegment OpenSegment(uint64_t id, uint8_t kinds, irs::doc_id_t rows) const;
+  OwnSegment OpenSegment(const LoggedSegment& segment) const;
 
   struct Memory {
     std::vector<std::shared_ptr<const TableUnit>> pieces;

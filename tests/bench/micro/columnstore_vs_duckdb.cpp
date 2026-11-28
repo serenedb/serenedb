@@ -134,6 +134,7 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
   auto seg = std::make_unique<Seg>();
   seg->rows = Rows();
   const auto type = TypeOf(shape);
+  irs::FileSizes sizes;
   {
     irs::FileTracker tracker{seg->fs, kRoot, kSeg};
     irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
@@ -149,9 +150,10 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
       pos += take;
     }
     w.Commit(seg->rows);
+    sizes = tracker.Files()[irs::KindIndex(irs::kColFile)];
   }
   seg->reader = std::make_unique<irs::ColReader>(
-    CsDb(), seg->fs, kRoot, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
+    CsDb(), seg->fs, kRoot, kSeg, sizes, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (seg->col == nullptr) {
     std::fprintf(stderr, "BuildSeg: column missing\n");

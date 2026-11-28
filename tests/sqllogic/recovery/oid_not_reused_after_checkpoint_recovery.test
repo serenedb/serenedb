@@ -1,0 +1,183 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE onc_oids (oid BIGINT);
+
+
+statement ok
+CREATE TABLE onc_t (a BIGINT) WITH (compaction_interval = 0);
+
+
+statement ok
+ALTER TABLE onc_t ADD COLUMN b BIGINT;
+
+
+statement ok
+INSERT INTO onc_t SELECT i, i * 10 FROM range(5) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) onc_t;
+
+
+statement ok
+ALTER TABLE onc_t DROP COLUMN b;
+
+
+statement ok
+CREATE TABLE onc_1 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_1'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_1;
+
+
+statement ok
+CREATE TABLE onc_2 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_2'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_2;
+
+
+statement ok
+CREATE TABLE onc_3 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_3'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_3;
+
+
+statement ok
+CREATE TABLE onc_4 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_4'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_4;
+
+
+statement ok
+CREATE TABLE onc_5 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_5'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_5;
+
+
+statement ok
+CREATE TABLE onc_6 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_6'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_6;
+
+
+statement ok
+CREATE TABLE onc_7 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_7'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_7;
+
+
+statement ok
+CREATE TABLE onc_8 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_8'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_8;
+
+
+statement ok
+CREATE TABLE onc_9 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_9'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_9;
+
+
+statement ok
+CREATE TABLE onc_10 (x INT, y INT);
+
+
+statement ok
+INSERT INTO onc_oids SELECT 'onc_10'::regclass::oid;
+
+
+statement ok
+DROP TABLE onc_10;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE onc_after (x INT);
+
+
+connection after_crash
+query
+SELECT count(*) AS reused FROM onc_oids WHERE oid >= 'onc_after'::regclass::oid;
+----
+reused
+0
+
+
+connection after_crash
+statement ok
+ALTER TABLE onc_t ADD COLUMN c BIGINT;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(c) AS c, sum(a) AS a FROM onc_t;
+----
+n	c	a
+5	0	10

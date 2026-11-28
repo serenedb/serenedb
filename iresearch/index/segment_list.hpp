@@ -31,7 +31,7 @@
 
 namespace irs {
 
-void AppendSegmentList(std::string& out, uint64_t id, uint8_t kinds,
+void AppendSegmentList(std::string& out, uint64_t id, const SegmentMeta& meta,
                        doc_id_t docs);
 
 CompositeReader OpenSegmentList(duckdb::DatabaseInstance& db,

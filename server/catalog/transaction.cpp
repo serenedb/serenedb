@@ -40,6 +40,7 @@
 
 #include "catalog/base_catalog.h"
 #include "catalog/record.h"
+#include "iresearch/utils/duckdb_engine.hpp"
 #include "iresearch/utils/log.hpp"
 #include "pg/connection_context.h"
 #include "runtime/runtime.h"
@@ -150,6 +151,18 @@ void CheckDependencies(SessionTransaction& transaction) {
         }
         break;
     }
+  }
+}
+
+template<typename Apply>
+void PastTick(duckdb::transaction_t commit, Apply&& apply) noexcept {
+  try {
+    std::forward<Apply>(apply)();
+  } catch (const std::exception& e) {
+    SDB_FATAL(GENERAL, "commit ", commit, " failed after taking its tick: ",
+              duckdb::ErrorData{e}.RawMessage());
+  } catch (...) {
+    SDB_FATAL(GENERAL, "commit ", commit, " failed after taking its tick");
   }
 }
 
@@ -578,42 +591,48 @@ void Transactions::Commit(SessionTransaction& transaction,
       end = range.end != 0 ? range.end : ReservedEnd();
       _commit_end[commit % kPublishRing] = end;
     }
-    for (const auto& change : transaction.Changes()) {
-      change.version->timestamp = commit;
-      change.set->Commit(*change.version);
-    }
-    {
-      absl::MutexLock garbage{&_garbage_mutex};
+    PastTick(commit, [&] {
       for (const auto& change : transaction.Changes()) {
-        _garbage.push_back({
-          .commit = commit,
-          .set = change.set,
-          .version = change.version,
-          .database =
-            change.Subject().ParentCatalog().GetAttached().shared_from_this(),
-        });
+        change.version->timestamp = commit;
+        change.set->Commit(*change.version);
       }
-    }
-    for (const auto& change : transaction.Changes()) {
-      if (change.kind == ChangeKind::Drop) {
-        change.version->Child().OnDrop();
+      {
+        absl::MutexLock garbage{&_garbage_mutex};
+        for (const auto& change : transaction.Changes()) {
+          _garbage.push_back({
+            .commit = commit,
+            .set = change.set,
+            .version = change.version,
+            .database =
+              change.Subject().ParentCatalog().GetAttached().shared_from_this(),
+          });
+        }
       }
+      for (const auto& change : transaction.Changes()) {
+        if (change.kind == ChangeKind::Drop) {
+          change.version->Child().OnDrop();
+        }
+      }
+      writes.Apply(context, commit, layouts);
+    });
+  }
+  PastTick(commit, [&] {
+    if (range.end != 0) {
+      _log->Write(range, *record);
+      _log->Sync(range.end);
+      SDB_IF_FAILURE("crash_after_catalog_before_data") {
+        SDB_IMMEDIATE_ABORT();
+      }
+      SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+      SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
+      MaintainLog(range.end);
+    } else if (end != 0) {
+      _log->Sync(end);
     }
-    writes.Apply(context, commit, layouts);
-  }
-  if (range.end != 0) {
-    _log->Write(range, *record);
-    _log->Sync(range.end);
-    SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
-    SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
-    SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
-    MaintainLog(range.end);
-  } else if (end != 0) {
-    _log->Sync(end);
-  }
-  if (!transaction.LsnUpdates().empty()) {
-    SDB_PARK_ONCE_ON_FAILURE("pause_lsn_commit_before_publish");
-  }
+    if (!transaction.LsnUpdates().empty()) {
+      SDB_PARK_ONCE_ON_FAILURE("pause_lsn_commit_before_publish");
+    }
+  });
   writes.BeforePublish();
   Publish(commit, !transaction.Changes().empty(), true);
   for (const auto& update : transaction.LsnUpdates()) {
@@ -656,7 +675,7 @@ void Transactions::CommitStorage(
       end = range.end != 0 ? range.end : ReservedEnd();
       _commit_end[commit % kPublishRing] = end;
     }
-    apply(commit);
+    PastTick(commit, [&] { apply(commit); });
   }
   if (range.end != 0) {
     _log->Write(range, *record);
@@ -772,6 +791,9 @@ absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort,
     SDB_PARK_ONCE_ON_FAILURE("pause_cover_before_collect");
     tables = search::CaptureSnapshot(view);
   }
+  const auto oids =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+      .NextOid(0);
   SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
   const auto records = search::SnapshotRecords(tables, context);
   tables.clear();
@@ -781,7 +803,7 @@ absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort,
     return absl::AbortedError(
       "Checkpoint aborted before truncate because of debug_checkpoint_abort");
   }
-  _log->WriteSnapshot(covered, records, &CatalogPart, &CompactHistory);
+  _log->WriteSnapshot(covered, oids, records, &CatalogPart, &CompactHistory);
   SDB_IF_FAILURE("crash_before_log_truncate") { SDB_IMMEDIATE_ABORT(); }
   _log->DropCovered();
   return absl::OkStatus();

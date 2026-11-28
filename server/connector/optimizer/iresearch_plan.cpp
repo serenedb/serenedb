@@ -2102,10 +2102,9 @@ duckdb::unique_ptr<duckdb::Expression> ColumnFormOf(
 }
 
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
-  duckdb::ClientContext& context, const connector::ScanBindData& scan,
+  const connector::ScanBindData& scan, const catalog::IndexTokenizers& dicts,
   connector::ColumnId col_id, bool column_stored) {
-  auto column_info =
-    ColumnInfoOf(scan, scan.relation.ResolveTokenizers(context), col_id);
+  auto column_info = ColumnInfoOf(scan, dicts, col_id);
   if (!column_info) {
     return std::nullopt;
   }

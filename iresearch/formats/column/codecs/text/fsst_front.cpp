@@ -109,23 +109,10 @@ struct Fsst12 {
     return fresh;
   }
 
-  static bool Import(Imported& imported, std::string_view table) {
-    auto fresh = ImportTable(table);
-    if (!fresh) {
-      return false;
-    }
-    const auto& decoder = fresh->decoder;
-    imported = Imported{std::move(fresh), &decoder};
-    return true;
-  }
-
   static bool Import(Imported& imported, std::string_view table,
                      const ColumnSegment& segment, bool shared) {
     auto* slot = shared ? segment.shared_state : nullptr;
-    if (!slot) {
-      return Import(imported, table);
-    }
-    if (slot->decoded && slot->file_id == segment.cache_slot.file_id &&
+    if (slot && slot->decoded && slot->file_id == segment.cache_slot.file_id &&
         slot->offset == segment.shared_offset &&
         slot->size == segment.shared_size) {
       const auto& held = utils::downCast<const ImportedTable>(*slot->decoded);
@@ -137,12 +124,14 @@ struct Fsst12 {
       return false;
     }
     imported = Imported{fresh, &fresh->decoder};
-    *slot = {
-      .file_id = segment.cache_slot.file_id,
-      .offset = segment.shared_offset,
-      .size = segment.shared_size,
-      .decoded = std::move(fresh),
-    };
+    if (slot) {
+      *slot = {
+        .file_id = segment.cache_slot.file_id,
+        .offset = segment.shared_offset,
+        .size = segment.shared_size,
+        .decoded = std::move(fresh),
+      };
+    }
     return true;
   }
 

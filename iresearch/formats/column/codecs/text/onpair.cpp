@@ -230,7 +230,6 @@ struct Scan {
 
 struct Fetch {
   void Reset(const Header&, duckdb::data_ptr_t) {
-    opened = false;
     groups.Clear();
     walked = 0;
   }
@@ -243,7 +242,7 @@ struct Fetch {
             PackedReader& counts, uint32_t lo, const FrameMeta& f,
             uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
             bool) {
-    if (!opened) {
+    if (groups.Empty()) {
       Open(h, base);
     }
     const auto value =
@@ -259,7 +258,6 @@ struct Fetch {
     if (!table.Open(SymbolTable(h, base))) [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
     }
-    opened = true;
     const auto* frames = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(frames, i).first_entry,
@@ -273,7 +271,6 @@ struct Fetch {
   ChainGroups groups;
   std::string buf;
   uint64_t walked = 0;
-  bool opened = false;
 };
 
 constexpr double kTrainFraction = 0.15;

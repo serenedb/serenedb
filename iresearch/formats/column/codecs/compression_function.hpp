@@ -301,7 +301,19 @@ struct Codec {
 
 void CompressAuto(ColumnDataCheckpointData& data);
 
-void CompressAutoCodes(ColumnDataCheckpointData& data);
+inline constexpr CodecSet kCodesGroup =
+  CodecSet{}
+    .set(std::to_underlying(CodecType::Bitpacking))
+    .set(std::to_underlying(CodecType::Rle));
+
+constexpr bool CodesCodec(CodecType type) noexcept {
+  const auto index = std::to_underlying(type);
+  return index < kCodesGroup.size() && kCodesGroup.test(index);
+}
+
+void CompressAutoCodes(
+  std::span<uint32_t> codes,
+  absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data);
 

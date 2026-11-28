@@ -1654,9 +1654,7 @@ class WideDictionaryReader {
     const uint64_t at =
       sizeof(WideHeader) + uint64_t{header.entries} * sizeof(W);
     if (!(header.entries != 0 && header.entries <= kMostWideDictionaryEntries &&
-          at < segment.size &&
-          (header.codes == CodecType::Bitpacking ||
-           header.codes == CodecType::Rle))) [[unlikely]] {
+          at < segment.size && CodesCodec(header.codes))) [[unlikely]] {
       ThrowCorrupted("numeric", "header is inconsistent");
     }
     _entries = base + sizeof(WideHeader);

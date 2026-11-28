@@ -701,27 +701,12 @@ struct WideEntries final : State {
       .entries = static_cast<uint32_t>(values.size()),
     };
     out.resize(sizeof(WideHeader) + values.size() * sizeof(W));
-    WriteChunk chunk{
-      duckdb::Vector{duckdb::LogicalType::UINTEGER,
-                     reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
-                     codes.size()},
-      codes.size()};
-    duckdb::FlatVector::SetSize(chunk.data, codes.size());
-    ColumnTuning tuning;
-    const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
-                           std::string_view bytes, std::string_view) {
-      header.codes = codec.type;
-      out.append(bytes);
-    };
-    ColumnDataCheckpointData nested{
-      .type = chunk.data.GetType(),
-      .flush = flush,
-      .tuning = tuning,
-      .rows = {{&chunk, 1}, codes.size()},
-    };
-    CompressAutoCodes(nested);
-    SDB_ASSERT(header.codes == CodecType::Bitpacking ||
-               header.codes == CodecType::Rle);
+    CompressAutoCodes({codes.data(), codes.size()},
+                      [&](CodecType codec, std::string_view bytes) {
+                        header.codes = codec;
+                        out.append(bytes);
+                      });
+    SDB_ASSERT(CodesCodec(header.codes));
     std::memcpy(out.data(), &header, sizeof(WideHeader));
     std::memcpy(out.data() + sizeof(WideHeader), values.data(),
                 values.size() * sizeof(W));

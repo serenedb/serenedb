@@ -277,10 +277,10 @@ class FilterVerdicts {
   idx_t KeepAccepted(const duckdb::SelectionVector& codes,
                      duckdb::SelectionVector& rows, idx_t count) const {
     if (_ranged) {
-      return _matches == 0 ? 0
-                           : KeepIf(codes, rows, count,
-                                    InRange{.lo = _range.lo,
-                                            .span = _range.hi - _range.lo - 1});
+      SDB_ASSERT(_matches != 0);
+      return KeepIf(
+        codes, rows, count,
+        InRange{.lo = _range.lo, .span = _range.hi - _range.lo - 1});
     }
     if (!_lazy && _verdicts.size() <= kBitEntries) {
       return Resolve(

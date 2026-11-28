@@ -771,6 +771,9 @@ TEST(ColTextKernelsTest, DictionaryFiltersKeepTheRowsOfAcceptedCodes) {
             }
           }
           for (const auto kind : {Kind::Ranges, Kind::Selection, Kind::Lazy}) {
+            if (matches == 0 && kind != Kind::Lazy) {
+              continue;
+            }
             SCOPED_TRACE(testing::Message()
                          << "entries " << entries << " matches " << matches
                          << " span " << span << " count " << count << " kind "

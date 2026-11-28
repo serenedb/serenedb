@@ -107,27 +107,11 @@ uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept {
 void CompressCodes(
   std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
-  SDB_ASSERT(!codes.empty());
-  const WriteChunk chunk{
-    duckdb::Vector{duckdb::LogicalType::UINTEGER,
-                   reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
-                   codes.size()},
-    codes.size()};
-  ColumnTuning column;
   uint64_t written = 0;
-  const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
-                         std::string_view bytes, std::string_view) {
-    SDB_ASSERT(CodesCodec(codec.type));
+  CompressAutoCodes(codes, [&](CodecType codec, std::string_view bytes) {
     written += bytes.size();
-    write(codec.type, bytes);
-  };
-  ColumnDataCheckpointData data{
-    .type = chunk.data.GetType(),
-    .flush = flush,
-    .tuning = column,
-    .rows = {{&chunk, 1}, codes.size()},
-  };
-  CompressAutoCodes(data);
+    write(codec, bytes);
+  });
   ratio = static_cast<double>(written) /
           static_cast<double>(codes.size() * sizeof(uint32_t));
 }

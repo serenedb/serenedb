@@ -131,6 +131,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   // The database whose attachment holds this store's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
   const std::string& Path() const noexcept { return _path; }
+  const std::string& Root() const noexcept { return _root; }
   bool Absent() const;
   bool Opened() const noexcept { return !_root.empty(); }
   bool Remote() const noexcept { return _remote; }

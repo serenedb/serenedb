@@ -61,7 +61,7 @@ bool ParseCorpus(std::string_view data, std::vector<Doc>& docs) {
 }  // namespace
 
 bool BuildDocsIndex(const std::filesystem::path& corpus,
-                    const std::filesystem::path& index) {
+                    const std::filesystem::path& image) {
   std::string data;
   try {
     data = irs::ReadWhole<std::string>(
@@ -78,7 +78,7 @@ bool BuildDocsIndex(const std::filesystem::path& corpus,
     SDB_ERROR(STARTUP, "the docs corpus '", corpus.string(), "' is truncated");
     return false;
   }
-  return BuildEmbeddedIndex(index, docs);
+  return BuildEmbeddedIndex(image, docs);
 }
 
 }  // namespace sdb::docs

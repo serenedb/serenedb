@@ -287,7 +287,7 @@ class Transactions final {
   Lsn ReservedEnd() const;
   void Publish(duckdb::transaction_t commit, bool catalog, bool wait);
   void MaintainLog(Lsn end);
-  void TruncateInBackground();
+  void MaintainInBackground(bool snapshot_due);
 
   static constexpr int64_t kMinDeadSlots = 64;
 

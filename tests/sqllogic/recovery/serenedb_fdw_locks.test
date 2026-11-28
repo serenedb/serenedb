@@ -14,7 +14,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfl_copy && mkdir -p $__TEST_DIR__/sfl_copy && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/logs ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfl_copy/
+rm -rf $__TEST_DIR__/sfl_copy && mkdir -p $__TEST_DIR__/sfl_copy && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfl_copy/
 
 connection holder
 statement ok

@@ -90,7 +90,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
                             "\": ", ec.message()));
   }
   auto& fs = duckdb::FileSystem::GetFileSystem(context);
-  const ServerDirectory layout{root, ServerDirectory::DefaultLog(root)};
+  const ServerDirectory layout{root, ServerDirectory::DefaultWal(root)};
   auto lock = FileLock::Take(fs.JoinPath(root, backup::kPgVersionFile),
                              FileLock::Mode::Shared);
   if (!Log::HasSnapshot(fs, layout.SnapshotPath()) ||
@@ -107,7 +107,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
               "\": ", lock.status().message()));
   }
   ForeignLog foreign{
-    .dir = layout.LogDir(),
+    .dir = layout.WalDir(),
     .snapshot = layout.SnapshotPath(),
     .lock = std::move(*lock),
   };

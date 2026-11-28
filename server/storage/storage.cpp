@@ -53,10 +53,10 @@ ABSL_FLAG(std::string, hba_config, "",
           "default) uses <server directory>/pg_hba.conf; a relative path is "
           "resolved against the server directory.");
 
-ABSL_FLAG(std::string, log_directory, "",
-          "Local directory for the log of the commits since the last "
-          "snapshot. Empty uses <server directory>/logs; a server directory "
-          "on an object store needs it.");
+ABSL_FLAG(std::string, wal_directory, "",
+          "Local directory for the write-ahead log (WAL) of the commits since "
+          "the last snapshot. Empty uses <server directory>/wal; a server "
+          "directory on an object store needs it.");
 
 ABSL_FLAG(std::string, temp_directory, "",
           "Local directory for the temporary files of queries that spill to "
@@ -67,13 +67,13 @@ ABSL_FLAG(bool, require_existing, false,
           "Refuse to start when the server directory holds no server, "
           "instead of creating a new one.");
 
-ABSL_FLAG(std::string, abandon_log, "",
-          "The id of a lost log directory that owns a server directory on an "
+ABSL_FLAG(std::string, abandon_wal, "",
+          "The id of a lost WAL directory that owns a server directory on an "
           "object store: the server starts from its last snapshot, and the "
-          "commits that only that log holds are lost.");
+          "commits that only that WAL holds are lost.");
 
 ABSL_FLAG(bool, checkpoint_at_stop, false,
-          "End every clean stop with a checkpoint and an empty log directory, "
+          "End every clean stop with a checkpoint and an empty WAL directory, "
           "so the server can start anywhere from its server directory alone.");
 
 namespace sdb {
@@ -83,7 +83,7 @@ duckdb::FileSystem& DataFileSystem() {
   return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
 }
 
-std::string NewLogId() {
+std::string NewWalId() {
   absl::BitGen gen;
   return absl::StrFormat("%016x%016x", absl::Uniform<uint64_t>(gen),
                          absl::Uniform<uint64_t>(gen));
@@ -108,11 +108,11 @@ catalog::ServerDirectory ReadServerDirectory(std::string directory) {
   if (directory.empty()) {
     return {};
   }
-  auto log = absl::GetFlag(FLAGS_log_directory);
-  if (log.empty()) {
-    log = catalog::ServerDirectory::DefaultLog(directory);
+  auto wal = absl::GetFlag(FLAGS_wal_directory);
+  if (wal.empty()) {
+    wal = catalog::ServerDirectory::DefaultWal(directory);
   }
-  return {std::move(directory), std::move(log)};
+  return {std::move(directory), std::move(wal)};
 }
 
 std::string ReadTempDirectory(const std::string& directory) {
@@ -129,16 +129,16 @@ StorageConfig ReadStorageConfig() {
     .layout = ReadServerDirectory(
       lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory))),
     .require_existing = absl::GetFlag(FLAGS_require_existing),
-    .abandon_log = absl::GetFlag(FLAGS_abandon_log),
+    .abandon_wal = absl::GetFlag(FLAGS_abandon_wal),
   };
   const auto& directory = config.layout.directory;
   if (duckdb::Path::IsRemote(directory)) {
-    RequireLocal("log_directory", absl::GetFlag(FLAGS_log_directory),
+    RequireLocal("wal_directory", absl::GetFlag(FLAGS_wal_directory),
                  directory);
     RequireLocal("temp_directory", absl::GetFlag(FLAGS_temp_directory),
                  directory);
-  } else if (duckdb::Path::IsRemote(config.layout.LogDir())) {
-    RequireLocal("log_directory", config.layout.LogDir(), directory);
+  } else if (duckdb::Path::IsRemote(config.layout.WalDir())) {
+    RequireLocal("wal_directory", config.layout.WalDir(), directory);
   }
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
     config.hba_config = fs.JoinPath(directory, "pg_hba.conf");
@@ -158,7 +158,7 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
   }
   try {
     catalog::InitCatalog(config.default_database, config.require_existing,
-                         config.abandon_log);
+                         config.abandon_wal);
     _search.Start();
   } catch (...) {
     Close();
@@ -203,21 +203,21 @@ void Storage::Lock(const catalog::ServerDirectory& layout) {
                 "': ", duckdb::ErrorData{e}.RawMessage());
     }
   }
-  create(layout.LogDir());
+  create(layout.WalDir());
   if (!remote &&
-      layout.LogDir() == catalog::ServerDirectory::DefaultLog(directory)) {
+      layout.WalDir() == catalog::ServerDirectory::DefaultWal(directory)) {
     return;
   }
-  const auto log_lock = fs.JoinPath(layout.LogDir(), catalog::kLockFile);
+  const auto wal_lock = fs.JoinPath(layout.WalDir(), catalog::kLockFile);
   try {
-    if (!fs.FileExists(log_lock)) {
-      irs::WriteWhole(fs, log_lock, NewLogId(), true);
+    if (!fs.FileExists(wal_lock)) {
+      irs::WriteWhole(fs, wal_lock, NewWalId(), true);
     }
   } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "Unable to create '", log_lock,
+    SDB_FATAL(GENERAL, "Unable to create '", wal_lock,
               "': ", duckdb::ErrorData{e}.RawMessage());
   }
-  _log_lock = take(log_lock);
+  _wal_lock = take(wal_lock);
 }
 
 void Storage::Close() noexcept {

@@ -20,7 +20,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_dirty && mkdir -p $__TEST_DIR__/sfa_dirty && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/logs ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_dirty/
+rm -rf $__TEST_DIR__/sfa_dirty && mkdir -p $__TEST_DIR__/sfa_dirty && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_dirty/
 
 connection holder
 statement ok
@@ -100,7 +100,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_new && mkdir -p $__TEST_DIR__/sfa_new && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/logs ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_new/
+rm -rf $__TEST_DIR__/sfa_new && mkdir -p $__TEST_DIR__/sfa_new && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_new/
 
 connection holder
 statement ok
@@ -173,7 +173,7 @@ db error: ERROR: could not open server directory "<slt:ignore>/sfa_nowhere": No 
 
 
 system ok
-rm -rf $__TEST_DIR__/sfa_nolog && mkdir -p $__TEST_DIR__/sfa_nolog && cp -r $__TEST_DIR__/sfa_new/logs $__TEST_DIR__/sfa_new/segments $__TEST_DIR__/sfa_new/PG_VERSION $__TEST_DIR__/sfa_nolog/
+rm -rf $__TEST_DIR__/sfa_nolog && mkdir -p $__TEST_DIR__/sfa_nolog && cp -r $__TEST_DIR__/sfa_new/wal $__TEST_DIR__/sfa_new/segments $__TEST_DIR__/sfa_new/PG_VERSION $__TEST_DIR__/sfa_nolog/
 
 statement error
 CREATE SERVER sfa_nolog FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nolog');
@@ -248,7 +248,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_aborted && mkdir -p $__TEST_DIR__/sfa_aborted && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/logs ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_aborted/
+rm -rf $__TEST_DIR__/sfa_aborted && mkdir -p $__TEST_DIR__/sfa_aborted && cp -r ${SDB_DATADIR}/snapshot ${SDB_DATADIR}/wal ${SDB_DATADIR}/segments ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_aborted/
 
 connection holder
 statement ok

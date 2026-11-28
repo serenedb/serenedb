@@ -355,9 +355,9 @@ ndb_pre_total=$((NATIVE_SIZE_PRE_MAIN + NATIVE_SIZE_PRE_WAL))
 		ext_total=$((ext_total + s))
 		printf "  .%-7s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
-	wal_total=$(sum_glob "${SERENED_DATA_DIR}/logs" "${SERENED_DATA_DIR}/snapshot" -type f)
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/wal" "${SERENED_DATA_DIR}/snapshot" -type f)
 	printf "  %-8s %14d bytes (%s)\n" "wal" "${wal_total}" "$(human "${wal_total}")"
-	rest_total=$(sum_glob "${SERENED_DATA_DIR}" \( -path "${SERENED_DATA_DIR}/segments" -o -path "${SERENED_DATA_DIR}/logs" -o -path "${SERENED_DATA_DIR}/snapshot" \) -prune -o -type f)
+	rest_total=$(sum_glob "${SERENED_DATA_DIR}" \( -path "${SERENED_DATA_DIR}/segments" -o -path "${SERENED_DATA_DIR}/wal" -o -path "${SERENED_DATA_DIR}/snapshot" \) -prune -o -type f)
 	printf "  %-8s %14d bytes (%s)\n" "rest" "${rest_total}" "$(human "${rest_total}")"
 	files_total=$(sum_glob "${SERENED_DATA_DIR}" -type f)
 	other=$((files_total - ext_total - wal_total - rest_total))

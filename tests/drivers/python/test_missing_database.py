@@ -83,7 +83,7 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
     store = datadir / "segments"
     files = sorted(store.iterdir())
     assert files
-    shutil.rmtree(datadir / "logs")
+    shutil.rmtree(datadir / "wal")
 
     refused = _Server(datadir)
     try:
@@ -140,7 +140,7 @@ def test_a_damaged_snapshot_is_refused_untouched(tmp_path: Path) -> None:
     finally:
         server.stop()
     (datadir / "snapshot").write_bytes(b"")
-    kept = {name: _contents(datadir / name) for name in ("logs", "segments")}
+    kept = {name: _contents(datadir / name) for name in ("wal", "segments")}
 
     refused = _Server(datadir)
     try:

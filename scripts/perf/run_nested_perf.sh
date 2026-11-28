@@ -235,7 +235,7 @@ ndb_pre_total=$((NATIVE_SIZE_PRE_MAIN + NATIVE_SIZE_PRE_WAL))
 		s=$(sum_ext "${SERENED_DATA_DIR}/segments" "${ext}")
 		printf "  .%-7s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
-	wal_total=$(sum_glob "${SERENED_DATA_DIR}/logs" "${SERENED_DATA_DIR}/snapshot" -type f)
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/wal" "${SERENED_DATA_DIR}/snapshot" -type f)
 	printf "  %-8s %14d bytes (%s)\n" "wal" \
 		"${wal_total}" "$(human "${wal_total}")"
 } | tee -a "${RUN_LOG}"
@@ -291,7 +291,7 @@ ratio() {
 	done
 	echo
 	col_total=$(sum_ext "${SERENED_DATA_DIR}/segments" "col")
-	wal_total=$(sum_glob "${SERENED_DATA_DIR}/logs" "${SERENED_DATA_DIR}/snapshot" -type f)
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/wal" "${SERENED_DATA_DIR}/snapshot" -type f)
 	printf "%-26s %12s\n" "storage" "bytes"
 	printf "%-26s %12s\n" "--------------------------" "------------"
 	printf "%-26s %12s (%s)\n" "duckdb native (post-ckpt)" \

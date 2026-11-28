@@ -45,18 +45,18 @@ inline constexpr std::string_view kLockFile = "LOCK";
 
 struct ServerDirectory {
   ServerDirectory() = default;
-  ServerDirectory(std::string directory, std::string log);
+  ServerDirectory(std::string directory, std::string wal);
 
-  static std::string DefaultLog(std::string_view directory);
+  static std::string DefaultWal(std::string_view directory);
 
   bool InMemory() const noexcept { return directory.empty(); }
-  const std::string& LogDir() const noexcept { return log; }
+  const std::string& WalDir() const noexcept { return wal; }
   std::string SnapshotPath() const;
   std::string StoreDir() const;
   std::string BackupsDir() const;
 
   std::string directory;
-  std::string log;
+  std::string wal;
 };
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
@@ -71,7 +71,7 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
                                               const ServerDirectory& layout);
 
 void InitCatalog(bool default_database, bool require_existing,
-                 const std::string& abandon_log);
+                 const std::string& abandon_wal);
 
 void CloseLog();
 

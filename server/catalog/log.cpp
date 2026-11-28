@@ -20,9 +20,10 @@
 
 #include "catalog/log.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/crc/crc32c.h>
-#include <absl/strings/match.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 
@@ -73,7 +74,7 @@ static_assert(sizeof(Header) == RecordBuffer::kFrameBytes);
 constexpr size_t kRecordMinGrowth = size_t{4} << 10;
 constexpr size_t kRecordMaxGrowth = size_t{64} << 20;
 
-constexpr std::string_view kChunkSuffix = ".log";
+constexpr size_t kChunkNameBytes = 16;
 constexpr std::string_view kReplacingSuffix = ".tmp";
 constexpr size_t kIoBytes = size_t{1} << 20;
 constexpr auto kSnapshotVersion =
@@ -258,7 +259,7 @@ class SnapshotWriter {
 
 [[noreturn]] void ThrowDamaged(const std::string& dir, std::string_view why) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                  ERR_MSG("log '", dir, "' is damaged: ", why));
+                  ERR_MSG("WAL '", dir, "' is damaged: ", why));
 }
 
 uint64_t TotalBytes(std::span<const std::vector<uint8_t>> payloads) {
@@ -275,7 +276,8 @@ std::vector<std::string> LogFiles(duckdb::FileSystem& fs,
   fs.ListFiles(dir,
                [&](duckdb::OpenFileInfo& info) {
                  if (!duckdb::FileSystem::IsDirectory(info) &&
-                     absl::EndsWith(info.path, kChunkSuffix)) {
+                     info.path.size() == kChunkNameBytes &&
+                     absl::c_all_of(info.path, absl::ascii_isxdigit)) {
                    files.push_back(std::move(info.path));
                  }
                },
@@ -339,14 +341,14 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
     auto bytes = ReadFile(fs, fs.JoinPath(dir, Log::ChunkName(number)));
     if (first && !bytes && past.exists && snapshot.clean == 0) {
       ThrowDamaged(dir,
-                   absl::StrCat("the snapshot continues in log file ", number,
+                   absl::StrCat("the snapshot continues in WAL file ", number,
                                 ", which is missing: the commits after "
                                 "LSN ",
                                 snapshot.covered, " are not here"));
     }
     if (first && bytes && bytes->size() < from) {
       ThrowDamaged(
-        dir, absl::StrCat("log file ", number, " ends before LSN ",
+        dir, absl::StrCat("WAL file ", number, " ends before LSN ",
                           snapshot.covered, ", which the snapshot covers"));
     }
     if (!bytes) {
@@ -383,7 +385,7 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
 }  // namespace
 
 std::string Log::ChunkName(uint64_t number) {
-  return absl::StrFormat("%016x%s", number, kChunkSuffix);
+  return absl::StrFormat("%016x", number);
 }
 
 bool Log::HasSnapshot(duckdb::FileSystem& fs, const std::string& snapshot) {
@@ -432,7 +434,7 @@ void Log::Discard(duckdb::FileSystem& fs, const std::string& dir,
   const auto past = ReadSnapshot(fs, snapshot);
   if (!past.exists) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("could not discard the log after snapshot \"",
+                    ERR_MSG("could not discard the WAL after snapshot \"",
                             snapshot, "\": it does not exist"));
   }
   fs.CreateDirectoryExtended(
@@ -673,7 +675,7 @@ void Log::Write(const Range& range, RecordBuffer& record) {
       offset += part.size();
     }
   } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "log '", _dir,
+    SDB_FATAL(GENERAL, "WAL '", _dir,
               "': a committed record could not be written: ",
               duckdb::ErrorData{e}.RawMessage());
   }
@@ -758,7 +760,7 @@ void Log::SyncTo(Lsn target) {
       chunk->file->Sync();
     }
   } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "log '", _dir,
+    SDB_FATAL(GENERAL, "WAL '", _dir,
               "': committed records could not be synced: ",
               duckdb::ErrorData{e}.RawMessage());
   }

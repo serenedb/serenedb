@@ -215,7 +215,7 @@ connection default
 statement ok
 CREATE TEMP TABLE bcmd_wal AS
 SELECT min(regexp_extract(file, '[^/]+$')) AS oldest
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/logs/*.log');
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/wal/*');
 
 
 connection default

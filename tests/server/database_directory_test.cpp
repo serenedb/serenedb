@@ -37,6 +37,7 @@
 #include <thread>
 #include <vector>
 
+#include "backup/pg_control.h"
 #include "catalog/database_directory.h"
 #include "runtime/runtime.h"
 
@@ -64,6 +65,8 @@ bool Eventually(const auto& done) {
 class DatabaseDirectoryTest : public ::testing::Test {
  protected:
   void SetUp() final {
+    backup::PositionSource::Instance().Adopt(
+      backup::PositionSource::NewState());
     _root = std::filesystem::temp_directory_path() /
             absl::StrCat("database_directory_", ::getpid());
     std::filesystem::remove_all(_root);

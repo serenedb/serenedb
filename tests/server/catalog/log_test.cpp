@@ -100,7 +100,7 @@ class LogTest : public ::testing::Test {
   void SetUp() final {
     _root = std::filesystem::temp_directory_path() /
             absl::StrCat("log_test_", ::getpid());
-    _dir = _root / "logs";
+    _dir = _root / "wal";
     std::filesystem::remove_all(_root);
     std::filesystem::create_directories(_root);
   }

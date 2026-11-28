@@ -359,7 +359,7 @@ def dump_payload(blobs, region, name, payload):
 def parse_wal(datadir, blobs, tag):
     result = {}
     covered = number = begin = 0
-    wal = datadir / "logs"
+    wal = datadir / "wal"
     snapshot_path = datadir / "snapshot"
     if snapshot_path.exists():
         buf = snapshot_path.read_bytes()
@@ -384,7 +384,7 @@ def parse_wal(datadir, blobs, tag):
     chunks = 0
     chunk_file_bytes = 0
     while True:
-        path = wal / f"{number:016x}.log"
+        path = wal / f"{number:016x}"
         if not path.exists():
             break
         buf = path.read_bytes()

@@ -1,9 +1,9 @@
 """A server directory on an object store.
 
-The snapshot and the segments live in the bucket; the log and the temporary
-files stay on a local disk. `LOCK` in the bucket names the log directory that
+The snapshot and the segments live in the bucket; the WAL and the temporary
+files stay on a local disk. `LOCK` in the bucket names the WAL directory that
 owns the server until a checkpointed stop removes it, so a server starts from
-another log directory only after such a stop. The server signs its requests
+another WAL directory only after such a stop. The server signs its requests
 with the credentials of the AWS default chain, which it fetches again before
 they expire.
 """
@@ -58,7 +58,7 @@ class _Server:
         self.log = node / f"serened-{self.port}.log"
         with self.log.open("w") as out:
             self.proc = subprocess.Popen(
-                [SERENED_BIN, url, f"--log_directory={node / 'logs'}",
+                [SERENED_BIN, url, f"--wal_directory={node / 'wal'}",
                  f"--temp_directory={node / 'temp'}",
                  f"--listen=postgres://127.0.0.1:{self.port}", *args],
                 stdout=out, stderr=subprocess.STDOUT, env=env)
@@ -102,7 +102,7 @@ def _count(server: _Server) -> int:
         return conn.execute("SELECT count(*) FROM t").fetchone()[0]
 
 
-def test_a_server_moves_between_log_directories_after_a_checkpointed_stop(
+def test_a_server_moves_between_wal_directories_after_a_checkpointed_stop(
         tmp_path: Path) -> None:
     with FakeS3() as fake:
         prefix = f"moves-{tmp_path.name}"
@@ -122,7 +122,7 @@ def test_a_server_moves_between_log_directories_after_a_checkpointed_stop(
         finally:
             assert first.stop() == 0, first.output()
         assert f"{prefix}/LOCK" not in fake.keys("bucket", prefix)
-        assert sorted(p.name for p in (tmp_path / "a" / "logs").iterdir()) == ["LOCK"]
+        assert sorted(p.name for p in (tmp_path / "a" / "wal").iterdir()) == ["LOCK"]
 
         second = _Server(url, tmp_path / "b", env, "--require_existing")
         try:
@@ -138,7 +138,7 @@ def test_a_server_moves_between_log_directories_after_a_checkpointed_stop(
         try:
             assert not refused.wait_ready(timeout=30)
             assert refused.proc.wait(timeout=30) != 0
-            assert "belongs to the log directory" in refused.output()
+            assert "belongs to the WAL directory" in refused.output()
         finally:
             refused.kill()
 
@@ -150,7 +150,7 @@ def test_a_server_moves_between_log_directories_after_a_checkpointed_stop(
             assert again.stop() == 0, again.output()
 
 
-def test_a_lost_log_directory_is_abandoned_by_name(tmp_path: Path) -> None:
+def test_a_lost_wal_directory_is_abandoned_by_name(tmp_path: Path) -> None:
     with FakeS3() as fake:
         url = f"s3://bucket/lost-{tmp_path.name}"
         env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
@@ -166,17 +166,17 @@ def test_a_lost_log_directory_is_abandoned_by_name(tmp_path: Path) -> None:
                 conn.execute("INSERT INTO t VALUES (2)")
         finally:
             lost.kill()
-        lost_id = (tmp_path / "a" / "logs" / "LOCK").read_text()
+        lost_id = (tmp_path / "a" / "wal" / "LOCK").read_text()
 
-        wrong = _Server(url, tmp_path / "b", env, "--abandon_log=0123")
+        wrong = _Server(url, tmp_path / "b", env, "--abandon_wal=0123")
         try:
             assert not wrong.wait_ready(timeout=30)
             assert wrong.proc.wait(timeout=30) != 0
-            assert f"--abandon_log={lost_id}" in wrong.output()
+            assert f"--abandon_wal={lost_id}" in wrong.output()
         finally:
             wrong.kill()
 
-        taken = _Server(url, tmp_path / "b", env, f"--abandon_log={lost_id}")
+        taken = _Server(url, tmp_path / "b", env, f"--abandon_wal={lost_id}")
         try:
             assert taken.wait_ready(), taken.output()
             assert _count(taken) == 1
@@ -185,7 +185,7 @@ def test_a_lost_log_directory_is_abandoned_by_name(tmp_path: Path) -> None:
         finally:
             taken.kill()
         assert fake.objects[("bucket", f"lost-{tmp_path.name}/LOCK")].data.decode() == \
-            (tmp_path / "b" / "logs" / "LOCK").read_text()
+            (tmp_path / "b" / "wal" / "LOCK").read_text()
 
         again = _Server(url, tmp_path / "b", env)
         try:
@@ -201,7 +201,7 @@ def test_an_object_store_server_directory_needs_local_directories(
         [SERENED_BIN, "s3://bucket/nowhere", "--listen=postgres://127.0.0.1:1"],
         capture_output=True, text=True, timeout=60)
     assert result.returncode != 0, result
-    assert "--log_directory has to name a local directory" in \
+    assert "--wal_directory has to name a local directory" in \
         result.stdout + result.stderr, result
 
 

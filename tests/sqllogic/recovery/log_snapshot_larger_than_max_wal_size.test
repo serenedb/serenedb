@@ -40,7 +40,7 @@ t
 
 
 statement ok
-CREATE TEMP TABLE lsb_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/logs/*.log');
+CREATE TEMP TABLE lsb_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/wal/*');
 
 
 statement ok
@@ -88,7 +88,7 @@ INSERT INTO lsb_small VALUES (10);
 
 
 query
-SELECT count(*) AS changed FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/logs/*.log') EXCEPT SELECT file FROM lsb_files);
+SELECT count(*) AS changed FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/wal/*') EXCEPT SELECT file FROM lsb_files);
 ----
 changed
 0

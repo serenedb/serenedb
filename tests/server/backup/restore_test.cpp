@@ -79,7 +79,7 @@ std::vector<std::vector<uint8_t>> Keep(
 }
 
 catalog::ServerDirectory Layout(const std::filesystem::path& root) {
-  return {root.string(), catalog::ServerDirectory::DefaultLog(root.string())};
+  return {root.string(), catalog::ServerDirectory::DefaultWal(root.string())};
 }
 
 class RestoreTest : public ::testing::Test {
@@ -95,7 +95,7 @@ class RestoreTest : public ::testing::Test {
     _cut.snapshot = absl::StrCat(kSessionPinPrefix, kStartLsn);
     {
       const auto fs = duckdb::FileSystem::CreateLocal();
-      catalog::Log log{*fs, _layout->LogDir(), _layout->SnapshotPath()};
+      catalog::Log log{*fs, _layout->WalDir(), _layout->SnapshotPath()};
       log.Replay([](std::span<uint8_t>) {}, &Whole);
       log.Append(Bytes(Payload('A')));
       const auto b = log.Append(Bytes(Half('B')));
@@ -117,7 +117,7 @@ class RestoreTest : public ::testing::Test {
   std::vector<std::string> Records() const {
     std::vector<std::string> records;
     const auto fs = duckdb::FileSystem::CreateLocal();
-    catalog::Log::Read(*fs, _layout->LogDir(), _layout->SnapshotPath(),
+    catalog::Log::Read(*fs, _layout->WalDir(), _layout->SnapshotPath(),
                        [&](std::span<uint8_t> payload) {
                          records.emplace_back(payload.begin(), payload.end());
                        });
@@ -135,7 +135,7 @@ class RestoreTest : public ::testing::Test {
   }
 
   std::filesystem::path Chunk(uint64_t number) const {
-    return std::filesystem::path{_layout->LogDir()} /
+    return std::filesystem::path{_layout->WalDir()} /
            catalog::Log::ChunkName(number);
   }
 

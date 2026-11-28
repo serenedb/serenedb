@@ -114,7 +114,7 @@ void Restore(const catalog::ServerDirectory& layout,
          "copy the whole server directory");
   }
   catalog::Log::Copy(fs, pin, layout.SnapshotPath());
-  catalog::Log::Discard(fs, layout.LogDir(), layout.SnapshotPath());
+  catalog::Log::Discard(fs, layout.WalDir(), layout.SnapshotPath());
   SDB_IF_FAILURE("crash_in_restore_after_log") { SDB_IMMEDIATE_ABORT(); }
 
   fs.TryRemoveFile(fs.JoinPath(data_dir, "recovery.signal"));

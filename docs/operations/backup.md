@@ -12,7 +12,7 @@ Differences from PostgreSQL:
 
 - One backup at a time, owned by the session that started it.
 - A backup copies only the server directory: `pg_backup_start` fails while a [tablespace](../sql/statements/create_tablespace/index.md) other than `pg_default` and `pg_global` exists, and on a server whose server directory is on an object store.
-- `pg_backup_start` writes a snapshot of everything committed and keeps it in `backups/` until `pg_backup_stop`; a restore starts from that snapshot. The log is not part of a backup, so a log directory outside the server directory (`--log_directory`) need not be copied.
+- `pg_backup_start` writes a snapshot of everything committed and keeps it in `backups/` until `pg_backup_stop`; a restore starts from that snapshot. The write-ahead log (WAL) is not part of a backup, so a WAL directory outside the server directory (`--wal_directory`) need not be copied.
 - `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
 - Without WAL archiving, the backup tool must be able to take a backup without it; most tools have a flag for this.
 - `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.
@@ -44,7 +44,7 @@ Only one backup runs at a time. A second `pg_backup_start` fails with `a backup 
 2. Write the `labelfile` text as the file `backup_label` in the top level of that directory.
 3. Start the server on it.
 
-At startup the server sees `backup_label`, brings the copy to the state it had when `pg_backup_start` returned, and renames the label to `backup_label.old`: it starts from the snapshot the backup kept, drops the log that the copy holds, and removes the segment files that snapshot does not use. If the server stops while doing so, start it again: the restore resumes. A copy without the snapshot the label names is refused.
+At startup the server sees `backup_label`, brings the copy to the state it had when `pg_backup_start` returned, and renames the label to `backup_label.old`: it starts from the snapshot the backup kept, drops the WAL that the copy holds, and removes the segment files that snapshot does not use. If the server stops while doing so, start it again: the restore resumes. A copy without the snapshot the label names is refused.
 
 <DocCallout type="attention">
 Never start a file-by-file copy without its `backup_label`. Its files were copied at different moments, the server cannot tell such a copy apart from a server directory that crashed, and it may refuse to start or start on inconsistent data. [Volume snapshots](#volume-snapshots) are taken at one moment and need no label.
@@ -112,7 +112,7 @@ The major clouds take such snapshots of their block storage:
 
 Storage arrays and filesystems with point-in-time snapshots (LVM, ZFS, btrfs) work the same way.
 
-Keep the whole server directory, with its log directory, on one volume. If they span several, snapshot all of them in one crash-consistent operation, such as the provider's multi-volume snapshot; snapshots of the volumes taken one after another do not form a consistent backup.
+Keep the whole server directory, with its WAL directory, on one volume. If they span several, snapshot all of them in one crash-consistent operation, such as the provider's multi-volume snapshot; snapshots of the volumes taken one after another do not form a consistent backup.
 
 Taking the snapshot between `pg_backup_start` and `pg_backup_stop` is still advised: while a backup runs, the server checkpoints nothing and removes no files, so the snapshot catches the server directory with fewer changes in progress. Such a snapshot can also be restored to the moment `pg_backup_start` returned, by writing the `labelfile` from `pg_backup_stop` as `backup_label` before starting the server, as in [Restoring](#restoring).
 

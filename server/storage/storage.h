@@ -36,7 +36,7 @@ struct StorageConfig {
   std::string hba_config;
   bool default_database = true;
   bool require_existing = false;
-  std::string abandon_log;
+  std::string abandon_wal;
 };
 
 catalog::ServerDirectory ReadServerDirectory(std::string directory);
@@ -54,7 +54,7 @@ class Storage final {
 
   Runtime& _runtime;
   FileLock _lock;
-  FileLock _log_lock;
+  FileLock _wal_lock;
   search::SearchEngine _search;
   std::string _directory;
   bool _remote = false;

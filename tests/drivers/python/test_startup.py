@@ -225,6 +225,19 @@ def test_io_threads(tmp_path: Path) -> None:
         server.stop()
 
 
+def test_max_temp_directory_size(tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data", args=("--max_temp_directory_size=3GiB",))
+    try:
+        assert server.wait_ready(), server.output()
+        with psycopg.connect(host="127.0.0.1", port=server.port,
+                             user="postgres", dbname="postgres") as conn:
+            assert conn.execute(
+                "SELECT current_setting('max_temp_directory_size')"
+            ).fetchone() == ("3.0 GiB",)
+    finally:
+        server.stop()
+
+
 def test_server_directory_flag_without_a_positional(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     server = _Server(datadir, datadir_flag=True)

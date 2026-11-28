@@ -195,6 +195,16 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "max_temp_directory_size",
+          "flag": "--max_temp_directory_size",
+          "type": "",
+          "defaultValue": "",
+          "description": "The most disk space the temporary directory may take, such as 100GiB; its copies of evicted blocks take half of it at most. Empty is 90% of the disk space available where it lies.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "pg_max_message_bytes",
           "flag": "--pg_max_message_bytes",
           "type": "",

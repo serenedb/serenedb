@@ -62,6 +62,11 @@ ABSL_FLAG(std::string, temp_directory, "",
           "the server reads again after a restart. Empty uses <server "
           "directory>/temp; a server directory on an object store needs it.");
 
+ABSL_FLAG(std::string, max_temp_directory_size, "",
+          "The most disk space the temporary directory may take, such as "
+          "100GiB; its copies of evicted blocks take half of it at most. Empty "
+          "is 90% of the disk space available where it lies.");
+
 ABSL_FLAG(bool, require_existing, false,
           "Refuse to start when the server directory holds no server, "
           "instead of creating a new one.");

@@ -88,6 +88,7 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "pool at runtime.");
 
 ABSL_DECLARE_FLAG(std::string, server_directory);
+ABSL_DECLARE_FLAG(std::string, max_temp_directory_size);
 
 namespace sdb::server::query {
 namespace {
@@ -128,6 +129,10 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   ConfigureEngineDBConfig(config, ReadServerDirectory(directory));
   const auto temp = ReadTempDirectory(directory);
   config.SetOptionByName("temp_directory", duckdb::Value{temp});
+  if (const auto size = absl::GetFlag(FLAGS_max_temp_directory_size);
+      !size.empty()) {
+    config.SetOptionByName("max_temp_directory_size", duckdb::Value{size});
+  }
   config.SetOptionByName(
     "secret_directory",
     duckdb::Value{duckdb::FileSystem::JoinPath(temp, "secrets")});

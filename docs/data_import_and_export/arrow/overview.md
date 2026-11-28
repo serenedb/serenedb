@@ -40,7 +40,7 @@ Load an Arrow IPC stream into a table:
 
 Arrow IPC is the binary format of [Apache Arrow](https://arrow.apache.org/) for columnar data, which it holds in record batches. It has two layouts, and SereneDB reads and writes both:
 
-- An Arrow IPC **file** ends with a footer that lists its record batches. Through the footer a reader can go to any batch, so SereneDB reads a large file on several threads.
+- An Arrow IPC **file** ends with a footer that lists its record batches. Through the footer a reader can go to any batch, so SereneDB reads a large file on several threads, a local file written as one uncompressed record batch too.
 - An Arrow IPC **stream** has no footer and is read from start to end, as it arrives, so a client can send it with [`COPY ... FROM STDIN`](#streaming-over-copy).
 
 `COPY ... TO` writes a file with `FORMAT arrow` or a file name that ends in `.arrow`, and a stream with `FORMAT arrows` or a name that ends in `.arrows`. `read_arrow` reads both layouts whatever the name of the file, and so does `COPY ... FROM` with `FORMAT arrow` or `FORMAT arrows`:
@@ -49,7 +49,7 @@ Arrow IPC is the binary format of [Apache Arrow](https://arrow.apache.org/) for 
 
 ## Reading Arrow Files
 
-`read_arrow` reads a file, a list of files or the files that match a [glob](../multiple_files/overview.md#glob-syntax) as one table. A file whose name ends in `.arrow` or `.arrows` can also be queried by its name, as in `SELECT * FROM 'fruit.arrow'`. Only the columns a query uses are decoded, and record batches compressed with `zstd` or `lz4` are decompressed as they are read. `read_arrow` takes these parameters:
+`read_arrow` reads a file, a list of files or the files that match a [glob](../multiple_files/overview.md#glob-syntax) as one table. A file whose name ends in `.arrow` or `.arrows` can also be queried by its name, as in `SELECT * FROM 'fruit.arrow'`. Only the columns a query uses are decoded, and record batches compressed with `zstd` or `lz4` are decompressed as they are read. String and binary columns stored as views (`Utf8View`, `BinaryView`), as Polars writes them, read as `TEXT` and `BYTEA`. `read_arrow` takes these parameters:
 
 | Name                | Description                                                                                                                              | Type   | Default         |
 | :------------------ | :--------------------------------------------------------------------------------------------------------------------------------------- | :----- | :-------------- |

@@ -216,14 +216,19 @@ def test_missing_privilege_is_forbidden(conn):
         pg.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'drv_otel_pw'")
     try:
         credentials = base64.b64encode(f"{role}:drv_otel_pw".encode()).decode()
+        headers = {"Authorization": f"Basic {credentials}"}
         body = (FIXTURES / "logs/basic.json").read_bytes()
-        status, payload = _post(
-            conn, "/v1/logs", body,
-            headers={"Authorization": f"Basic {credentials}"})
+        status, payload = _post(conn, "/v1/logs", body, headers=headers)
+        assert status == 503, payload
+        assert "schema is missing" in json.loads(payload)["message"], payload
+        with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+            pg.execute(f"GRANT SELECT ON otel_logs TO {role}")
+        status, payload = _post(conn, "/v1/logs", body, headers=headers)
         assert status == 403, payload
         assert json.loads(payload)["code"] == 7, payload
     finally:
         with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+            pg.execute(f"DROP OWNED BY {role}")
             pg.execute(f"DROP ROLE {role}")
 
 

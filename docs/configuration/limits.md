@@ -20,6 +20,7 @@ This page contains SereneDB's built-in limit values. To check the value of a set
 | Table write memory | 256 MB | [`segment_memory_max`](../sql/indexes/inverted/maintenance.md#write-memory) | Per table, the committed rows, deletes and in-place updates it holds in memory before writing them to disk; a writing transaction adds up to `compaction_floor_segment_bytes` (2 MB) of its own rows for a serial write, `segment_memory_max` x threads for a parallel one. |
 | String size | 4 GB | - | A function whose result would be longer fails with `Cannot create a string of size: ...` (SQLSTATE `54000`); inside `TRY` the result is `NULL`. |
 | Temporary directory size | 90% of available disk space | [`max_temp_directory_size`](./overview.md) | Unlimited when the available disk space cannot be read. |
+| Token positions in an indexed value | 2147483647 | - | For a column of an inverted index whose dictionary records `position`. A value with more tokens is not indexed: the statement fails with `the document has more than 2147483647 token positions`. A [phrase](../sql/functions/search/full-text.md#ts_phrase) spans at most as many positions. |
 
 ## Size of Database Files
 

@@ -28,6 +28,8 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/utils/type_limits.hpp"
+
 namespace irs {
 namespace {
 
@@ -95,6 +97,7 @@ void LayoutSlop(CompiledPhrase& phrase) {
   const auto& slots = phrase.slots;
   auto& slop = phrase.slop;
   const auto n = static_cast<uint32_t>(slots.size());
+  SDB_ASSERT(!phrase.open);
   slop.offsets.assign(n, 0);
   for (uint32_t i = 1; i != n; ++i) {
     slop.offsets[i] = slop.offsets[i - 1] + slots[i].offs_max;
@@ -128,16 +131,19 @@ void LayoutSlop(CompiledPhrase& phrase) {
 }
 
 void LayoutAutomaton(CompiledPhrase& phrase) {
+  if (phrase.open) {
+    return;
+  }
   CompiledPhrase::Automaton layout;
   uint64_t bit = 0;
   for (size_t k = 0; k != phrase.slots.size(); ++k) {
     auto& slot = phrase.slots[k];
     if (k != 0) {
       const auto prev = bit;
-      bit = prev + slot.offs_max;
-      if (bit >= CompiledPhrase::kMaxBits) {
+      if (slot.offs_max >= CompiledPhrase::kMaxBits - prev) {
         return;
       }
+      bit = prev + slot.offs_max;
       for (auto g = prev + 1; g < bit; ++g) {
         layout.wild |= uint64_t{1} << g;
       }
@@ -253,6 +259,12 @@ bool IsStandalone(const ByPhraseOptions& phrase) noexcept {
   });
 }
 
+bool HasOpenGap(const ByPhraseOptions& phrase) noexcept {
+  return absl::c_any_of(phrase, [](const auto& info) {
+    return pos_limits::IsOpenGap(info.offs_max);
+  });
+}
+
 bool HasPatternParts(const ByPhraseOptions& phrase) noexcept {
   return absl::c_any_of(phrase, [](const auto& info) {
     return ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion;
@@ -262,8 +274,9 @@ bool HasPatternParts(const ByPhraseOptions& phrase) noexcept {
 CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
                                std::vector<std::vector<bstring>> expanded,
                                std::span<const PhraseWordStat> words)
-  : slop{.max = phrase.slop()} {
+  : slop{.max = phrase.slop()}, open{HasOpenGap(phrase)} {
   SDB_ASSERT(!expanded.empty() || IsStandalone(phrase));
+  SDB_ASSERT(!open || slop.max == 0);
   const auto n = static_cast<uint32_t>(WordCount(phrase));
   slots.resize(n);
   std::vector<uint32_t> term_slots;
@@ -328,6 +341,10 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
         MakeTermView(ViewCast<char>(bytes_view{terms[*word_of[i]]}));
     }
   }
+
+  compare_words =
+    n <= kMaxComparedSlots && pattern_slots.empty() &&
+    absl::c_all_of(slots, [](const auto& slot) { return slot.word; });
 
   if (!IsAnchored(phrase)) {
     if (slop.max != 0 && n > 1) {

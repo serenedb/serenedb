@@ -51,9 +51,14 @@ class PhraseQuery : public QueryBuilder {
       boost{boost},
       slop{this->positions.size() > 1 ? slop : PosAttr::value_t{0}},
       has_intervals{this->positions.size() > 1 &&
-                    absl::c_any_of(this->positions, [](const auto& pos) {
-                      return pos.offs_max != pos.offs_min;
-                    })} {
+                    absl::c_any_of(this->positions,
+                                   [](const auto& pos) {
+                                     return pos.offs_max != pos.offs_min;
+                                   })},
+      has_open{this->positions.size() > 1 &&
+               absl::c_any_of(this->positions, [](const auto& pos) {
+                 return pos_limits::IsOpenGap(pos.offs_max);
+               })} {
     uint32_t least = std::numeric_limits<uint32_t>::max();
     const double docs_count =
       static_cast<double>(std::max<uint64_t>(segment.docs_count(), 1));
@@ -93,6 +98,7 @@ class PhraseQuery : public QueryBuilder {
   score_t boost;
   PosAttr::value_t slop{0};
   bool has_intervals;
+  bool has_open;
 };
 
 template<bool Fixed>

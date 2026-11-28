@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/phrase_match.hpp"
+#include "iresearch/search/detail/phrase_open_gap_matcher.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/phrase_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -49,6 +50,9 @@ auto ResolveSlotMatcherOf(const Query& query, F&& f) {
     return f.template
     operator()<PhraseSlopMatcher<Slot, Offs, HasFreq, 0, HasBoost>, Leaf>(
       query.slop);
+  } else if constexpr (M == PhraseMatch::OpenGap) {
+    return f.template
+    operator()<PhraseOpenGapMatcher<Slot, Offs, HasFreq, 0, HasBoost>, Leaf>();
   } else {
     static constexpr bool kIntervals = M == PhraseMatch::Intervals;
     return f.template operator()<
@@ -62,6 +66,9 @@ auto ResolveMatcherOf(const Query& query, F&& f) {
   if constexpr (M == PhraseMatch::Slop) {
     return f.template
     operator()<FixedPhraseSlopMatcher<Input, Offs, HasFreq, N>>(query.slop);
+  } else if constexpr (M == PhraseMatch::OpenGap) {
+    return f.template
+    operator()<FixedPhraseOpenGapMatcher<Input, Offs, HasFreq, N>>();
   } else {
     static constexpr bool kIntervals = M == PhraseMatch::Intervals;
     return f.template
@@ -141,7 +148,7 @@ template<PhraseMatch M, typename Query>
 std::optional<score_t> ConstantOf(PhraseKind<M>, const Query& query,
                                   const ScoreArgs& args) {
   return ConstantOf(query.Segment(), *query.state.reader, args,
-                    M == PhraseMatch::Slop || !query.state.boosts.empty());
+                    IsScaled(M) || !query.state.boosts.empty());
 }
 
 template<PhraseMatch M, typename Query>

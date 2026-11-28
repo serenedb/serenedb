@@ -168,17 +168,35 @@ PWORD       ([^ \t\r\n"~*?\\]|{ESCAPED})
 
 <PHRASE_BODY>[ \t\r\n]+    { /* Skip whitespace */ }
 
+<PHRASE_BODY>{DIGIT}+"-*"   {
+                              if (fast_float::from_chars(yytext,
+                                                         yytext + yyleng - 2,
+                                                         yylval->gap.min)
+                                      .ec != std::errc{} ||
+                                  yylval->gap.min ==
+                                    irs::pos_limits::kOpenGap) {
+                                return YYUNDEF;
+                              }
+                              yylval->gap.max = irs::pos_limits::kOpenGap;
+                              return GAP;
+                            }
+
 <PHRASE_BODY>{DIGIT}+"-"{DIGIT}+  {
                               /* A gap: how far the part after it may sit from
-                                 the part before it, rather than next to it.
-                                 The pattern already said both are digits, so
-                                 neither conversion can fail. */
+                                 the part before it, rather than next to it. */
                               const char* dash = std::strchr(yytext, '-');
                               const char* end = yytext + yyleng;
-                              fast_float::from_chars(yytext, dash,
-                                                     yylval->gap.min);
-                              fast_float::from_chars(dash + 1, end,
-                                                     yylval->gap.max);
+                              if (fast_float::from_chars(yytext, dash,
+                                                         yylval->gap.min)
+                                      .ec != std::errc{} ||
+                                  fast_float::from_chars(dash + 1, end,
+                                                         yylval->gap.max)
+                                      .ec != std::errc{} ||
+                                  yylval->gap.max ==
+                                    irs::pos_limits::kOpenGap ||
+                                  yylval->gap.min > yylval->gap.max) {
+                                return YYUNDEF;
+                              }
                               return GAP;
                             }
 

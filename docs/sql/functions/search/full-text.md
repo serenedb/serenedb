@@ -75,11 +75,11 @@ Match a run of tokens in their indexed order, optionally separated by token gaps
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `text` | `VARCHAR` or `BLOB` | — | A phrase segment. It is tokenized by the column's dictionary; the positions of its tokens must be strictly adjacent, and tokens the dictionary puts at one position are alternatives for it. |
-| `gap` | `INTEGER` or `INTEGER[]` | `0` between successive segments | Number of tokens allowed *between* the two surrounding segments. An integer `N` means exactly `N` tokens between; a two-element array `[min, max]` allows a range. `0` means adjacent. |
+| `gap` | `INTEGER` or `INTEGER[]` | `0` between successive segments | Number of tokens allowed *between* the two surrounding segments. An integer `N` means exactly `N` tokens between; a two-element array `[min, max]` allows a range, and `[min, NULL]` has no upper bound. `0` means adjacent. |
 | `text, ...` | `VARCHAR`/`BLOB` | — | Further segments, each preceded by its own `gap`. |
-| `slop` | `INTEGER` (named) | `0` | Budget of position moves allowed when lining the query up with the document. Must be between `0` and `65535`; incompatible with `[min, max]` interval gaps. |
+| `slop` | `INTEGER` (named) | `0` | Budget of position moves allowed when lining the query up with the document. Must be between `0` and `65535`; incompatible with `[min, max]` and `[min, NULL]` interval gaps (`slop is incompatible with interval gaps ([min, max])`). |
 
-**How it works.** `ts_phrase` needs `position` on the column's dictionary, or the column's text in the index, as in a table or a column also listed in `INCLUDE`; both return the same rows, and [Phrases without positions](../../indexes/inverted/full-text-search.md#phrases-without-positions) describes what the second costs. A [`generate_shingles`](./tokenizers/generate_shingles.md#phrase-search) dictionary without `position` answers a phrase that one of its shingles covers without the column's text. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
+**How it works.** `ts_phrase` needs `position` on the column's dictionary, or the column's text in the index, as in a table or a column also listed in `INCLUDE`; both return the same rows, and [Phrases without positions](../../indexes/inverted/full-text-search.md#phrases-without-positions) describes what the second costs. A [`generate_shingles`](./tokenizers/generate_shingles.md#phrase-search) dictionary without `position` answers a phrase that one of its shingles covers without the column's text. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range, and `[min, NULL]` any gap of at least `min` tokens, however far; `[0, NULL]` matches the second segment anywhere after the first, adjacent included. A `NULL` minimum is an error. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`. A column value holds at most `2147483647` token positions, so a gap is at most `2147483646` and one phrase spans at most `2147483647` positions from its first token to its last; a wider phrase is an error. An open gap counts as its minimum.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -93,6 +93,12 @@ Match a run of tokens in their indexed order, optionally separated by token gaps
 The gap form expresses proximity directly. To require `quick` within three tokens *before* `over`:
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_phrase_gap" />
+
+**Open gaps.** `[min, NULL]` leaves the distance unbounded: the segments must occur in this order with at least `min` tokens between each pair, and nothing limits how far apart they are. To require `dog` at least two tokens after `quick`, wherever it sits:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_phrase_open_gap" />
+
+Positions are counted after analysis, so a token the dictionary removes, such as a stop word, leaves no gap. The values of an array column are contiguous, so an open gap can match across elements. With an open gap, every minimal occurrence counts toward the score, weighted by `1 / (1 + extra)`, where `extra` is how many more positions the occurrence spans than the narrowest the phrase allows, so a closer occurrence scores higher than a distant one in an equally long document. Open gaps need `position` or the column's text, like any gap, and cannot be combined with `slop`.
 
 **Slop.** `slop := N` spends a budget of `N` position moves to line the query up with the document, shared across the whole phrase: `ts_phrase('quick fox', slop := 1)` matches `quick brown fox`, because shifting `fox` one position costs one unit. An intervening token costs 1 per token and a transposed adjacent pair costs 2, so `slop := 2` also matches `fox quick`. `slop := 0` is an exact phrase.
 
@@ -502,7 +508,7 @@ Ordered proximity: require the sub-queries to appear close together, in order.
 | Operand | Type | Meaning |
 | :--- | :--- | :--- |
 | `a`, `b` | `TSQUERY` or `VARCHAR` | The two ends of the phrase. |
-| gap (between) | `INTEGER` or `INTEGER[]` | Optional. `a ## b` is strict adjacency; `a ## N ## b` requires exactly `N` tokens between; `a ## [min, max] ## b` allows a gap range. |
+| gap (between) | `INTEGER` or `INTEGER[]` | Optional. `a ## b` is strict adjacency; `a ## N ## b` requires exactly `N` tokens between; `a ## [min, max] ## b` allows a gap range; `a ## [min, NULL] ## b` allows any gap of at least `min` tokens. |
 
 **How it works.** `##` is an **ordered** proximity operator: `a` must precede `b`. The integer counts the tokens *between* the two ends — `a ## b` (no integer) and `a ## 0 ## b` both mean immediate adjacency, `a ## 2 ## b` means exactly two intervening tokens. Order matters: `'quick' ## 'brown'` matches `quick brown` but `'brown' ## 'quick'` does not.
 
@@ -520,6 +526,10 @@ The integer in `##` counts the tokens *between* the operands (`0` = adjacent). T
 | `body @@ ('fox' ## 3 ## 'dog')` | `1`, `2` | `jumps over lazy` are the three tokens between. |
 
 <SqlLogicTest id="sql/functions/full_text_search/a--b-phrase" />
+
+An open gap `[min, NULL]` has no upper bound, as in [`ts_phrase`](#ts_phrase):
+
+<SqlLogicTest id="sql/functions/full_text_search/a--b-phrase-open" />
 
 #### `a ^ factor` {#a--factor-boost}
 
@@ -647,6 +657,9 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `a*~N` | Fuzzy prefix: tokens that start within edit distance `N` of `a`, as [`ts_levenshtein`](#ts_levenshtein) with `starts_with := true`. A bare `~` allows two edits. Also a phrase part, `"a b*~N"`; write `"a b\*\~N"` to search those characters instead, as the column's dictionary analyzes them. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |
+| `"a N-M b"` | Phrase gap: `b` at a distance of `N` to `M` from `a` (`1` is adjacent). |
+| `"a N-* b"` | Open phrase gap: `b` at least `N` positions after `a`, at any distance. |
+| `fn:ordered(a b c)` | The words in this order, at any distance. |
 | `(a b)` | Grouping. |
 | `a^N` | Boost `a`'s relevance contribution by factor `N`. |
 
@@ -688,6 +701,18 @@ A fuzzy prefix tolerates a typo in what has been typed so far:
 Wildcard, fuzzy and proximity operators compose too — a prefix on one term plus a fuzzy match on another:
 
 <SqlLogicTest id="sql/functions/full_text_search/to_tsquery_advanced" />
+
+**Phrase gaps.** Inside the quotes, a gap between two words says how far apart they sit. The distance counts positions, so `1` is adjacent and `2` has one word between: `"quick 2-4 fox"` allows one to three words between `quick` and `fox`, and `"quick 2-2 fox"` exactly one.
+
+<SqlLogicTest id="sql/functions/full_text_search/to_tsquery_gaps" />
+
+`N-*` leaves the distance open: `"quick 4-* dog"` needs `dog` at least four positions after `quick`, however far. Digits, a dash and a star inside the quotes are always a gap: to search for the prefix `19-`, escape the dash, as in `"covid 19\-*"`. `fn:ordered(a b c)` is `"a 1-* b 1-* c"`: the words in this order, anywhere after each other.
+
+<SqlLogicTest id="sql/functions/full_text_search/to_tsquery_open_gap" />
+
+<SqlLogicTest id="sql/functions/full_text_search/to_tsquery_ordered" />
+
+Open gaps have the semantics and scoring described under [`ts_phrase`](#ts_phrase): a repeated word, as in `fn:ordered(a a)`, needs two occurrences, and a closer occurrence scores higher. An open gap cannot be combined with `~N`: `"a 1-* b"~2` is an error (`slop is incompatible with interval gaps (min-max)`); use exact gaps such as `"quick 2-2 fox"~N`, or drop the slop.
 
 #### `plainto_tsquery(text)` {#plainto_tsquery}
 

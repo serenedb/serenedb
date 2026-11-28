@@ -47,6 +47,7 @@
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <map>
 #include <optional>
@@ -141,11 +142,14 @@ class ProgressWords final
     return "test_progress_words";
   }
 
+  static inline uint64_t emitted = 0;
+
   bool Scan(const duckdb::string_t& value, irs::ScanSink& sink,
             irs::BlockTraits) final {
     const std::string_view data{value.GetData(), value.GetSize()};
     const auto report = sink.Progress();
     for (const auto word : absl::StrSplit(data, ' ', absl::SkipEmpty())) {
+      ++emitted;
       sink.Emit<irs::TokenLayout::TermsPos>(irs::MakeTermView(word));
       if (!report()) {
         break;
@@ -259,14 +263,15 @@ irs::ByPhraseOptions::TokenizerFactory TextOf() {
 
 bool CheckText(irs::PhraseCheck& check, std::string_view text,
                irs::PhraseVerdict& verdict,
-               const duckdb::LogicalType& type = duckdb::LogicalType::VARCHAR) {
+               const duckdb::LogicalType& type = duckdb::LogicalType::VARCHAR,
+               uint32_t anchors = 0) {
   duckdb::DataChunk chunk;
   chunk.Initialize(duckdb::Allocator::DefaultAllocator(), {type});
   chunk.SetChildCardinality(1);
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(chunk.data[0])[0] = {
     text.data(), static_cast<uint32_t>(text.size())};
   check.Bind(chunk.data[0], 1);
-  verdict = check.Check(0);
+  verdict = check.Check(0, anchors);
   return verdict.freq != 0;
 }
 
@@ -464,6 +469,222 @@ TEST(PhraseCheckTest, wide_layouts_check_positions) {
     Verify(phrase, absl::StrCat("a ", Repeat("x", 40), " b c")).matched);
 }
 
+TEST(PhraseCheckTest, open_gaps_check_positions) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 1, irs::pos_limits::kOpenGap);
+  const irs::CompiledPhrase compiled{phrase, {}, {}};
+  EXPECT_TRUE(compiled.open);
+  EXPECT_TRUE(compiled.anchor);
+  EXPECT_FALSE(compiled.automaton);
+  EXPECT_TRUE(Matches(phrase, "a b"));
+  EXPECT_TRUE(Matches(phrase, absl::StrCat("a ", Repeat("x", 500), " b")));
+  EXPECT_FALSE(Matches(phrase, "b a"));
+  EXPECT_FALSE(Matches(phrase, "a"));
+  EXPECT_EQ(2U, Verify(phrase, "a b a b").freq);
+}
+
+TEST(PhraseCheckTest, open_gap_minimum_distance) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 3, irs::pos_limits::kOpenGap);
+  EXPECT_FALSE(Matches(phrase, "a x b"));
+  EXPECT_TRUE(Matches(phrase, "a x x b"));
+  EXPECT_TRUE(Matches(phrase, absl::StrCat("a ", Repeat("x", 40), " b")));
+}
+
+TEST(PhraseCheckTest, open_gaps_span_many_batches) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 0, irs::pos_limits::kOpenGap);
+  PushTerm(phrase, "c", 1, irs::pos_limits::kOpenGap);
+  const auto text =
+    absl::StrCat("a ", Repeat("x", 20'000), " b ", Repeat("x", 20'000), " c");
+  const auto out = Verify(phrase, text);
+  EXPECT_TRUE(out.matched);
+  EXPECT_EQ(1U, out.freq);
+  EXPECT_FALSE(Verify(phrase, absl::StrCat("c ", Repeat("x", 20'000), " b ",
+                                           Repeat("x", 20'000), " a"))
+                 .matched);
+}
+
+TEST(PhraseCheckTest, open_gaps_stop_at_the_first_match) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 1, irs::pos_limits::kOpenGap);
+  const auto text = absl::StrCat("a x b ", Repeat("x", 20'000));
+  ProgressWords::emitted = 0;
+  const auto found =
+    Check<ProgressWords>(phrase, text, false, PhraseMatch::Positions, {});
+  EXPECT_TRUE(found.matched);
+  EXPECT_EQ(1U, found.freq);
+  EXPECT_LT(ProgressWords::emitted, 1000U);
+  ProgressWords::emitted = 0;
+  const auto counted =
+    Check<ProgressWords>(phrase, text, true, PhraseMatch::Positions, {});
+  EXPECT_TRUE(counted.matched);
+  EXPECT_EQ(20'003U, ProgressWords::emitted);
+}
+
+TEST(PhraseCheckTest, open_gaps_scan_everything_without_a_match) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 1, irs::pos_limits::kOpenGap);
+  ProgressWords::emitted = 0;
+  const auto text = absl::StrCat("b ", Repeat("x", 5000), " a");
+  EXPECT_FALSE(
+    Check<ProgressWords>(phrase, text, false, PhraseMatch::Positions, {})
+      .matched);
+  EXPECT_EQ(5002U, ProgressWords::emitted);
+}
+
+TEST(PhraseCheckTest, open_gaps_on_either_side_of_the_anchor_stop_early) {
+  struct Case {
+    std::string_view first;
+    std::string_view second;
+    uint32_t anchor = 0;
+  };
+  constexpr Case kCases[] = {
+    {.first = "aa", .second = "b", .anchor = 0},
+    {.first = "a", .second = "bb", .anchor = 1},
+  };
+  for (const auto& c : kCases) {
+    SCOPED_TRACE(c.anchor);
+    irs::ByPhraseOptions phrase;
+    PushTerm(phrase, c.first, 0, 0);
+    PushTerm(phrase, c.second, 1, irs::pos_limits::kOpenGap);
+    const irs::CompiledPhrase compiled{phrase, {}, {}};
+    ASSERT_TRUE(compiled.anchor);
+    EXPECT_EQ(c.anchor, compiled.anchor->slot);
+    const auto text =
+      absl::StrCat(c.first, " x ", c.second, " ", Repeat("x", 20'000));
+    ProgressWords::emitted = 0;
+    const auto found =
+      Check<ProgressWords>(phrase, text, false, std::nullopt, {});
+    EXPECT_TRUE(found.matched);
+    EXPECT_LT(ProgressWords::emitted, 1000U);
+  }
+}
+
+TEST(PhraseCheckTest, counted_open_gaps_stop_after_the_last_anchor) {
+  irs::ByPhraseOptions last;
+  PushTerm(last, "a", 0, 0);
+  PushTerm(last, "bb", 1, irs::pos_limits::kOpenGap);
+  irs::ByPhraseOptions inner = last;
+  PushTerm(inner, "c", 1, 2);
+  struct Case {
+    const irs::ByPhraseOptions* phrase;
+    std::string text;
+    uint64_t tokens = 0;
+  };
+  const Case kCases[] = {
+    {&last, absl::StrCat("a x bb a bb ", Repeat("a", 20'000)), 20'005},
+    {&inner, absl::StrCat("a bb x c a bb c ", Repeat("c", 20'000)), 20'007},
+  };
+  for (const auto& c : kCases) {
+    SCOPED_TRACE(c.tokens);
+    const irs::CompiledPhrase compiled{*c.phrase, {}, {}};
+    ASSERT_TRUE(compiled.anchor);
+    ASSERT_EQ(1U, compiled.anchor->slot);
+    irs::PhraseCheck check{compiled, TextOf<ProgressWords>(), true};
+    irs::PhraseVerdict full;
+    ProgressWords::emitted = 0;
+    ASSERT_TRUE(CheckText(check, c.text, full));
+    EXPECT_EQ(c.tokens, ProgressWords::emitted);
+    irs::PhraseVerdict early;
+    ProgressWords::emitted = 0;
+    ASSERT_TRUE(
+      CheckText(check, c.text, early, duckdb::LogicalType::VARCHAR, 2));
+    EXPECT_LT(ProgressWords::emitted, 1000U);
+    EXPECT_EQ(full.freq, early.freq);
+    EXPECT_FLOAT_EQ(full.scale, early.scale);
+  }
+}
+
+TEST(PhraseCheckTest, open_gap_after_the_anchor_scans_a_row_once) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "aa", 0, 0);
+  PushTerm(phrase, "b", 1, irs::pos_limits::kOpenGap);
+  ProgressWords::emitted = 0;
+  const auto text = absl::StrCat("b ", Repeat("aa", 5000));
+  EXPECT_FALSE(
+    Check<ProgressWords>(phrase, text, false, std::nullopt, {}).matched);
+  EXPECT_EQ(5001U, ProgressWords::emitted);
+}
+
+TEST(PhraseCheckTest, open_gaps_take_stacked_alternatives) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 1, irs::pos_limits::kOpenGap);
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "a|c ~ x|b"));
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "x|a b|y"));
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "c|a x b|a"));
+  EXPECT_FALSE(Matches<StackedWords>(phrase, "a|b x"));
+  EXPECT_FALSE(Matches<StackedWords>(phrase, "b|x a|y"));
+  EXPECT_FALSE(Matches<StackedWords>(phrase, "x|b a|y"));
+  irs::ByPhraseOptions set;
+  PushTerm(set, "a", 0, 0);
+  set.push_back<irs::TermSetOptions>(2, irs::pos_limits::kOpenGap)
+    .terms.emplace(Bytes("b"));
+  set.push_back<irs::TermSetOptions>(1, irs::pos_limits::kOpenGap)
+    .terms.emplace(Bytes("c"));
+  EXPECT_TRUE(Matches<StackedWords>(set, "a x b|y z c"));
+  EXPECT_FALSE(Matches<StackedWords>(set, "a b c"));
+}
+
+TEST(PhraseCheckTest, open_gaps_without_a_minimum_share_a_position) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 0, irs::pos_limits::kOpenGap);
+  PushTerm(phrase, "c", 0, irs::pos_limits::kOpenGap);
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "a|b|c"));
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "a|b x c"));
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "a x b|c"));
+  EXPECT_TRUE(Matches(phrase, "a b c"));
+  EXPECT_FALSE(Matches<StackedWords>(phrase, "b|c a"));
+  EXPECT_FALSE(Matches<StackedWords>(phrase, "a|c b"));
+  EXPECT_FALSE(Matches(phrase, "a c b"));
+  irs::ByPhraseOptions twice;
+  PushTerm(twice, "a", 0, 0);
+  PushTerm(twice, "a", 0, irs::pos_limits::kOpenGap);
+  EXPECT_TRUE(Matches(twice, "a"));
+  PushTerm(twice, "a", 1, irs::pos_limits::kOpenGap);
+  EXPECT_FALSE(Matches(twice, "a"));
+  EXPECT_TRUE(Matches(twice, "a a"));
+}
+
+TEST(PhraseCheckTest, open_gaps_do_not_match_out_of_order_or_too_close) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "a", 0, 0);
+  PushTerm(phrase, "b", 2, irs::pos_limits::kOpenGap);
+  PushTerm(phrase, "c", 2, irs::pos_limits::kOpenGap);
+  EXPECT_TRUE(Matches(phrase, "a x b x c"));
+  EXPECT_FALSE(Matches(phrase, "a x b c"));
+  EXPECT_FALSE(Matches(phrase, "a b x c"));
+  EXPECT_FALSE(Matches(phrase, "c b a"));
+  EXPECT_FALSE(Matches(phrase, "a x b x x"));
+  EXPECT_TRUE(Matches(phrase, "a b x b x c"));
+}
+
+TEST(PhraseCheckTest, open_gaps_credit_stacked_tokens_in_any_order) {
+  irs::ByPhraseOptions phrase;
+  PushTerm(phrase, "car", 0, 0);
+  PushTerm(phrase, "red", 0, irs::pos_limits::kOpenGap);
+  PushTerm(phrase, "red", 1, irs::pos_limits::kOpenGap);
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "red|car x red"));
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "car|red x red"));
+  EXPECT_TRUE(Matches<StackedWords>(phrase, "x|red|car x|red"));
+  EXPECT_FALSE(Matches<StackedWords>(phrase, "red|car"));
+  EXPECT_FALSE(Matches<StackedWords>(phrase, "red car"));
+  irs::ByPhraseOptions chain;
+  PushTerm(chain, "a", 0, 0);
+  PushTerm(chain, "b", 0, irs::pos_limits::kOpenGap);
+  PushTerm(chain, "c", 0, irs::pos_limits::kOpenGap);
+  EXPECT_TRUE(Matches<StackedWords>(chain, "c|b|a"));
+  EXPECT_TRUE(Matches<StackedWords>(chain, "c|a|b"));
+  EXPECT_FALSE(Matches<StackedWords>(chain, "c|b x a"));
+}
+
 TEST(PhraseCheckTest, slop) {
   auto phrase = Phrase("quick fox");
   phrase.set_slop(1);
@@ -555,6 +776,17 @@ TEST(PhraseCheckTest, adversarial_repetition_restarts) {
     }
   }
   EXPECT_EQ(expected, out.freq);
+}
+
+TEST(PhraseCheckTest, long_phrase_keeps_the_stack_flat) {
+  constexpr size_t kWords = 200'000;
+  const auto phrase = Phrase(Repeat("w", kWords));
+  const irs::CompiledPhrase compiled{phrase, {}, {}};
+  ASSERT_TRUE(compiled.anchor);
+  EXPECT_EQ(0U, compiled.anchor->slot);
+  EXPECT_TRUE(
+    Check<DenseWords>(phrase, Repeat("w", kWords + 1), false, std::nullopt, {})
+      .matched);
 }
 
 TEST(PhraseCheckTest, empty_value_matches_nothing) {
@@ -1032,14 +1264,18 @@ std::string RandomText(std::mt19937& rng,
 }
 
 irs::ByPhraseOptions RandomPhrase(std::mt19937& rng,
-                                  std::span<const std::string_view> words) {
+                                  std::span<const std::string_view> words,
+                                  bool open = true) {
   irs::ByPhraseOptions phrase;
   const auto size = 2 + rng() % 3;
   const bool sloppy = rng() % 5 == 0;
   for (size_t k = 0; k != size; ++k) {
     irs::PosAttr::value_t offs_min = k == 0 ? 0 : 1 + rng() % 2;
     irs::PosAttr::value_t offs_max = offs_min;
-    if (k != 0 && !sloppy && rng() % 3 == 0) {
+    if (open && k != 0 && !sloppy && rng() % 5 == 0) {
+      offs_min = rng() % 4;
+      offs_max = irs::pos_limits::kOpenGap;
+    } else if (k != 0 && !sloppy && rng() % 3 == 0) {
       offs_max += rng() % 4;
     }
     switch (rng() % 6) {
@@ -1249,6 +1485,58 @@ TEST(TokenPhraseIndexTest, stacked_tokens_agree_with_positions) {
   }
 }
 
+TEST(TokenPhraseIndexTest, all_open_gaps_agree_with_positions) {
+  constexpr std::string_view kWords[] = {"x", "x", "a", "b", "c", "the"};
+  std::mt19937 rng{91};
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 200; ++i) {
+    docs.push_back(RandomText(rng, kWords, 1 + rng() % 40));
+  }
+  const Index index{
+    docs, std::type_identity<DenseWords>{}, {.segment_docs = 64}};
+  for (size_t i = 0; i != 60; ++i) {
+    irs::ByPhraseOptions phrase;
+    const auto size = 2 + rng() % 3;
+    for (size_t k = 0; k != size; ++k) {
+      const auto word = kWords[rng() % std::size(kWords)];
+      if (k == 0) {
+        PushTerm(phrase, word, 0, 0);
+      } else {
+        PushTerm(phrase, word, rng() % 4, irs::pos_limits::kOpenGap);
+      }
+    }
+    SCOPED_TRACE(i);
+    SCOPED_TRACE(Describe(phrase));
+    ExpectLikePositions<DenseWords>(index, phrase);
+  }
+}
+
+TEST(TokenPhraseIndexTest, all_open_stacked_gaps_agree_with_positions) {
+  constexpr std::string_view kWords[] = {"red", "car|auto", "car", "auto",
+                                         "~",   "red|car",  "big", "red"};
+  constexpr std::string_view kTerms[] = {"red", "car", "auto", "big"};
+  std::mt19937 rng{17};
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 200; ++i) {
+    docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
+  }
+  const Index index{docs, std::type_identity<StackedWords>{}};
+  for (size_t i = 0; i != 60; ++i) {
+    irs::ByPhraseOptions phrase;
+    const auto size = 2 + rng() % 3;
+    for (size_t k = 0; k != size; ++k) {
+      const auto word = kTerms[rng() % std::size(kTerms)];
+      if (k == 0) {
+        PushTerm(phrase, word, 0, 0);
+      } else {
+        PushTerm(phrase, word, rng() % 4, irs::pos_limits::kOpenGap);
+      }
+    }
+    SCOPED_TRACE(i);
+    ExpectLikePositions<StackedWords>(index, phrase);
+  }
+}
+
 TEST(TokenPhraseIndexTest, stacked_set_slots_count_each_position_once) {
   const std::vector<std::string> docs{"car|auto auto", "auto car|auto",
                                       "car|auto x auto", "auto|car auto|car",
@@ -1289,6 +1577,34 @@ TEST(TokenPhraseIndexTest, long_documents_agree_with_positions) {
   PushTerm(interval, "b", 1, 6);
   PushTerm(interval, "c", 1, 6);
   ExpectLikePositions<DenseWords>(index, interval);
+}
+
+TEST(TokenPhraseIndexTest, open_gaps_agree_with_positions) {
+  constexpr size_t kLength = 25'000;
+  static_assert(kLength > irs::TokenBatch::kCapacity);
+  const auto padding = Repeat("x", kLength);
+  const std::vector<std::string> docs{
+    absl::StrCat("a ", padding, " b"),
+    absl::StrCat("b ", padding, " a"),
+    absl::StrCat("a ", padding, " b ", padding, " a ", padding, " b"),
+    absl::StrCat(padding, " a b"),
+    absl::StrCat("a b ", padding),
+    "a b",
+  };
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  for (const irs::PosAttr::value_t min : {0, 1, 3, 100}) {
+    SCOPED_TRACE(min);
+    irs::ByPhraseOptions phrase;
+    PushTerm(phrase, "a", 0, 0);
+    PushTerm(phrase, "b", min, irs::pos_limits::kOpenGap);
+    ExpectLikePositions<DenseWords>(index, phrase);
+    ExpectDeferredLikeInline<DenseWords>(index, docs, phrase);
+  }
+  irs::ByPhraseOptions three;
+  PushTerm(three, "a", 0, 0);
+  PushTerm(three, "x", 1, irs::pos_limits::kOpenGap);
+  PushTerm(three, "b", 1, irs::pos_limits::kOpenGap);
+  ExpectLikePositions<DenseWords>(index, three);
 }
 
 TEST(TokenPhraseIndexTest, early_stopping_scans_agree_with_positions) {
@@ -2080,7 +2396,7 @@ TEST(TokenPhraseIndexTest, pruned_top_matches_full_ranking_on_random_phrases) {
   std::mt19937 rng{1013};
   size_t pruned = 0;
   for (size_t i = 0; i != 200; ++i) {
-    const auto options = RandomPhrase(rng, kWords);
+    const auto options = RandomPhrase(rng, kWords, false);
     const auto shape = i % 3;
     const auto k = kTops[(i / 3) % std::size(kTops)];
     auto* filter = i % 2 == 0 ? nullptr : &table;

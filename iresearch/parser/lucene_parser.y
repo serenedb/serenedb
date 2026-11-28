@@ -86,7 +86,7 @@ void yyerror(irs::ParserContext& ctx, yyscan_t yyscanner, const char *s);
     // else, the same way a number is.
     struct { float value; StringSpan text; } flt;
     float fnum;
-    struct { int min; int max; } gap;
+    struct { uint32_t min; uint32_t max; } gap;
     irs::Filter* filter;
 }
 

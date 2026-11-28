@@ -30,12 +30,20 @@ enum class PhraseMatch : uint8_t {
   Plain,
   Intervals,
   Slop,
+  OpenGap,
 };
+
+constexpr bool IsScaled(PhraseMatch match) noexcept {
+  return match == PhraseMatch::Slop || match == PhraseMatch::OpenGap;
+}
 
 template<typename Query>
 PhraseMatch MatchOf(const Query& query) noexcept {
   if (query.slop != 0) {
     return PhraseMatch::Slop;
+  }
+  if (query.has_open) {
+    return PhraseMatch::OpenGap;
   }
   return query.has_intervals ? PhraseMatch::Intervals : PhraseMatch::Plain;
 }
@@ -51,6 +59,8 @@ struct PhraseMatchAxis : EnumAxis<PhraseMatch> {
     switch (match) {
       case PhraseMatch::Slop:
         return f.template operator()<PhraseMatch::Slop>();
+      case PhraseMatch::OpenGap:
+        return f.template operator()<PhraseMatch::OpenGap>();
       case PhraseMatch::Intervals:
         return f.template operator()<PhraseMatch::Intervals>();
       case PhraseMatch::Plain:

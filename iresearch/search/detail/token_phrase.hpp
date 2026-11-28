@@ -23,6 +23,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <utility>
@@ -31,6 +32,7 @@
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/detail/compiled_phrase.hpp"
+#include "iresearch/search/detail/phrase_open_gap_matcher.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/row_values.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
@@ -63,6 +65,7 @@ class PhraseCheck final : public TokenConsumer {
   enum class Route : uint8_t {
     Anchor,
     Automaton,
+    Earliest,
     Positions,
   };
 
@@ -96,6 +99,14 @@ class PhraseCheck final : public TokenConsumer {
       uint32_t pos = 0;
     };
 
+    struct WaysFrame {
+      size_t at = 0;
+      size_t cursor = 0;
+      uint64_t ways = 0;
+      uint64_t accepted = std::numeric_limits<uint64_t>::max();
+      uint32_t slot = 0;
+    };
+
     const duckdb::string_t& TermAt(size_t at) const noexcept {
       SDB_ASSERT(at >= _carry_base && at < _end);
       return at < _batch_base ? _carry[at - _carry_base].term
@@ -112,6 +123,9 @@ class PhraseCheck final : public TokenConsumer {
     bool Hit(size_t at, State& state);
     template<bool Right>
     uint64_t Ways(uint32_t slot, size_t at, State& state);
+    template<bool Right>
+    IRS_FORCE_INLINE bool NextNeighbor(WaysFrame& frame, State& state);
+    bool ResumeParent(WaysFrame& frame, bool count);
     bool Over(State& state) noexcept;
 
     std::span<const duckdb::string_t, TokenBatch::kCapacity> _batch_terms;
@@ -122,6 +136,7 @@ class PhraseCheck final : public TokenConsumer {
     std::vector<Token> _carry;
     duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
     std::vector<size_t> _pending;
+    std::vector<WaysFrame> _frames;
     uint32_t _last = 0;
     uint32_t _anchors = 0;
     uint64_t _steps = 0;
@@ -143,9 +158,31 @@ class PhraseCheck final : public TokenConsumer {
     uint32_t _at = 0;
   };
 
+  class EarliestMatch {
+   public:
+    void Reset() noexcept {
+      _next = 0;
+      _last = 0;
+      _at = 0;
+      _accepted.clear();
+    }
+    void Feed(const TokenBatch& batch, uint32_t from, State& state);
+    PhraseVerdict Finish(State& state);
+
+   private:
+    void Resolve(State& state);
+
+    std::vector<uint32_t> _accepted;
+    uint32_t _next = 0;
+    uint32_t _at = 0;
+    uint64_t _last = 0;
+  };
+
   class PositionsMatch {
    public:
-    void Reset(size_t slots);
+    explicit PositionsMatch(const CompiledPhrase& phrase);
+
+    void Reset(const CompiledPhrase& phrase, uint32_t anchors);
     void Feed(const TokenBatch& batch, uint32_t from, State& state);
     PhraseVerdict Finish(State& state);
 
@@ -158,7 +195,11 @@ class PhraseCheck final : public TokenConsumer {
     std::vector<std::vector<PosAttr::value_t>> _slots;
     std::vector<Way> _valid;
     std::vector<Way> _next;
+    std::vector<detail::open_gap::Gap> _gaps;
+    detail::open_gap::Scratch _open_gap;
     detail::slop::MatchScratch _scratch;
+    uint64_t _stop = 0;
+    uint32_t _anchor_freq = 0;
   };
 
   decltype(auto) WithMatch(auto&& visit) {
@@ -167,6 +208,8 @@ class PhraseCheck final : public TokenConsumer {
         return visit(_anchor);
       case Route::Automaton:
         return visit(_automaton);
+      case Route::Earliest:
+        return visit(_earliest);
       case Route::Positions:
         return visit(_positions);
     }
@@ -182,10 +225,13 @@ class PhraseCheck final : public TokenConsumer {
   RowValues _rows;
   AnchorMatch _anchor;
   AutomatonMatch _automaton;
+  EarliestMatch _earliest;
   PositionsMatch _positions;
   State _state;
   Route _route = Route::Anchor;
   bool _dense;
+  bool _all_open;
+  bool _anchored;
   uint32_t _last_pos = 0;
   uint32_t _value_base = 0;
   uint32_t _fed = 0;

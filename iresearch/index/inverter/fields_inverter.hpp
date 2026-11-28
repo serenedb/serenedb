@@ -310,7 +310,7 @@ class FieldInverter : util::Noncopyable {
       const uint32_t* pos = nullptr;
       uint32_t len = n;
       if (_dense_pos) {
-        if (last_pos + n < last_pos || last_pos + n >= pos_limits::eof())
+        if (last_pos + n < last_pos || last_pos + n > pos_limits::max())
           [[unlikely]] {
           _error = "the tokenizer produced invalid token positions";
           return false;
@@ -323,7 +323,7 @@ class FieldInverter : util::Noncopyable {
           monotonic &= pos[i] >= pos[i - 1];
           len += pos[i] != pos[i - 1];
         }
-        if (!monotonic || pos[n - 1] >= pos_limits::eof()) [[unlikely]] {
+        if (!monotonic || pos[n - 1] > pos_limits::max()) [[unlikely]] {
           _error = "the tokenizer produced invalid token positions";
           return false;
         }
@@ -468,7 +468,7 @@ class FieldInverter : util::Noncopyable {
     const uint32_t pos_base = PosBase();
     if (_dense_pos) {
       const uint32_t last_pos = pos_base + count;
-      if (last_pos < pos_base || last_pos >= pos_limits::eof()) [[unlikely]] {
+      if (last_pos < pos_base || last_pos > pos_limits::max()) [[unlikely]] {
         _error = "the tokenizer produced invalid token positions";
         return {pos_limits::eof(), 0};
       }
@@ -483,7 +483,7 @@ class FieldInverter : util::Noncopyable {
       len += pos_arr[i] != pos_arr[i - 1];
     }
     const uint32_t last_pos = pos_base + pos_arr[count - 1];
-    if (!monotonic || last_pos < pos_base || last_pos >= pos_limits::eof())
+    if (!monotonic || last_pos < pos_base || last_pos > pos_limits::max())
       [[unlikely]] {
       _error = "the tokenizer produced invalid token positions";
       return {pos_limits::eof(), 0};
@@ -660,9 +660,9 @@ class FieldInverter : util::Noncopyable {
       ++_state.stats.len;
     } else {
       const uint32_t pos = _state.last_pos + 1;
-      if (pos >= pos_limits::eof()) [[unlikely]] {
-        _error = absl::StrCat("the document has more than ",
-                              pos_limits::eof() - 1, " token positions");
+      if (pos > pos_limits::max()) [[unlikely]] {
+        _error = absl::StrCat("the document has more than ", pos_limits::max(),
+                              " token positions");
         return false;
       }
       if constexpr (Log::kLayout == TokenLayout::TermsPos) {

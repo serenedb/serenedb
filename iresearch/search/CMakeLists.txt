@@ -124,6 +124,7 @@ sdb_instantiation_axis(
     "plain MATCH=Plain"
     "intervals MATCH=Intervals"
     "slop MATCH=Slop"
+    "open_gap MATCH=OpenGap"
 )
 sdb_instantiation_axis(IRS_NGRAM_MATCHES "all MATCH=All" "threshold MATCH=Threshold")
 sdb_instantiation_axis(
@@ -281,7 +282,17 @@ sdb_instantiate(
     CALL
         "template struct PhraseMaker<irs::detail::PhraseMatch::@MATCH.MATCH@, @PHRASE.QUERY@>;"
     AXES PHRASE=IRS_PHRASES MATCH=IRS_PHRASE_MATCHES
-    SKIP slop
+    SKIP slop open_gap
+)
+sdb_instantiate(
+    iresearch
+    DIR search/top
+    PREFIX pruned_phrase_open_gap
+    NAMESPACE irs::top
+    INCLUDE iresearch/search/top/make_phrase_pruned.hpp
+    CALL
+        "template Root::ptr PhraseMaker<irs::detail::PhraseMatch::OpenGap, @PHRASE.QUERY@>::Pruned(const @PHRASE.QUERY@&, const Context&);"
+    AXES PHRASE=IRS_PHRASES
 )
 sdb_instantiate(
     iresearch

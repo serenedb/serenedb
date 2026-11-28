@@ -51,11 +51,11 @@ struct MatchResult {
   bool any = false;
 };
 
-inline uint32_t FreqOf(const MatchResult& res) noexcept {
+uint32_t FreqOf(const auto& res) noexcept {
   return std::saturate_cast<uint32_t>(res.freq);
 }
 
-inline score_t ScaleOf(const MatchResult& res) noexcept {
+score_t ScaleOf(const auto& res) noexcept {
   return static_cast<score_t>(res.weight / static_cast<double>(res.freq));
 }
 

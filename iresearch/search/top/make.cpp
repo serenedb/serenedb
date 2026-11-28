@@ -161,7 +161,7 @@ Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
   const auto resolve = [&](const auto& phrase) {
     return Resolve<irs::detail::PhraseMatchAxis>(
       phrase, [&]<irs::detail::PhraseMatch M> -> Result {
-        if constexpr (M != irs::detail::PhraseMatch::Slop) {
+        if constexpr (!irs::detail::IsScaled(M)) {
           return make.template operator()<M>(phrase);
         } else {
           return {};

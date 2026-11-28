@@ -35,6 +35,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <optional>
 #include <utility>
 
@@ -63,6 +64,9 @@ irs::analysis::ShingleTokenizer* QueryShingle(
 
 namespace {
 
+constexpr int64_t kMaxDistance = irs::pos_limits::max();
+constexpr int64_t kMaxGap = kMaxDistance - 1;
+
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
                          std::string_view hint,
                          std::optional<size_t> arg_index = std::nullopt) {
@@ -84,6 +88,9 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
     if (raw < 0) {
       error(" gap must be >= 0, got ", raw);
     }
+    if (raw > kMaxGap) {
+      error(" gap too large: ", raw, " (at most ", kMaxGap, ")");
+    }
     return raw;
   };
 
@@ -95,6 +102,10 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
             children.size(), " elements");
     }
     auto min = coerce(children[0]);
+    if (children[1].IsNull()) {
+      return {.min = static_cast<size_t>(min) + 1,
+              .max = irs::pos_limits::kOpenGap};
+    }
     auto max = coerce(children[1]);
     if (min > max) {
       error(" interval gap must satisfy 0 <= min <= max, got [", min, ", ", max,
@@ -273,6 +284,14 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view hint) {
+  if (const auto width = options.MaxWidth(); width > irs::pos_limits::max()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label, " phrase is too wide: its gaps add up to ", width,
+              " positions (at most ", irs::pos_limits::max(), ")"),
+      ERR_HINT("Narrow the gaps: a column value holds at most ",
+               irs::pos_limits::max(), " token positions."));
+  }
   if (auto term = PlanPhrase(QueryShingle(ctx, column_info), column_info,
                              options, label, hint, ctx.client_context)) {
     AddTerm(MaybeNegated(parent, ctx, column_info), column_info.field_id,
@@ -545,6 +564,12 @@ PhraseGap ParseTsqueryPhraseDistance(const duckdb::Expression& expr) {
   if (raw < 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("tsquery_phrase distance must be >= 1, got ", raw),
+                    ERR_HINT(kHint));
+  }
+  if (raw > kMaxDistance) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("tsquery_phrase distance too large: ", raw,
+                            " (at most ", kMaxDistance, ")"),
                     ERR_HINT(kHint));
   }
   return {.min = static_cast<size_t>(raw), .max = static_cast<size_t>(raw)};

@@ -1209,6 +1209,19 @@ struct DateText {
   }
 };
 
+struct TimestampText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    if (duckdb::timestamp_t timestamp;
+        duckdb::FastTimestamp(data.data(), data.size(), timestamp)) {
+      sink.Fixed(timestamp);
+      return true;
+    }
+    return CastText<duckdb::timestamp_t>::Decode(ctx, data, sink);
+  }
+};
+
 struct IntervalText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -2589,8 +2602,7 @@ DeserializationFunction<Sink> GetDeserialization(
     case TIME_TZ:
       return SelectDecoder<TimeTzBin, TimeTzText, Sink>(binary);
     case TIMESTAMP:
-      return SelectDecoder<TimestampBin, CastText<duckdb::timestamp_t>, Sink>(
-        binary);
+      return SelectDecoder<TimestampBin, TimestampText, Sink>(binary);
     case TIMESTAMP_SEC:
       return SelectDecoder<TimestampSecBin, CastText<duckdb::timestamp_sec_t>,
                            Sink>(binary);

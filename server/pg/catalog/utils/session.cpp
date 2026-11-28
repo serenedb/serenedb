@@ -50,7 +50,8 @@ Session MakeSession(
     .reg_out = {},
     .reg_out_texts = {},
     .reg_out_recent = {},
-    .usable_schemas = {}};
+    .usable_schemas = {},
+    .schema_views = {}};
   if (!context) {
     return session;
   }

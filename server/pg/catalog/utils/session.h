@@ -74,6 +74,8 @@ struct Session {
   mutable irs::containers::FlatHashMap<
     std::string, duckdb::optional_ptr<duckdb::SchemaCatalogEntry>>
     usable_schemas;
+  mutable irs::containers::FlatHashMap<duckdb::idx_t, duckdb::SchemaView>
+    schema_views;
 };
 
 Session MakeSession(

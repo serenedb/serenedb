@@ -48,9 +48,19 @@
 namespace sdb::pg {
 
 bool Shown(const Session& session, duckdb::CatalogEntry& entry) {
-  return !session.context ||
-         duckdb::CatalogEntryRetriever(*session.context, session.role)
-           .Shows(entry);
+  if (!session.context) {
+    return true;
+  }
+  const duckdb::CatalogEntryRetriever retriever{*session.context, session.role};
+  const auto schema = entry.ParentSchemaOid();
+  if (!schema || entry.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+    return retriever.Shows(entry);
+  }
+  const auto [view, added] = session.schema_views.try_emplace(schema);
+  if (added) {
+    view->second = retriever.View(entry.ParentSchema(*session.context));
+  }
+  return retriever.Shows(entry, view->second);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> InternalEntryByOid(

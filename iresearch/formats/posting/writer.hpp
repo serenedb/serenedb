@@ -287,7 +287,7 @@ class PostingsWriter final {
   PayBuffer _pay;  // Payloads and offsets stream
   BlockGroup _pos_group;
   BlockGroup _pay_group;
-  const NormProvider* _norms{};
+  const NormColumns* _norms{};
   ScoreBoundWriter::ptr _writer;      // Score bound writer
   ScoreBoundWriter* _valid_writer{};  // Valid score bound writer
   IndexFeatures _features = IndexFeatures::None;

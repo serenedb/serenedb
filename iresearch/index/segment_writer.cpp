@@ -121,19 +121,19 @@ void SegmentWriter::FlushFields(FlushState& state,
 WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
                                     DocumentMaskBuilder& docs_mask) {
   SDB_ASSERT(_tracker);
+  const auto sealed = SealNorms();
+  const NormColumns norms{sealed.file, sealed.columns};
+  auto& idx = *_idx;
   FlushState state{
     .tracker = *_tracker,
-    .norms = this,
+    .norms = &norms,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
   };
 
-  IdxWriter idx{*_tracker};
-
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
-    _fields.FinalizeNorms();
     CopyColumns();
     _col_writer->Commit(buffered_docs());
     if (_ann_env != nullptr) {
@@ -169,6 +169,7 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     .idx = idx.Commit(_hnsw_bases),
     .postings = std::move(postings),
   };
+  _idx.reset();
 
   docs_mask = std::move(_docs_mask);
 
@@ -223,16 +224,19 @@ void SegmentWriter::CopyColumns() {
   }
 }
 
+SealedNorms SegmentWriter::SealNorms() {
+  _fields.FinalizeNorms();
+  return _idx->SealNorms(buffered_docs());
+}
+
 std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   const auto docs = buffered_docs();
   SDB_ASSERT(docs != 0);
   SDB_ASSERT(_copied_rows.empty());
   std::vector<std::unique_ptr<ColumnReader>> columns;
-  std::vector<NormColumnSpec> norms;
+  auto norms = SealNorms();
   size_t column_bytes = 0;
   if (_col_writer) {
-    _fields.FinalizeNorms();
-    norms = _col_writer->SealNorms(docs);
     HotChunkStats stats;
     for (auto& column : _col_writer->Snapshot(docs)) {
       auto& reader = columns.emplace_back(
@@ -254,13 +258,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   }
   meta.live_docs_count = meta.docs_count - RemovalCount(meta);
   const absl::Cleanup remove = [&] { _tracker->Remove(); };
-  duckdb::shared_ptr<duckdb::InputFile> col_file;
-  if (!norms.empty()) {
-    col_file = _fs.OpenInputFile(_fs.JoinPath(_root, FileName(_seg_name)),
-                                 duckdb::MappedFileAccess::RANDOM);
-  }
   meta.byte_size = _tracker->Bytes() + column_bytes + fields->Bytes() +
-                   (col_file ? col_file->GetSize() : 0);
+                   (norms.file ? norms.file->GetSize() : 0);
   auto postings = field_writer.TakePostings();
   fields->Open(
     ReaderState{
@@ -272,10 +271,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
     },
     field_writer.Features());
   return SegmentReaderImpl::OpenPiece(
-    meta, id,
-    std::make_unique<ColReader>(_db, std::move(columns), std::move(col_file),
-                                std::move(norms)),
-    std::move(fields));
+    meta, id, std::make_unique<ColReader>(_db, std::move(columns)),
+    std::make_unique<IdxReader>(std::move(norms)), std::move(fields));
 }
 
 void SegmentWriter::SetFieldOptions(
@@ -306,6 +303,7 @@ void SegmentWriter::ResetState() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
+  _idx.reset();
   _copied_columns.clear();
   _copied_rows.clear();
   if (_tracker) {
@@ -340,7 +338,8 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
-  _fields.SetColWriter(_col_writer.get());
+  _fields.SetNormColumnsWriter(
+    &_idx.emplace(*_tracker).Norms(_fields.Allocator()));
   _fields.SetFieldOptions(active);
 
   _initialized = true;

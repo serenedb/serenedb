@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/storage/external_file_cache/input_file_reader.hpp>
+#include <iresearch/store/bytes_mapping.hpp>
 #include <iresearch/utils/string.hpp>
 
 namespace tests {
@@ -31,25 +31,9 @@ inline irs::bstring Bytes(const duckdb::MemoryStream& out) {
   return irs::bstring{out.GetData(), out.GetPosition()};
 }
 
-class BytesMapping final : public duckdb::MemoryMappedFile {
- public:
-  explicit BytesMapping(irs::bytes_view bytes)
-    : MemoryMappedFile{{},
-                       duckdb::FileOpenFlags::FILE_FLAGS_READ,
-                       const_cast<duckdb::data_ptr_t>(bytes.data()),
-                       static_cast<duckdb::idx_t>(bytes.size())} {}
-
-  void Sync() final {}
-  bool Trim(duckdb::idx_t /*offset*/, duckdb::idx_t /*length*/) final {
-    return false;
-  }
-  bool OnDiskFile() const final { return false; }
-  void Close() final {}
-};
-
 inline duckdb::shared_ptr<duckdb::InputFile> OpenBytes(irs::bytes_view bytes) {
   return duckdb::make_shared_ptr<duckdb::InputFile>(
-    duckdb::make_uniq<BytesMapping>(bytes));
+    duckdb::make_uniq<irs::BytesMapping>(bytes));
 }
 
 }  // namespace tests

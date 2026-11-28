@@ -261,8 +261,8 @@ void ExpectSameSegment(const SubReader& expected, const SubReader& actual) {
   }
   const auto norm = expected.fields(kText).front()->meta().norm;
   ASSERT_TRUE(field_limits::valid(norm));
-  auto expected_norms = expected.norms(norm);
-  auto actual_norms = actual.norms(norm);
+  auto expected_norms = expected.Norms().Reader(norm);
+  auto actual_norms = actual.Norms().Reader(norm);
   ASSERT_NE(nullptr, expected_norms);
   ASSERT_NE(nullptr, actual_norms);
   for (doc_id_t doc = doc_limits::min();
@@ -427,8 +427,8 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
 
   const auto norm = expected.fields(kText).front()->meta().norm;
   ASSERT_TRUE(field_limits::valid(norm));
-  auto expected_norms = expected.norms(norm);
-  auto actual_norms = piece->norms(norm);
+  auto expected_norms = expected.Norms().Reader(norm);
+  auto actual_norms = piece->Norms().Reader(norm);
   ASSERT_NE(nullptr, expected_norms);
   ASSERT_NE(nullptr, actual_norms);
   for (doc_id_t doc = doc_limits::min(); doc != doc_limits::min() + kDocs;
@@ -478,7 +478,7 @@ TEST(PieceTest, SealsSingleDocumentPieces) {
     const auto fields = piece->fields(kText);
     ASSERT_EQ(1, fields.size());
     const auto norm = fields.front()->meta().norm;
-    auto norms = piece->norms(norm);
+    auto norms = piece->Norms().Reader(norm);
     ASSERT_NE(nullptr, norms);
     EXPECT_EQ(3, norms->Get(doc_limits::min()));
     const ReadContext context{*piece->GetColReader(), /*random_access=*/false};

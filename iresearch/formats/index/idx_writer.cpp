@@ -20,9 +20,11 @@
 
 #include "iresearch/formats/index/idx_writer.hpp"
 
+#include <cstring>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/main/database_file_opener.hpp>
 #include <utility>
 #include <vector>
 
@@ -63,6 +65,56 @@ void IdxWriter::EnsureOut() {
   _tracker.Add(kIdxFile);
 }
 
+NormColumnsWriter& IdxWriter::Norms(duckdb::Allocator& allocator) {
+  _allocator = &allocator;
+  return _norms.emplace([this] -> duckdb::WriteStream& { return NormsOut(); });
+}
+
+SealedNorms IdxWriter::SealNorms(uint64_t rows) {
+  SDB_ASSERT(_norms);
+  SealedNorms sealed{.columns = std::move(*_norms).Seal(rows)};
+  _norms.reset();
+  if (!sealed.columns.empty()) {
+    sealed.file = ReadNorms();
+    _footer.norms = sealed.columns;
+  }
+  return sealed;
+}
+
+duckdb::WriteStream& IdxWriter::NormsOut() {
+  EnsureOut();
+  SDB_ASSERT(_out->Position() == 0);
+  if (duckdb::DatabaseFileSystem::IsRemote(_out->path) && !_out->Hold()) {
+    return _fallback_norms.emplace(*_allocator);
+  }
+  return *_out;
+}
+
+duckdb::shared_ptr<duckdb::InputFile> IdxWriter::ReadNorms() {
+  SDB_ASSERT(_out);
+  if (_fallback_norms) {
+    duckdb::AllocatedData bytes;
+    if (const auto size = _fallback_norms->GetPosition(); size != 0) {
+      bytes = _allocator->Allocate(size);
+      std::memcpy(bytes.get(), _fallback_norms->GetData(), size);
+      _out->WriteData(bytes.get(), size);
+    }
+    _fallback_norms.reset();
+    return OpenNormBytes(std::move(bytes));
+  }
+  if (duckdb::DatabaseFileSystem::IsRemote(_out->path)) {
+    auto file = _out->Input();
+    SDB_ASSERT(file);
+    return file;
+  }
+  if (_out->Position() == 0) {
+    return OpenNormBytes({});
+  }
+  _out->Flush();
+  return _tracker.Fs().OpenInputFile(_out->path,
+                                     duckdb::MappedFileAccess::RANDOM);
+}
+
 duckdb::WriteStream& IdxWriter::BlocksOut() {
   EnsureOut();
   return *_out;
@@ -82,7 +134,7 @@ void IdxWriter::SetTerms(term_dict::TermsMeta terms) noexcept {
 
 bool IdxWriter::Empty() const noexcept {
   return _footer.ivf.empty() && _footer.hnsw.empty() &&
-         _footer.terms.fields.empty();
+         _footer.terms.fields.empty() && _footer.norms.empty();
 }
 
 std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
@@ -135,6 +187,7 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
                                [&](duckdb::BinarySerializer& terms) {
                                  term_dict::WriteTerms(terms, written.terms);
                                });
+    WriteNormSpecs(footer, kIdxFieldNorms, written.norms);
   });
   _tracker.Written(_out->Position());
   auto file = format_utils::CloseOutput(*_out);

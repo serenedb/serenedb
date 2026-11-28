@@ -31,7 +31,6 @@
 #include "iresearch/analysis/numeric_terms.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/field_sink.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -65,12 +64,13 @@ class FieldInverter : util::Noncopyable {
 
   FieldInverter(field_id id, duckdb::ArenaAllocator& arena, TermIds term_ids,
                 IResourceManager& rm, IndexFeatures index_features,
-                ColWriter* col_writer, const IndexFieldOptions* field_options)
+                NormColumnsWriter* norms,
+                const IndexFieldOptions* field_options)
     : _term_ids{term_ids},
       _dict{arena, rm},
       _log{MakePostingLog(arena, rm, LayoutFromFeatures(index_features))},
       _meta{id, index_features} {
-    if (!col_writer || !IsSubsetOf(IndexFeatures::Norm, index_features)) {
+    if (!norms || !IsSubsetOf(IndexFeatures::Norm, index_features)) {
       return;
     }
     SDB_ENSURE(field_options,
@@ -78,7 +78,7 @@ class FieldInverter : util::Noncopyable {
     const auto norm_id = field_options->GetNormColumnId(id);
     SDB_ENSURE(field_limits::valid(norm_id),
                "GetNormColumnId must return a valid id for field ", id);
-    _col_writer = col_writer;
+    _norms = norms;
     _norm_row_group_size = field_options->row_group_size;
     _meta.norm = norm_id;
   }
@@ -560,7 +560,7 @@ class FieldInverter : util::Noncopyable {
       const auto n = values.size();
       auto* const ids = ResolveTerms(values.data(), n);
       if constexpr (LogT::kLayout == TokenLayout::Terms) {
-        if (!_col_writer) {
+        if (!_norms) {
           CaptureKeywordTerms(log, ids, n, doc_at);
           return true;
         }
@@ -633,7 +633,7 @@ class FieldInverter : util::Noncopyable {
   IRS_FORCE_INLINE void CaptureKeywordTerms(Log& log, const uint32_t* ids,
                                             size_t n, DocAt doc_at) {
     static_assert(Log::kLayout == TokenLayout::Terms);
-    SDB_ASSERT(!_col_writer);
+    SDB_ASSERT(!_norms);
     for (size_t j = 0; j < n; ++j) {
       const doc_id_t doc = doc_at(j);
       SDB_ASSERT(doc < doc_limits::eof());
@@ -686,12 +686,11 @@ class FieldInverter : util::Noncopyable {
   }
 
   void FinalizeNorm() {
-    if (!_col_writer || !doc_limits::valid(_state.last_doc)) {
+    if (!_norms || !doc_limits::valid(_state.last_doc)) {
       return;
     }
     if (!_norm_writer) {
-      _norm_writer =
-        &_col_writer->OpenNormColumn(_meta.norm, _norm_row_group_size);
+      _norm_writer = &_norms->Open(_meta.norm, _norm_row_group_size);
     }
     _norm_writer->Append(
       static_cast<uint64_t>(_state.last_doc) - doc_limits::min(),
@@ -743,7 +742,7 @@ class FieldInverter : util::Noncopyable {
   TermIds _term_ids;
   TermDictionary _dict;
   PostingLogVariant _log;
-  ColWriter* _col_writer = nullptr;
+  NormColumnsWriter* _norms = nullptr;
   NormColumnWriter* _norm_writer = nullptr;
   uint32_t _norm_row_group_size = 0;
   FieldMeta _meta;
@@ -850,7 +849,9 @@ class FieldsInverter : util::Noncopyable {
       _terms{ManagedTypedAllocator<TermMember>{mem.rm}},
       _docs{ManagedTypedAllocator<ManagedVector<doc_id_t>>{mem.rm}} {}
 
-  void SetColWriter(ColWriter* w) noexcept { _col_writer = w; }
+  void SetNormColumnsWriter(NormColumnsWriter* norms) noexcept {
+    _norms = norms;
+  }
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept {
     _field_options = field_options;
   }
@@ -864,9 +865,8 @@ class FieldsInverter : util::Noncopyable {
       return member.field;
     }
 
-    auto& field =
-      _fields.emplace_back(id, _arena, _term_ids, _mem.rm, index_features,
-                           _col_writer, _field_options);
+    auto& field = _fields.emplace_back(id, _arena, _term_ids, _mem.rm,
+                                       index_features, _norms, _field_options);
     member.field = &field;
     if (member.last_terms) {
       field.ReserveTerms(member.last_terms);
@@ -953,7 +953,7 @@ class FieldsInverter : util::Noncopyable {
   TermMembers _terms;
   DocMembers _docs;
   FieldsMap _fields_map;
-  ColWriter* _col_writer = nullptr;
+  NormColumnsWriter* _norms = nullptr;
   const IndexFieldOptions* _field_options = nullptr;
 };
 

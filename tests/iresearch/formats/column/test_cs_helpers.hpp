@@ -32,7 +32,10 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/norm_writer.hpp>
 #include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
+#include <iresearch/formats/index/idx_writer.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -86,6 +89,21 @@ inline bool NullsInData(const ColumnReader& column) {
            codecs::CompressionValidity::NoValidityRequired;
   });
 }
+
+class NormsFile {
+ public:
+  NormsFile(const ::tests::IndexDir& dir, std::string_view segment_name);
+
+  NormColumnsWriter& Writer() noexcept { return _writer; }
+
+  std::unique_ptr<IdxReader> Commit(uint64_t rows) &&;
+
+ private:
+  const ::tests::IndexDir& _dir;
+  std::string _segment_name;
+  IdxWriter _idx;
+  NormColumnsWriter& _writer;
+};
 
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per

@@ -95,9 +95,6 @@ struct SubReader final : irs::SubReader {
     return {};
   }
   std::span<const irs::field_id> field_ids() const noexcept final { return {}; }
-  irs::NormReader::ptr norms(irs::field_id field) const final {
-    return nullptr;
-  }
 
   irs::SegmentInfo info;
 };

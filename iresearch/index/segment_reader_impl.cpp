@@ -31,7 +31,6 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
-#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
@@ -127,11 +126,12 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
   const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns,
-  std::shared_ptr<const PieceFields> fields) {
+  std::unique_ptr<IdxReader> norms, std::shared_ptr<const PieceFields> fields) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
   reader->_readers = std::make_shared<Readers>();
   reader->_readers->col_reader = std::move(columns);
+  reader->_readers->idx_reader = std::move(norms);
   reader->_pieces = std::move(fields);
   return reader;
 }
@@ -193,15 +193,9 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
   return reader;
 }
 
-NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  if (!_readers) {
-    return {};
-  }
-  const auto* nc = _readers->col_reader->NormColumn(field);
-  if (!nc) {
-    return {};
-  }
-  return MakePersistedNormReader(*nc);
+const NormColumns& SegmentReaderImpl::Norms() const {
+  const auto* idx = _readers->Idx();
+  return idx ? idx->Norms() : SubReader::Norms();
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {

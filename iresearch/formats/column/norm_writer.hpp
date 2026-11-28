@@ -20,14 +20,20 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <cstdint>
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
-#include <functional>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <limits>
+#include <memory>
 #include <span>
 #include <vector>
 
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 
@@ -101,11 +107,13 @@ inline uint64_t NormTableSize(const NormRegionMeta& region) noexcept {
          kNormValueSlack;
 }
 
+void WriteNormSpecs(duckdb::BinarySerializer& out, duckdb::field_id_t field,
+                    std::span<const NormColumnSpec> columns);
+
 class NormColumnWriter final {
  public:
-  using Open = std::function<duckdb::WriteStream&()>;
-
-  NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
+  NormColumnWriter(field_id id, uint32_t row_group_size,
+                   duckdb::WriteStream& out);
 
   NormColumnWriter(const NormColumnWriter&) = delete;
   NormColumnWriter& operator=(const NormColumnWriter&) = delete;
@@ -141,8 +149,7 @@ class NormColumnWriter final {
   uint32_t Escape(uint64_t row, uint32_t value);
 
   field_id _id;
-  duckdb::WriteStream* _out = nullptr;
-  Open _open;
+  duckdb::WriteStream* _out;
   uint32_t _row_group_size;
   NormColumnMeta _meta;
   std::vector<uint32_t> _values;
@@ -153,6 +160,38 @@ class NormColumnWriter final {
   std::vector<uint32_t> _overflow_rows;
   std::vector<uint32_t> _overflow_values;
   std::vector<byte_type> _staging;
+};
+
+struct SealedNorms {
+  duckdb::shared_ptr<duckdb::InputFile> file;
+  std::vector<NormColumnSpec> columns;
+};
+
+duckdb::shared_ptr<duckdb::InputFile> OpenNormBytes(
+  duckdb::AllocatedData bytes);
+
+class NormColumnsWriter final {
+ public:
+  explicit NormColumnsWriter(
+    absl::AnyInvocable<duckdb::WriteStream&()> open) noexcept
+    : _open{std::move(open)} {}
+
+  NormColumnsWriter(const NormColumnsWriter&) = delete;
+  NormColumnsWriter& operator=(const NormColumnsWriter&) = delete;
+
+  NormColumnWriter& Open(field_id id, uint32_t row_group_size);
+
+  NormColumnWriter& Stream(field_id id);
+
+  std::vector<NormColumnSpec> Seal(uint64_t rows) &&;
+
+ private:
+  NormColumnWriter& Add(field_id id, uint32_t row_group_size);
+
+  absl::AnyInvocable<duckdb::WriteStream&()> _open;
+  duckdb::WriteStream* _out = nullptr;
+  std::vector<std::unique_ptr<NormColumnWriter>> _columns;
+  containers::FlatHashMap<field_id, NormColumnWriter*> _by_id;
 };
 
 }  // namespace irs

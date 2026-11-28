@@ -52,8 +52,6 @@ class Segment final : public irs::SubReader {
     return {};
   }
 
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
-
  private:
   irs::SegmentInfo _meta;
 };

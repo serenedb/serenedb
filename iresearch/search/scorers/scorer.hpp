@@ -33,6 +33,7 @@
 #include <span>
 #include <type_traits>
 
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/detail/stats_arena.hpp"
@@ -51,7 +52,6 @@ namespace irs {
 struct IndexReader;
 struct SubReader;
 struct ScorerOptions;
-struct NormProvider;
 struct TermReader;
 class ColumnArgsFetcher;
 
@@ -100,7 +100,7 @@ struct ScoreBoundWriter {
 
   virtual ~ScoreBoundWriter() = default;
 
-  virtual bool Prepare(const NormProvider& norms, const FieldProperties& field,
+  virtual bool Prepare(const NormColumns& norms, const FieldProperties& field,
                        bool has_freq) = 0;
 
   virtual void Reset() = 0;
@@ -115,7 +115,7 @@ struct ScoreBoundWriter {
 };
 
 struct ScoreContext {
-  const NormProvider& segment;
+  const NormColumns& norms;
   const FieldProperties& field;
   const AttributeProvider& doc_attrs;
   ColumnArgsFetcher& fetcher;

@@ -63,9 +63,10 @@
 #include <iresearch/formats/column/norm_writer.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
 #include <iresearch/formats/format_utils.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
-#include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/column_extract.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -366,7 +367,6 @@ class MergedSegment final : public irs::SubReader {
   std::span<const irs::TermReader* const> fields(irs::field_id) const final {
     return {};
   }
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
 
  private:
   irs::SegmentInfo _meta;
@@ -5449,72 +5449,45 @@ TEST_F(ColumnReaderTest, FooterBlocksOutsideTheFileAreRefusedAsCorrupted) {
   });
 }
 
-void WriteNormRegion(duckdb::BinarySerializer& s,
-                     const irs::NormRegionMeta& r) {
-  s.WriteProperty(0, "rows", r.stats.rows);
-  s.WriteProperty(1, "sum", r.stats.sum);
-  s.WriteProperty(2, "non_zero", r.stats.non_zero);
-  s.WriteProperty(3, "wide8", r.stats.wide8);
-  s.WriteProperty(4, "wide16", r.stats.wide16);
-  s.WriteProperty(5, "min", r.stats.min);
-  s.WriteProperty(6, "max", r.stats.max);
-  s.WriteProperty(7, "bits", r.bits);
-  if (r.bits == 0) {
-    s.WriteProperty(8, "value", r.value);
-    return;
-  }
-  s.WriteProperty(9, "file_offset", r.file_offset);
-  s.WritePropertyWithDefault<uint32_t>(10, "exceptions", r.exceptions, 0);
-  if (r.exceptions != 0) {
-    s.WriteProperty(11, "overflow", r.overflow);
-    s.WriteProperty(12, "shift", r.shift);
-    s.WriteProperty(13, "exception_bytes", r.exception_bytes);
-    s.WriteProperty(14, "table_offset", r.table_offset);
-  }
-}
-
 void OpenWithFooter(duckdb::DatabaseInstance& db, std::string_view error,
                     const std::vector<irs::NormColumnSpec>& norms,
                     const std::vector<uint64_t>& starts) {
   constexpr size_t kData = 8192;
+  const std::string data(kData, '\0');
   tests::IndexDir dir{db, TestEnv::MemoryRoot()};
-  {
-    auto out = dir.Create(irs::FileName("nseg"));
-    const std::string data(kData, '\0');
+  const auto write = [&](std::string_view name, const auto& fields) {
+    auto out = dir.Create(name);
     out->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
                    data.size());
-    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
-      footer.WriteOptionalList(
-        irs::kColFieldNormColumns, "norm_columns", norms.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            obj.WriteProperty(0, "id", static_cast<uint64_t>(norms[i].id));
-            obj.WriteList(
-              1, "regions", norms[i].meta.regions.size(),
-              [&](duckdb::BinarySerializer::List& regions, duckdb::idx_t k) {
-                regions.WriteObject([&](duckdb::BinarySerializer& region) {
-                  WriteNormRegion(region, norms[i].meta.regions[k]);
-                });
-              });
-          });
-        });
-      footer.WriteOptionalList(
-        irs::kColFieldRowGroupStarts, "row_group_starts", starts.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteElement(starts[i]);
-        });
-    });
+    irs::format_utils::WriteFooter(*out, fields);
     out->Close();
-  }
+  };
+  write(irs::FileName("nseg", irs::kIdxFormatExt),
+        [&](duckdb::BinarySerializer& footer) {
+          irs::WriteNormSpecs(footer, irs::kIdxFieldNorms, norms);
+        });
+  write(irs::FileName("nseg"), [&](duckdb::BinarySerializer& footer) {
+    footer.WriteOptionalList(
+      irs::kColFieldRowGroupStarts, "row_group_starts", starts.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        list.WriteElement(starts[i]);
+      });
+  });
+  const auto open = [&] {
+    auto idx = std::make_unique<irs::IdxReader>(
+      dir.Fs(), dir.Root(), "nseg", /*present=*/true, /*hnsw_bases=*/nullptr);
+    irs::tests::OpenColReader(dir, "nseg");
+    return idx;
+  };
   if (error.empty()) {
-    const irs::ColReader r = irs::tests::OpenColReader(dir, "nseg");
+    const auto idx = open();
     for (const auto& norm : norms) {
-      EXPECT_NE(r.NormColumn(norm.id), nullptr);
+      EXPECT_NE(idx->Norms().Column(norm.id), nullptr);
     }
     return;
   }
   try {
-    irs::tests::OpenColReader(dir, "nseg");
+    open();
     ADD_FAILURE() << "a footer with " << error << " was accepted";
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED);
@@ -6051,42 +6024,6 @@ TEST_F(ColumnReaderTest, DistinctStatistics) {
   EXPECT_GT(sampled->sample_count.load(), 0);
   EXPECT_LT(sampled->sample_count.load(), kRows);
   EXPECT_TRUE(in_band(sampled->GetCount())) << sampled->GetCount();
-}
-
-// Norm column: per-doc uint32 FTS norm, bit-packed per row group, with sparse
-// docs (gaps zero-padded to target_row), across multiple row groups.
-TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
-  constexpr uint64_t kDocs = 5000;
-  constexpr uint32_t kRgSize = 1024;
-  constexpr irs::field_id kN = 50;
-
-  auto has_norm = [](uint64_t d) { return d % 3 == 0; };
-  auto norm_val = [](uint64_t d) { return static_cast<uint32_t>(d * 13 + 1); };
-
-  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  {
-    irs::ColWriter w{Db(), dir.Tracker("seg")};
-    auto& nw = w.OpenNormColumn(kN, kRgSize);
-    for (uint64_t d = 0; d < kDocs; ++d) {
-      if (has_norm(d)) {
-        nw.Append(d, norm_val(d));
-      }
-    }
-    w.Commit(kDocs);
-  }
-
-  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
-  const auto* nr = r.NormColumn(kN);
-  ASSERT_NE(nr, nullptr);
-  ASSERT_EQ(nr->RowCount(), kDocs);
-  const auto reader = irs::MakePersistedNormReader(*nr);
-  for (uint64_t d = 0; d < kDocs; ++d) {
-    const auto expected = has_norm(d) ? norm_val(d) : 0u;
-    EXPECT_EQ(
-      reader->Get(static_cast<irs::doc_id_t>(d + irs::doc_limits::min())),
-      expected)
-      << "doc " << d;
-  }
 }
 
 // BlobPointReader: point-read raw bytes of a BLOB column (incl null rows),

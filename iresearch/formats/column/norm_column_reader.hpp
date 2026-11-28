@@ -23,13 +23,17 @@
 #include <absl/base/internal/endian.h>
 
 #include <cstdint>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/storage/external_file_cache/external_file_cache.hpp>
+#include <memory>
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -151,6 +155,28 @@ class NormColumnReader final {
   uint64_t _non_zero = 0;
   size_t _pages = 0;
   bool _paged = false;
+};
+
+std::vector<NormColumnSpec> ReadNormSpecs(duckdb::BinaryDeserializer& in,
+                                          duckdb::field_id_t field,
+                                          uint64_t data_size);
+
+class NormColumns final {
+ public:
+  NormColumns() = default;
+  NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
+              std::span<const NormColumnSpec> columns);
+
+  const NormColumnReader* Column(field_id id) const noexcept {
+    const auto it = _columns.find(id);
+    return it == _columns.end() ? nullptr : it->second.get();
+  }
+
+  NormReader::ptr Reader(field_id field) const;
+
+ private:
+  duckdb::shared_ptr<duckdb::InputFile> _file;
+  containers::FlatHashMap<field_id, std::unique_ptr<NormColumnReader>> _columns;
 };
 
 }  // namespace irs

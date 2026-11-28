@@ -21,14 +21,18 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/buffered_file_writer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
@@ -44,6 +48,10 @@ class IdxWriter final {
   IdxWriter(const IdxWriter&) = delete;
   IdxWriter& operator=(const IdxWriter&) = delete;
 
+  NormColumnsWriter& Norms(duckdb::Allocator& allocator);
+
+  SealedNorms SealNorms(uint64_t rows);
+
   duckdb::WriteStream& BlocksOut();
 
   void AddIvf(field_id id, IvfCentroidMeta meta);
@@ -56,12 +64,17 @@ class IdxWriter final {
 
  private:
   void EnsureOut();
+  duckdb::WriteStream& NormsOut();
+  duckdb::shared_ptr<duckdb::InputFile> ReadNorms();
   bool Empty() const noexcept;
 
   FileTracker& _tracker;
   std::string _filename;
   std::unique_ptr<duckdb::BufferedFileWriter> _out;
   IdxFooter _footer;
+  duckdb::Allocator* _allocator = nullptr;
+  std::optional<duckdb::MemoryStream> _fallback_norms;
+  std::optional<NormColumnsWriter> _norms;
 };
 
 }  // namespace irs

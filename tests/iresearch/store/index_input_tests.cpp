@@ -29,6 +29,7 @@
 #include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <future>
 #include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/store/bytes_mapping.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <thread>
@@ -269,6 +270,18 @@ TEST_F(IndexInputTest, checked_cursor_over_bytes_stops_at_their_end) {
   EXPECT_THROW(in.Read<int32_t>(), duckdb::DataCorruptionException);
   in.Seek(5);
   EXPECT_THROW(in.Read<irs::byte_type>(), duckdb::DataCorruptionException);
+}
+
+TEST(BytesMappingTest, read_only_memory_stays_readable) {
+  const irs::bstring bytes{irs::byte_type{1}, irs::byte_type{2},
+                           irs::byte_type{3}};
+  irs::BytesMapping mapping{irs::bytes_view{bytes}};
+  EXPECT_FALSE(mapping.OnDiskFile());
+  EXPECT_FALSE(mapping.Trim(0, bytes.size()));
+  mapping.Sync();
+  mapping.Close();
+  EXPECT_EQ(irs::bytes_view(mapping.GetData(0, bytes.size()), bytes.size()),
+            irs::bytes_view{bytes});
 }
 
 }  // namespace

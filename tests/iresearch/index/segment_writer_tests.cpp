@@ -77,6 +77,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     }
 
     ASSERT_LT(0, writer->memory_active());
+    ASSERT_LE(writer->memory_active(), writer->memory_reserved());
 
     writer->reset();
 

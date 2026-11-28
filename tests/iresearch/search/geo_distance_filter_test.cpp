@@ -59,10 +59,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
 
   struct Scorer : public irs::ScoreOperator {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
-      : document_attrs(ctx.doc_attrs),
-        stats(ctx.stats),
-        segment_reader(ctx.segment),
-        sort(sort) {}
+      : document_attrs(ctx.doc_attrs), stats(ctx.stats), sort(sort) {}
 
     template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
     void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
@@ -86,7 +83,6 @@ struct CustomSort final : public irs::ScorerBase<void> {
 
     const irs::AttributeProvider& document_attrs;
     const irs::byte_type* stats;
-    const irs::NormProvider& segment_reader;
     const CustomSort& sort;
   };
 

@@ -40,7 +40,6 @@ struct EmptyDocs final : lead::Node {
 EmptyDocs kEmptyDocs;
 
 struct EmptySubReader final : SubReader {
-  NormReader::ptr norms(field_id) const final { return {}; }
   const SegmentInfo& Meta() const final { return kEmptyInfo; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   lead::Node::ptr docs_iterator() const final {
@@ -55,6 +54,11 @@ const EmptySubReader kEmpty;
 }  // namespace
 
 const SubReader& SubReader::empty() noexcept { return kEmpty; }
+
+const NormColumns& SubReader::Norms() const {
+  static const NormColumns kNone;
+  return kNone;
+}
 
 #ifdef SDB_DEV
 IResourceManager IResourceManager::gForbidden;

@@ -28,6 +28,8 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/formats/format_utils.hpp>
+#include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -64,6 +66,21 @@ uint64_t ColFileId(ColReader& reader, const ColumnReader& col) {
   ReadContext ctx{reader};
   const auto segment = col.OpenSegment(col.Locate(0, BlockWindow{}).block, ctx);
   return segment->cache_slot.file_id;
+}
+
+NormsFile::NormsFile(const ::tests::IndexDir& dir,
+                     std::string_view segment_name)
+  : _dir{dir},
+    _segment_name{segment_name},
+    _idx{dir.Tracker(segment_name)},
+    _writer{_idx.Norms(duckdb::Allocator::DefaultAllocator())} {}
+
+std::unique_ptr<IdxReader> NormsFile::Commit(uint64_t rows) && {
+  _idx.SealNorms(rows);
+  _idx.Commit(/*hnsw_bases=*/nullptr);
+  return std::make_unique<IdxReader>(
+    _dir.Fs(), _dir.Root(), _segment_name,
+    _dir.Has(FileName(_segment_name, kIdxFormatExt)), /*hnsw_bases=*/nullptr);
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

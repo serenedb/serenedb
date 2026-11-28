@@ -24,9 +24,12 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
@@ -142,9 +145,7 @@ void NormTestCase::AssertNormColumn(
   ASSERT_EQ(id, meta.id);
   ASSERT_TRUE(irs::field_limits::valid(meta.norm));
 
-  const auto* cs = segment.GetColReader();
-  ASSERT_NE(nullptr, cs);
-  const auto* column = cs->NormColumn(meta.norm);
+  const auto* column = segment.Norms().Column(meta.norm);
   ASSERT_NE(nullptr, column);
   ASSERT_EQ(meta.norm, column->Id());
 
@@ -324,7 +325,7 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
   const auto assert_escaped = [&](const irs::SubReader& segment) {
     const auto* field = segment.field(FieldIdFor(kName));
     ASSERT_NE(nullptr, field);
-    const auto* column = segment.GetColReader()->NormColumn(field->meta().norm);
+    const auto* column = segment.Norms().Column(field->meta().norm);
     ASSERT_NE(nullptr, column);
     bool exceptions = false;
     for (size_t r = 0; r < column->RegionCount(); ++r) {
@@ -1076,5 +1077,20 @@ static constexpr auto kTestDirs = tests::kDirParams;
 INSTANTIATE_TEST_SUITE_P(NormTest, NormTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          NormTestCase::to_string);
+
+TEST(NormReaderTest, ReadersWithoutAnInvertedIndexHaveNoNorms) {
+  EXPECT_EQ(nullptr, irs::SubReader::empty().Norms().Column(1));
+
+  irs::SegmentMeta meta;
+  meta.docs_count = 1;
+  meta.live_docs_count = 1;
+  const auto rows = irs::SegmentReaderImpl::OpenInMemory(
+    meta, /*id=*/1,
+    std::make_unique<irs::ColReader>(
+      irs::DuckDBEngine::Instance().instance(),
+      std::vector<std::unique_ptr<irs::ColumnReader>>{}));
+  EXPECT_EQ(nullptr, rows->Norms().Column(1));
+  EXPECT_FALSE(rows->Norms().Reader(1));
+}
 
 }  // namespace

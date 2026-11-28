@@ -28,6 +28,7 @@
 #include <string_view>
 #include <utility>
 
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -77,6 +78,7 @@ inline constexpr std::string_view kIdxFormatExt = "idx";
 inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
+inline constexpr duckdb::field_id_t kIdxFieldNorms = 4;
 
 inline constexpr duckdb::field_id_t kHnswMetaGraphCompression = 10;
 inline constexpr duckdb::field_id_t kHnswGraphLevels = 0;
@@ -97,6 +99,7 @@ struct IdxFooter {
   std::vector<IvfCentroidEntry> ivf;
   std::vector<HnswEntry> hnsw;
   term_dict::TermsMeta terms;
+  std::vector<NormColumnSpec> norms;
 };
 
 class IdxReader final {
@@ -105,12 +108,18 @@ class IdxReader final {
             std::string_view segment_name, bool present, HnswBases* hnsw_bases);
   IdxReader(duckdb::shared_ptr<duckdb::InputFile> file, IdxFooter footer,
             HnswBases* hnsw_bases);
+  explicit IdxReader(SealedNorms norms)
+    : IdxReader{std::move(norms.file),
+                IdxFooter{.norms = std::move(norms.columns)},
+                /*hnsw_bases=*/nullptr} {}
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
   IdxReader& operator=(const IdxReader&) = delete;
 
   const AnnIndex* Ann(field_id id) const noexcept;
+
+  const NormColumns& Norms() const noexcept { return _norms; }
 
   term_dict::TermsMeta TakeTerms() noexcept {
     return std::exchange(_terms, {});
@@ -124,6 +133,7 @@ class IdxReader final {
   duckdb::shared_ptr<duckdb::InputFile> _file;
   containers::FlatHashMap<field_id, std::unique_ptr<AnnIndex>> _anns;
   term_dict::TermsMeta _terms;
+  NormColumns _norms;
 };
 
 }  // namespace irs

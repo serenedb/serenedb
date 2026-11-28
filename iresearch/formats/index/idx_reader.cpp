@@ -132,6 +132,7 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
         kIdxFieldTerms, "terms", [&](duckdb::BinaryDeserializer& terms) {
           footer.terms = term_dict::ReadTerms(terms, data_size);
         });
+      footer.norms = ReadNormSpecs(in, kIdxFieldNorms, data_size);
     });
   Adopt(std::move(footer), hnsw_bases);
 }
@@ -159,6 +160,7 @@ void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
   SDB_ASSERT(footer.ivf.empty() && footer.hnsw.empty());
 #endif
   _terms = std::move(footer.terms);
+  _norms = NormColumns{_file, footer.norms};
 }
 
 IdxReader::~IdxReader() = default;

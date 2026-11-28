@@ -83,7 +83,7 @@ inline std::optional<score_t> ConstantOf(const SubReader& segment,
     return score_t{0};
   }
   if (const auto value = args.scorer->Constant({
-        .segment = segment,
+        .norms = segment.Norms(),
         .field = field.meta(),
         .doc_attrs = NoAttributes(),
         .fetcher = *args.fetcher,
@@ -118,7 +118,7 @@ inline score_t ConstantTermOf(const SubReader& segment, const TermReader& field,
     return 0;
   }
   if (const auto value = args.scorer->Constant({
-        .segment = segment,
+        .norms = segment.Norms(),
         .field = field.meta(),
         .doc_attrs = NoAttributes(),
         .fetcher = *args.fetcher,

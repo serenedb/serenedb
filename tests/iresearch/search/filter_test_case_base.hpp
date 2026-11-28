@@ -104,7 +104,7 @@ class ScoredWrapper : public irs::lead::Node {
 
   irs::ScoreFunction PrepareScore() final {
     return _record.scorer->PrepareScorer({
-      .segment = _segment,
+      .norms = _segment.Norms(),
       .field = {},
       .doc_attrs = _provider,
       .fetcher = *_ctx.fetcher,

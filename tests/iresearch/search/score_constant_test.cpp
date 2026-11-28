@@ -434,7 +434,7 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   uint32_t one = 1;
   provider.freq.value = &one;
   auto expected = scorer->PrepareScorer({
-    .segment = segment,
+    .norms = segment.Norms(),
     .field = reader->meta(),
     .doc_attrs = provider,
     .fetcher = fetcher,

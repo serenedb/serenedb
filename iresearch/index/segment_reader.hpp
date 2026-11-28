@@ -63,7 +63,7 @@ class SegmentReader final : public SubReader {
   std::span<const TermReader* const> fields(field_id id) const final;
   std::span<const field_id> field_ids() const final;
 
-  NormReader::ptr norms(field_id field) const final;
+  const NormColumns& Norms() const final;
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;

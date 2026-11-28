@@ -1384,10 +1384,6 @@ struct BoundAttrs final : irs::AttributeProvider {
   irs::Norm norm;
 };
 
-struct NoNorms final : irs::NormProvider {
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
-};
-
 struct Pair {
   uint32_t tf;
   uint32_t dl;
@@ -1419,9 +1415,9 @@ irs::score_t ScoreAt(const Scorer& scorer, const irs::byte_type* stats,
                      BoundAttrs& attrs, uint32_t tf, uint32_t dl) {
   attrs.freq = tf;
   attrs.norm.value = dl;
-  const NoNorms segment;
+  const irs::NormColumns norms;
   irs::ColumnArgsFetcher fetcher;
-  auto fn = scorer.PrepareScorer({.segment = segment,
+  auto fn = scorer.PrepareScorer({.norms = norms,
                                   .field = {},
                                   .doc_attrs = attrs,
                                   .fetcher = fetcher,

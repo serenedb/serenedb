@@ -41,8 +41,6 @@
 
 namespace irs {
 
-class NormColumnReader;
-
 struct SegmentInputs {
   std::unique_ptr<ColReader> col;
   std::unique_ptr<IdxReader> idx;
@@ -82,6 +80,7 @@ class SegmentReaderImpl final : public SubReader {
 
   static std::shared_ptr<const SegmentReaderImpl> OpenPiece(
     const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns,
+    std::unique_ptr<IdxReader> norms,
     std::shared_ptr<const PieceFields> fields);
 
   std::shared_ptr<const SegmentReaderImpl> WithDocsMask(
@@ -128,8 +127,7 @@ class SegmentReaderImpl final : public SubReader {
     return _field_reader->field_ids();
   }
 
-  NormReader::ptr norms(field_id field) const final;
-
+  const NormColumns& Norms() const final;
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
   const ColReader* GetColReader() const final {

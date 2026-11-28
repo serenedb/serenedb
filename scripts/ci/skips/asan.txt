@@ -1,4 +1,4 @@
-recovery:recovery/online_create_index_concurrent_dml.test	issue	the server closes every connection during an online CREATE INDEX parked mid-build (issue pending, see PR Findings)
+recovery:recovery/online_create_index_concurrent_dml.test	issue	the server closes every connection during an online CREATE INDEX parked mid-build (#2470)
 duckdb:core:test/optimizer/partitioned_execution.test_slow	slow	takes 4 min under asan; dev runs it
 duckdb:core:test/parquet/variant/variant_roundtrip.test_slow	slow	takes 4 min under asan; dev runs it
 duckdb:core:test/sql/aggregate/aggregates/aggregate_state_spilling.test_slow	slow	takes 8 min under asan; dev runs it

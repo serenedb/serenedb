@@ -108,6 +108,8 @@ class SegmentReaderImpl final : public SubReader {
   std::span<const FieldPatch> Patches() const noexcept { return _patches; }
 
   void OpenFiles() const;
+  bool FilesOpened() const noexcept { return _parts->Opened(); }
+  bool Remote() const noexcept { return _parts->Remote(); }
 
   lead::Node::ptr docs_iterator() const final;
 
@@ -152,6 +154,10 @@ class SegmentReaderImpl final : public SubReader {
 
     const ColReader& Columns() const;
     const Index* GetIndex() const;
+    bool Opened() const noexcept {
+      return _columns_once.Done() && _index_once.Done();
+    }
+    bool Remote() const noexcept { return _remote; }
 
    private:
     void PrepareFields(Index& index, PostingsInputs* postings) const;
@@ -162,6 +168,7 @@ class SegmentReaderImpl final : public SubReader {
     SegmentMeta _meta;
     HnswBases* _hnsw_bases = nullptr;
     bool _indexed = false;
+    bool _remote = false;
     mutable BlockingOnce _columns_once;
     mutable std::unique_ptr<ColReader> _columns;
     mutable BlockingOnce _index_once;

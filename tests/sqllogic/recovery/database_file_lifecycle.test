@@ -108,7 +108,7 @@ count
 
 connection after_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*'))
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
        - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files') AS orphans;
 ----
 orphans
@@ -135,7 +135,7 @@ dbfile_keep
 
 connection after_drop_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*'))
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
        - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files') AS orphans;
 ----
 orphans

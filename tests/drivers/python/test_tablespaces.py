@@ -109,7 +109,7 @@ def _matches(server: _Server) -> list[int]:
 
 def _directory(location: Path) -> Path:
     [directory] = location.iterdir()
-    return directory / "engine_v2"
+    return directory / "engine_v1"
 
 
 def _refused(datadir: Path) -> str:
@@ -199,7 +199,7 @@ def test_a_database_in_a_tablespace_keeps_its_objects_there(
                 "notes_other": "other", "in_default": "pg_default"}
             in_home = _directory(home) / "store"
             in_other = _directory(other) / "store"
-            in_default = datadir / "engine_v2" / "store"
+            in_default = datadir / "engine_v1" / "store"
             for store, placed in ((in_home, ["docs", "notes"]),
                                   (in_other, ["notes_other"]),
                                   (in_default, ["in_default"])):
@@ -278,7 +278,7 @@ def test_a_database_in_a_tablespace_needs_create_on_it(
                 conn.execute("CREATE DATABASE placed TABLESPACE home")
     finally:
         server.stop()
-    assert not list(home.glob("*/engine_v2/store/*"))
+    assert not list(home.glob("*/engine_v1/store/*"))
 
 
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
@@ -443,7 +443,7 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
         assert _matches(server) == [1, 3]
     finally:
         server.stop()
-    assert not any((datadir / "engine_v2" / "store").iterdir()), list(
+    assert not any((datadir / "engine_v1" / "store").iterdir()), list(
         datadir.rglob("*"))
 
     again = _Server(datadir)

@@ -180,10 +180,6 @@ DataDirectory::DataDirectory(std::string directory_p)
              ? std::string{}
              : duckdb::FileSystem::JoinPath(directory, kEngineDir)} {}
 
-bool DataDirectory::EarlierLayout(duckdb::FileSystem& fs) const {
-  return fs.DirectoryExists(fs.JoinPath(directory, kEarlierEngineDir));
-}
-
 std::string DataDirectory::LogDir() const {
   return duckdb::FileSystem::JoinPath(engine, kLogDir);
 }
@@ -223,7 +219,7 @@ void InitCatalog(bool default_database, bool initialized) {
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
   if (!layout.InMemory()) {
-    if (layout.EarlierLayout(StorageFileSystem())) {
+    if (Log::IsEarlierFormat(StorageFileSystem(), layout.LogDir())) {
       SDB_FATAL(STARTUP, "'", layout.directory,
                 "' was written with an earlier layout of the data directory, "
                 "which this build cannot read");

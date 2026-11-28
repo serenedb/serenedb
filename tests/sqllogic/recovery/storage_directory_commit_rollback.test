@@ -19,7 +19,7 @@ CREATE TABLE sdl_oids (name TEXT, oid BIGINT);
 
 statement ok
 CREATE MACRO sdl_unowned() AS (
-  (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*'))
+  (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
   - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files'));
 
 

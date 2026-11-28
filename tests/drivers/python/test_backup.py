@@ -517,7 +517,7 @@ def _retained_backup(tmp_path: Path) -> Path:
         source.stop()
 
     (copy / "backup_label").write_text(label)
-    chunks = sorted((copy / "engine_v2" / "backup").glob("*.log"))
+    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
     assert len(chunks) >= 2, chunks
     return copy
 
@@ -547,10 +547,10 @@ def test_backup_restores_rows_held_only_in_the_log(tmp_path: Path) -> None:
 @pytest.mark.parametrize("missing", ["oldest", "newest"])
 def test_backup_without_a_log_file_refuses_to_boot(tmp_path: Path, missing: str) -> None:
     copy = _retained_backup(tmp_path)
-    chunks = sorted((copy / "engine_v2" / "backup").glob("*.log"))
+    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
     name = (chunks[0] if missing == "oldest" else chunks[-1]).name
     for directory in ("backup", "wal"):
-        (copy / "engine_v2" / directory / name).unlink(missing_ok=True)
+        (copy / "engine_v1" / directory / name).unlink(missing_ok=True)
     restored = Serened(SERENED_BIN, datadir=str(copy),
                        log_path=str(tmp_path / "restored.log"))
     try:
@@ -718,7 +718,7 @@ def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> N
     try:
         restored.start()
         assert not _subscription_enabled(restored)
-        assert not (copy / "engine_v2" / "subscriptions.hold").exists()
+        assert not (copy / "engine_v1" / "subscriptions.hold").exists()
         _expect_one_warning(
             tmp_path / "restored.log",
             'subscription "bsub" in database "postgres" was disabled because the '

@@ -15,7 +15,7 @@ VACUUM (FLUSH_TABLE) sfd_rows;
 
 query
 SELECT regexp_extract(file, '[.]([a-z]+)$', 1) AS kind, count(*) AS files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*')
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
 GROUP BY ALL ORDER BY kind;
 ----
 kind	files
@@ -40,7 +40,7 @@ VACUUM (FLUSH_TABLE) sfd_tags;
 
 query
 SELECT regexp_extract(file, '[.]([a-z]+)$', 1) AS kind, count(*) AS files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*')
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
 GROUP BY ALL ORDER BY kind;
 ----
 kind	files
@@ -58,7 +58,7 @@ VACUUM (FLUSH_TABLE) sfd_tags;
 
 query
 SELECT regexp_extract(file, '[.]([a-z]+)$', 1) AS kind, count(*) AS files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v2/store/*')
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
 GROUP BY ALL ORDER BY kind;
 ----
 kind	files

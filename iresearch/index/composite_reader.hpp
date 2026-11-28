@@ -25,12 +25,14 @@
 
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/distinct_statistics.hpp>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
+#include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
@@ -76,6 +78,8 @@ class CompositeReader final : public IndexReader {
 
   const FieldTermRange* GetTermRange(field_id field, DictRef dict) const;
 
+  void LoadStats() const;
+
  private:
   struct ColumnStats {
     duckdb::unique_ptr<duckdb::BaseStatistics> merged;
@@ -97,21 +101,40 @@ class CompositeReader final : public IndexReader {
     FieldTermRange range;
   };
 
+  using Columns = containers::FlatHashMap<field_id, ColumnStats>;
+  using Terms = containers::NodeHashMap<std::pair<field_id, DictRef>, TermStats>;
+
+  template<typename Stats>
+  struct Lazy {
+    BlockingOnce once;
+    Stats stats;
+  };
+
   void Count() noexcept;
-  void Build();
-  void AddTerms(const SubReader& reader, bool keep_sorted);
-  void RemoveTerms(const SubReader& reader);
-  void AddColumns(const SubReader& reader, bool new_docs);
-  void RemoveColumns(const SubReader& reader);
-  void Publish();
+  const Columns* LoadedColumns() const;
+  const Terms* LoadedTerms() const;
+  Columns BuildColumns() const;
+  Terms BuildTerms() const;
+  Columns UpdateColumns(const Columns& base, uint64_t base_docs,
+                        std::span<const SegmentReader> added,
+                        std::span<const PatchedReader> patched,
+                        std::span<const SegmentReader> removed) const;
+  static Terms UpdateTerms(const Terms& base,
+                           std::span<const SegmentReader> added,
+                           std::span<const SegmentReader> removed);
+  void PublishColumns(Columns& columns) const;
+  static void PublishTerms(Terms& terms);
+  static void AddTerms(Terms& terms, const SubReader& reader, bool keep_sorted);
+  static void RemoveTerms(Terms& terms, const SubReader& reader);
+  static void AddColumns(Columns& columns, const SubReader& reader);
+  static void RemoveColumns(Columns& columns, const SubReader& reader);
 
   std::vector<SegmentReader> _readers;
   uint64_t _docs = 0;
   uint64_t _live = 0;
   uint64_t _patched = 0;
-  bool _stats = false;
-  containers::FlatHashMap<field_id, ColumnStats> _columns;
-  containers::NodeHashMap<std::pair<field_id, DictRef>, TermStats> _terms;
+  std::unique_ptr<Lazy<Columns>> _columns;
+  std::unique_ptr<Lazy<Terms>> _terms;
 };
 
 }  // namespace irs

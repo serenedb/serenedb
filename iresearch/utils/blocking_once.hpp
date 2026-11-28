@@ -31,6 +31,10 @@ namespace irs {
 
 class BlockingOnce {
  public:
+  bool Done() const noexcept {
+    return _state.load(std::memory_order_acquire) == kDone;
+  }
+
   template<typename F>
   void Call(F&& f) {
     auto state = _state.load(std::memory_order_acquire);

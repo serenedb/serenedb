@@ -69,6 +69,7 @@ constexpr size_t kRecordMaxGrowth = size_t{64} << 20;
 constexpr std::string_view kChunkSuffix = ".log";
 constexpr std::string_view kSnapshotSuffix = ".snapshot";
 constexpr std::string_view kCurrentSnapshot = "current_snapshot";
+constexpr std::string_view kEarlierSnapshot = "snapshot";
 constexpr size_t kIoBytes = size_t{1} << 20;
 constexpr uint64_t kMaxRecordBytes = std::numeric_limits<uint32_t>::max();
 
@@ -421,6 +422,10 @@ std::string Log::ChunkName(uint64_t number) {
 bool Log::Exists(duckdb::FileSystem& fs, const std::string& dir) {
   return fs.FileExists(fs.JoinPath(dir, kCurrentSnapshot)) ||
          fs.FileExists(fs.JoinPath(dir, ChunkName(0)));
+}
+
+bool Log::IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir) {
+  return fs.FileExists(fs.JoinPath(dir, kEarlierSnapshot));
 }
 
 void Log::Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply) {

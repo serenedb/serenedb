@@ -23,6 +23,7 @@
 #include "segment_reader_impl.hpp"
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/main/database_file_opener.hpp>
 #include <utility>
 #include <vector>
 
@@ -77,7 +78,8 @@ SegmentReaderImpl::Parts::Parts(duckdb::DatabaseInstance& db,
     _root{root},
     _meta{meta},
     _hnsw_bases{hnsw_bases},
-    _indexed{true} {
+    _indexed{true},
+    _remote{duckdb::DatabaseFileSystem::IsRemote(_root)} {
   _meta.docs_mask.reset();
 }
 

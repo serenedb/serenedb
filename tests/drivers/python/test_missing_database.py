@@ -80,10 +80,10 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
             conn.execute("VACUUM (FLUSH_TABLE) kept")
     finally:
         server.stop()
-    store = datadir / "engine_v2" / "store"
+    store = datadir / "engine_v1" / "store"
     files = sorted(store.iterdir())
     assert files
-    shutil.rmtree(datadir / "engine_v2" / "wal")
+    shutil.rmtree(datadir / "engine_v1" / "wal")
 
     refused = _Server(datadir)
     try:
@@ -110,7 +110,7 @@ def test_missing_segment_file(tmp_path: Path) -> None:
                 "WHERE table_name = 'docs'").fetchone()[0]
     finally:
         server.stop()
-    lost = min((datadir / "engine_v2" / "store").iterdir())
+    lost = min((datadir / "engine_v1" / "store").iterdir())
     lost.unlink()
 
     refused = _Server(datadir)
@@ -140,7 +140,7 @@ def test_a_data_directory_of_an_earlier_layout_is_refused_untouched(
             conn.execute("VACUUM (FLUSH_TABLE) docs")
     finally:
         server.stop()
-    (datadir / "engine_v2").rename(datadir / "engine_v1")
+    (datadir / "engine_v1" / "wal" / "snapshot").write_bytes(b"")
     engine = _contents(datadir / "engine_v1")
 
     refused = _Server(datadir)
@@ -152,4 +152,3 @@ def test_a_data_directory_of_an_earlier_layout_is_refused_untouched(
     finally:
         refused.stop()
     assert _contents(datadir / "engine_v1") == engine
-    assert not (datadir / "engine_v2").exists()

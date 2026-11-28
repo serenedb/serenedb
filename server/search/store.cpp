@@ -322,26 +322,6 @@ bool Store::Absent() const {
   return _on_disk && !catalog::StorageFileSystem().DirectoryExists(_path);
 }
 
-void Store::ClaimColumnOids(const irs::CompositeReader& reader) const {
-  auto& db_manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  const auto claim = [&](irs::field_id id) {
-    if (id <= connector::kMaxRealColumnIdValue) {
-      db_manager.ClaimOid(id);
-    }
-  };
-  for (const auto& segment : reader) {
-    for (const auto id : segment.field_ids()) {
-      claim(id);
-    }
-    if (const auto* columns = segment.GetColReader()) {
-      for (const auto& column : columns->Columns()) {
-        claim(column->Id());
-      }
-    }
-  }
-}
-
 void Store::SyncSegments() const {
   SDB_IF_FAILURE("search_sync_segments_fails") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -1488,23 +1468,14 @@ void Store::CollectFiles(
 }
 
 void Store::ScheduleRecovery(duckdb::ClientContext& context,
-                             duckdb::TaskExecutor& replays,
-                             duckdb::TaskExecutor& opens) {
+                             duckdb::TaskExecutor& replays) {
   EnsureOpen();
   if (!_table) {
     return;
   }
   _writer->ReserveSegmentId(_replay.Top());
   for (auto& [_, segment] : _replay.Segments()) {
-    opens.ScheduleTask(duckdb::make_uniq<RecoveryTask>(opens, [this, &segment] {
-      try {
-        segment.opened = _table->OpenSegment(segment.logged);
-        segment.opened.reader->OpenFiles();
-      } catch (const duckdb::Exception& e) {
-        duckdb::ErrorData{e}.Throw(
-          absl::StrCat("cannot open the files of relation ", _id, ": "));
-      }
-    }));
+    segment.opened = _table->OpenSegment(segment.logged);
   }
   for (auto& piece : _replay.Cut()) {
     replays.ScheduleTask(
@@ -1545,8 +1516,20 @@ bool Store::FinishReplay() {
   _table->Recover(std::move(_replay).Units(*_table), memory_end,
                   std::move(manifest));
   _replay = TableReplay{};
-  ClaimColumnOids(_table->State()->reader);
   return replayed;
+}
+
+void Store::OpenFiles() const {
+  if (!_table || _remote || !_on_disk) {
+    return;
+  }
+  for (const auto& unit : _table->State()->units) {
+    if (lifecycle::IsStopping()) {
+      return;
+    }
+    unit->reader->OpenFiles();
+  }
+  _table->State()->reader.LoadStats();
 }
 
 }  // namespace sdb::search

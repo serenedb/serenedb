@@ -32,7 +32,7 @@ CHECKPOINT;
 statement ok
 CREATE MACRO slc_ids() AS (
   SELECT list_sort(list(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1)))
-  FROM glob('${SDB_DATADIR}/engine_v2/store/*')
+  FROM glob('${SDB_DATADIR}/engine_v1/store/*')
   WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '');
 
 
@@ -62,11 +62,11 @@ segments	on_disk
 
 
 statement ok
-COPY (SELECT 1 AS x) TO '${SDB_DATADIR}/engine_v2/store/00000000ffffffff.col' (FORMAT csv);
+COPY (SELECT 1 AS x) TO '${SDB_DATADIR}/engine_v1/store/00000000ffffffff.col' (FORMAT csv);
 
 
 statement ok
-COPY (SELECT 1 AS x) TO '${SDB_DATADIR}/engine_v2/store/notes.csv' (FORMAT csv);
+COPY (SELECT 1 AS x) TO '${SDB_DATADIR}/engine_v1/store/notes.csv' (FORMAT csv);
 
 
 statement ok
@@ -85,7 +85,7 @@ SELECT 1;
 connection after_clean
 query
 SELECT list_contains(slc_ids(), '00000000ffffffff') AS planted,
-       (SELECT count(*) FROM glob('${SDB_DATADIR}/engine_v2/store/notes.csv')) AS unrelated,
+       (SELECT count(*) FROM glob('${SDB_DATADIR}/engine_v1/store/notes.csv')) AS unrelated,
        len(list_filter(slc_ids(), lambda id: id <> '00000000ffffffff')) AS segments;
 ----
 planted	unrelated	segments
@@ -118,7 +118,7 @@ SELECT 1;
 connection after_crash
 query
 SELECT list_contains(slc_ids(), '00000000ffffffff') AS planted,
-       (SELECT count(*) FROM glob('${SDB_DATADIR}/engine_v2/store/notes.csv')) AS unrelated,
+       (SELECT count(*) FROM glob('${SDB_DATADIR}/engine_v1/store/notes.csv')) AS unrelated,
        len(slc_ids()) AS segments;
 ----
 planted	unrelated	segments

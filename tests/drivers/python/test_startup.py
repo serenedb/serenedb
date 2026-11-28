@@ -265,7 +265,7 @@ def test_a_pg_version_that_cannot_be_checked(tmp_path: Path) -> None:
     assert result.returncode != 0, result
     assert (f"Unable to check '{datadir}/PG_VERSION'"
             in result.stdout + result.stderr), result
-    assert not (datadir / "engine_v2").exists()
+    assert not (datadir / "engine_v1").exists()
 
 
 @pytest.mark.parametrize("relative", [True, False])

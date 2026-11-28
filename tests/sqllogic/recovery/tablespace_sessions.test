@@ -80,7 +80,7 @@ old row
 
 statement ok
 CREATE MACRO sess_unowned() AS (
-  (SELECT count(*) FROM glob('${__TEST_DIR__}/sess/*/engine_v2/store/*'))
+  (SELECT count(*) FROM glob('${__TEST_DIR__}/sess/*/engine_v1/store/*'))
   - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files'));
 
 query
@@ -116,7 +116,7 @@ statement ok
 DROP TABLESPACE sess_new_${__DATABASE__};
 
 query ok retry 240 backoff 250ms
-SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/sess/*/engine_v2/**');
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/sess/*/engine_v1/**');
 ----
 files_left
 0

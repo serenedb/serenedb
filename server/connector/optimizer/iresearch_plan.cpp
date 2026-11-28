@@ -1696,7 +1696,94 @@ void TakeColumnConjuncts(
   });
 }
 
+bool Claimed(const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+             const SearchGetters& getters, duckdb::ClientContext& context) {
+  irs::BooleanFilter root;
+  connector::FilterScorers scorers;
+  DeferredClaimBuilder deferred;
+  deferred.column_id = &getters.column_id;
+  try {
+    return TryClaimIResearchConjunctImpl(root, conjunct, getters.getter,
+                                         getters.expr_getter, context, &scorers,
+                                         &deferred);
+  } catch (const irs::SqlException&) {
+    return false;
+  }
+}
+
 }  // namespace
+
+const duckdb::BoundColumnRefExpression* ScoreAnchor(
+  const duckdb::BoundFunctionExpression& call) {
+  return IsScorerFunctionName(call.Function().GetName().GetIdentifierName())
+           ? AnchorOf(call)
+           : nullptr;
+}
+
+SearchClaims::SearchClaims(duckdb::LogicalOperator& plan,
+                           duckdb::ClientContext& context,
+                           std::span<const duckdb::ColumnBinding> score_anchors)
+  : _index{plan}, _context{context} {
+  for (const auto anchor : score_anchors) {
+    if (const auto column = _index.Column(anchor)) {
+      _scored.insert(column.scan);
+    }
+  }
+}
+
+bool SearchClaims::Scored(const duckdb::Expression& predicate) {
+  return !_scored.empty() &&
+         !duckdb::ExpressionIterator::AnyExpression<
+           duckdb::BoundColumnRefExpression>(
+           predicate, [&](const duckdb::BoundColumnRefExpression& ref) {
+             return !_scored.contains(_index.Column(ref.Binding()).scan);
+           });
+}
+
+void SearchClaims::Ask(duckdb::Expression& predicate) {
+  _asked[predicate].push_back(&predicate);
+}
+
+void SearchClaims::MarkAnswered() {
+  struct Asked {
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+    std::vector<const std::vector<duckdb::Expression*>*> nodes;
+  };
+  irs::containers::FlatHashMap<PlannedScan*, Asked> asked_by_scan;
+  for (const auto& [predicate, nodes] : _asked) {
+    PlannedScan* scan = nullptr;
+    bool one_scan = true;
+    auto conjunct = predicate.get().Copy();
+    duckdb::ExpressionIterator::VisitExpressionMutable<
+      duckdb::BoundColumnRefExpression>(
+      conjunct, [&](duckdb::BoundColumnRefExpression& ref, auto&) {
+        const auto column = _index.Column(ref.Binding());
+        one_scan = one_scan && column && (!scan || column.scan == scan);
+        if (one_scan) {
+          scan = column.scan;
+          ref.BindingMutable() = column.binding;
+        }
+      });
+    if (one_scan && scan) {
+      auto& asked = asked_by_scan[scan];
+      asked.conjuncts.push_back(std::move(conjunct));
+      asked.nodes.push_back(&nodes);
+    }
+  }
+  for (auto& [scan, asked] : asked_by_scan) {
+    duckdb::Optimizer::OptimizeExpressions(_context, asked.conjuncts);
+    WithSearchGetters(*scan, _context, [&](const SearchGetters& getters) {
+      for (size_t i = 0; i < asked.conjuncts.size(); ++i) {
+        if (Claimed(asked.conjuncts[i], getters, _context)) {
+          for (auto* node : *asked.nodes[i]) {
+            node->SetRewriteGuard(duckdb::RewriteGuard::SCORED);
+          }
+        }
+      }
+      return true;
+    });
+  }
+}
 
 void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,

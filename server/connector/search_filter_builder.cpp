@@ -614,9 +614,21 @@ bool IsStrictDisjunct(const duckdb::Expression& expr) {
     [](const auto& child) { return IsStrictDisjunct(*child); });
 }
 
+[[noreturn]] void ThrowMinMatchWithoutOr() {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("::min_match(K) applies to an OR of predicates"),
+    ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR b @@ 'y' OR c @@ "
+             "'z')::min_match(2). To count the words or alternatives of one "
+             "@@ match, put it on the query: col @@ 'x y z'::min_match(2)."));
+}
+
 void RejectRewrittenMinMatch(const duckdb::BoundFunctionExpression& cast,
                              size_t seen) {
   const auto written = WrittenMinMatchBranches(cast);
+  if (written == 1) {
+    ThrowMinMatchWithoutOr();
+  }
   if (written && written != seen) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -1924,7 +1936,7 @@ bool HasScorableLeaf(const irs::Filter& filter) {
 
 void ApplyScoreOverride(const FilterContext& ctx, irs::BooleanFilter& scope,
                         const irs::Scorer* scorer) {
-  if (ctx.negated) {
+  if (ctx.negated || ctx.unscored) {
     return;
   }
   const auto scored_clauses =
@@ -1961,6 +1973,23 @@ void CloseScope(BoolTarget parent, std::unique_ptr<irs::BooleanFilter> scope) {
   if (!scope->Empty()) {
     parent.Add(std::move(scope));
   }
+}
+
+void CloseUnscoredScope(BoolTarget parent,
+                        std::unique_ptr<irs::BooleanFilter> scope) {
+  if (parent.occur == irs::Occur::Must && scope->Size(irs::Occur::Must) == 0 &&
+      scope->Size(irs::Occur::Should) == 0) {
+    auto& excluded = scope->Bucket(irs::Occur::MustNot);
+    for (auto& term : excluded.terms) {
+      parent.node->Add(std::move(term), irs::Occur::MustNot);
+    }
+    for (auto& child : excluded.filters) {
+      parent.node->Add(std::move(child), irs::Occur::MustNot);
+    }
+    return;
+  }
+  scope->SetScorer(&irs::Unscored::Instance());
+  CloseScope(parent, std::move(scope));
 }
 
 irs::ScoreMergeType* WordsMerge(irs::Filter& filter) {
@@ -2170,12 +2199,7 @@ size_t CountMinMatchBranches(const duckdb::Expression& operand) {
       cur->Cast<duckdb::BoundFunctionExpression>()));
   }
   if (cur->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("::min_match(K) applies to an OR of predicates"),
-      ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR b @@ 'y' OR c @@ "
-               "'z')::min_match(2). To count the words or alternatives of one "
-               "@@ match, put it on the query: col @@ 'x y z'::min_match(2)."));
+    ThrowMinMatchWithoutOr();
   }
   return cur->Cast<duckdb::BoundConjunctionExpression>().GetChildren().size();
 }
@@ -2401,6 +2425,17 @@ absl::Status FromOperatorExpression(
 
 absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& expr) {
+  if (!ctx.negated && !ctx.unscored &&
+      expr.GetRewriteGuard() == duckdb::RewriteGuard::UNSCORED) {
+    auto sub_ctx = ctx;
+    sub_ctx.unscored = true;
+    auto scope = OpenScope();
+    if (auto s = FromExpression(ScopeTarget(scope), sub_ctx, expr); !s.ok()) {
+      return s;
+    }
+    CloseUnscoredScope(filter, std::move(scope));
+    return absl::OkStatus();
+  }
   // Peel the TSQUERY_MODIFIER -> BOOLEAN coercion that the WHERE-binder
   // inserts around `(predicate)::boost(K)` at the predicate root.
   if (TryDispatchSqlBoostCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {

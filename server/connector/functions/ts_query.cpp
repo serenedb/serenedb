@@ -40,6 +40,7 @@
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
@@ -51,6 +52,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_query_codec.h"
+#include "connector/optimizer/iresearch_plan.h"
 
 namespace sdb::connector {
 namespace {
@@ -189,13 +191,37 @@ TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {
   return data ? &data->Cast<TSQueryCastData>() : nullptr;
 }
 
-bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
-                            bool parent_frozen) {
-  if (SqlMinMatchOperand(parent)) {
-    return true;
+duckdb::Expression* ModifiedOperand(duckdb::Expression& expr) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
+    return nullptr;
   }
-  return parent_frozen && duckdb::BoundCastExpression::IsCast(parent) &&
-         HasGroupModifier(parent.GetReturnType());
+  auto& operand = *duckdb::BoundCastExpression::ChildMutable(
+    expr.Cast<duckdb::BoundFunctionExpression>());
+  if (!TryGetTypeModifier(expr.GetReturnType()) &&
+      !TryGetTypeModifier(operand.GetReturnType())) {
+    return nullptr;
+  }
+  return &operand;
+}
+
+void KeepBranches(duckdb::Expression& operand) {
+  auto* node = &operand;
+  while (auto* next = ModifiedOperand(*node)) {
+    node = next;
+  }
+  if (node->GetExpressionClass() ==
+      duckdb::ExpressionClass::BOUND_CONJUNCTION) {
+    node->SetRewriteGuard(duckdb::RewriteGuard::FIXED_CHILDREN);
+  }
+}
+
+void MarkUnscored(duckdb::Expression& expr) {
+  if (expr.GetRewriteGuard() == duckdb::RewriteGuard::NONE &&
+      expr.GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN) {
+    expr.SetRewriteGuard(duckdb::RewriteGuard::UNSCORED);
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [](duckdb::Expression& child) { MarkUnscored(child); });
 }
 
 [[noreturn]] bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&,
@@ -471,11 +497,15 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
     if ((*slot)->GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_FUNCTION) {
       const auto& func = (*slot)->Cast<duckdb::BoundFunctionExpression>();
-      const auto op =
-        ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName());
+      const auto& name = func.Function().GetName().GetIdentifierName();
+      const auto op = ClassifyTSQueryFunction(name);
       if (IsTSQueryStructType(func.GetReturnType()) &&
           op != TSQueryOp::Unknown && op != TSQueryOp::Boost) {
         call = &func;
+      } else if (func.GetReturnType().id() == duckdb::LogicalTypeId::FLOAT) {
+        if (const auto* anchor = optimizer::ScoreAnchor(func)) {
+          _score_anchors.push_back(anchor->Binding());
+        }
       }
     }
     const auto outer = _mode;
@@ -495,6 +525,10 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
       duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*folded));
   }
 
+  std::span<const duckdb::ColumnBinding> ScoreAnchors() const noexcept {
+    return _score_anchors;
+  }
+
  private:
   enum class Mode : uint8_t {
     Check,
@@ -511,12 +545,69 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
 
   duckdb::ClientContext& _context;
   Mode _mode = Mode::Check;
+  std::vector<duckdb::ColumnBinding> _score_anchors;
 };
 
-void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,
-                          duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+class ScoredPredicateGuard final : public duckdb::LogicalOperatorVisitor {
+ public:
+  explicit ScoredPredicateGuard(
+    duckdb::LogicalOperator& plan, duckdb::ClientContext& context,
+    std::span<const duckdb::ColumnBinding> score_anchors)
+    : _claims{plan, context, score_anchors} {
+    VisitOperator(plan);
+    _claims.MarkAnswered();
+  }
+
+  void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
+    Guard(**slot, false);
+  }
+
+ private:
+  void Guard(duckdb::Expression& expr, bool modified) {
+    if (expr.GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_CONJUNCTION) {
+      for (auto& child : expr.Cast<duckdb::BoundConjunctionExpression>()
+                           .GetChildrenMutable()) {
+        Guard(*child, false);
+      }
+      return;
+    }
+    if (auto* operand = ModifiedOperand(expr)) {
+      const auto& type = expr.GetReturnType();
+      if (const auto scorer = TryGetScoreModifier(type);
+          scorer && *scorer == irs::Unscored::type_name()) {
+        return;
+      }
+      if (TryGetMergeModifier(type) && _claims.Scored(*operand)) {
+        KeepBranches(*operand);
+      }
+      Guard(*operand, true);
+      return;
+    }
+    if (expr.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN ||
+        !_claims.Scored(expr)) {
+      return;
+    }
+    if (expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_NOT) {
+      MarkUnscored(expr);
+    } else if (modified || ContainsIndexOnlyPredicate(expr)) {
+      expr.SetRewriteGuard(duckdb::RewriteGuard::SCORED);
+    } else {
+      _claims.Ask(expr);
+    }
+  }
+
+  optimizer::SearchClaims _claims;
+};
+
+void PrepareSearchRewrites(duckdb::OptimizerExtensionInput& input,
+                           duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan) {
-    TSQueryFoldVisitor{input.context}.VisitOperator(*plan);
+    TSQueryFoldVisitor fold{input.context};
+    fold.VisitOperator(*plan);
+    if (const auto anchors = fold.ScoreAnchors(); !anchors.empty()) {
+      ScoredPredicateGuard{*plan, input.context, anchors};
+    }
   }
 }
 
@@ -1321,8 +1412,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
 
 void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
   duckdb::OptimizerExtension fold;
-  fold.pre_optimize_function = FoldTSQueryConstants;
-  fold.rewrite_barrier = MinMatchRewriteBarrier;
+  fold.pre_optimize_function = PrepareSearchRewrites;
   duckdb::OptimizerExtension::Register(loader.GetDatabaseInstance().config,
                                        std::move(fold));
 }
@@ -1344,14 +1434,19 @@ void WriteTSQueryRow(duckdb::Vector& result, duckdb::idx_t row,
 
 void RecordWrittenMinMatchBranches(duckdb::Expression& expr) {
   const auto* operand = SqlMinMatchOperand(expr);
-  if (!operand ||
-      operand->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+  if (!operand) {
     return;
   }
-  if (auto* data =
-        MinMatchCastData(expr.Cast<duckdb::BoundFunctionExpression>())) {
-    data->written_branches = static_cast<uint32_t>(
-      operand->Cast<duckdb::BoundConjunctionExpression>().GetChildren().size());
+  auto& cast = expr.Cast<duckdb::BoundFunctionExpression>();
+  KeepBranches(*duckdb::BoundCastExpression::ChildMutable(cast));
+  if (auto* data = MinMatchCastData(cast)) {
+    data->written_branches =
+      operand->GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR
+        ? static_cast<uint32_t>(
+            operand->Cast<duckdb::BoundConjunctionExpression>()
+              .GetChildren()
+              .size())
+        : 1;
   }
 }
 

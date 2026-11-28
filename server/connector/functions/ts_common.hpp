@@ -71,6 +71,7 @@ using ExprCache = irs::containers::NodeHashMap<ExprCacheKey, SearchColumnInfo>;
 
 struct FilterContext {
   bool negated = false;
+  bool unscored = false;
   irs::score_t boost = irs::kNoBoost;
   irs::PosAttr::value_t slop = 0;
   const ColumnGetter& column_getter;
@@ -87,6 +88,7 @@ struct FilterContext {
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
       .negated = negated,
+      .unscored = unscored,
       .boost = boost,
       .slop = slop,
       .column_getter = column_getter,

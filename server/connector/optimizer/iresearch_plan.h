@@ -21,15 +21,20 @@
 #pragma once
 
 #include <duckdb/common/vector.hpp>
+#include <duckdb/parser/expression_map.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/logical_operator.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <optional>
 
+#include "connector/optimizer/plan_index.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 
 namespace duckdb {
 
+class BoundFunctionExpression;
 class ClientContext;
 class DatabaseInstance;
 class LogicalGet;
@@ -44,6 +49,26 @@ void IResearchPushdownComplexFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
+
+const duckdb::BoundColumnRefExpression* ScoreAnchor(
+  const duckdb::BoundFunctionExpression& call);
+
+class SearchClaims {
+ public:
+  explicit SearchClaims(duckdb::LogicalOperator& plan,
+                        duckdb::ClientContext& context,
+                        std::span<const duckdb::ColumnBinding> score_anchors);
+
+  bool Scored(const duckdb::Expression& predicate);
+  void Ask(duckdb::Expression& predicate);
+  void MarkAnswered();
+
+ private:
+  PlanIndex _index;
+  duckdb::ClientContext& _context;
+  irs::containers::FlatHashSet<const PlannedScan*> _scored;
+  duckdb::expression_map_t<std::vector<duckdb::Expression*>> _asked;
+};
 
 duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
   duckdb::unique_ptr<duckdb::Expression> expr, bool with_values);

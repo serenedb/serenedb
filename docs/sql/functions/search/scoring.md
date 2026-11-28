@@ -316,7 +316,7 @@ Rows that match only through the unscored branch come back with `0`, and the res
 An unscored branch makes `0` a legitimate score, which matters for `ORDER BY <scorer> DESC LIMIT k`. The top-k collector admits zero-scoring hits, so those rows are returned rather than dropped.
 :::
 
-A negation keeps every row except its matches, and each row it keeps scores what the query's scorer gives a row that matches every document: `0` for `BM25` in `NOT body @@ 'fox'`. A scorer inside the negation belongs to the matches it excludes, so `NOT body @@ 'fox'::score('constant(1)')` scores the same. A scorer given to the negation itself, as in `(NOT body @@ 'fox')::score('constant(2)')`, scores its constant on every row the negation keeps.
+A negation keeps every row except its matches and adds nothing to the score, whatever the scorer: `NOT body @@ 'fox'`, `id <> 3`, `id NOT IN (1, 2)` and `NOT (id < 3)` add `0` under `BM25`, `constant` and `raw_boost` alike, and so does every part of `NOT (a AND b)`. A scorer inside the negation belongs to the matches it excludes, and a scorer given to the negation itself, as in `(NOT body @@ 'fox')::score('constant(2)')`, adds nothing either. Written without `NOT`, `id >= 3` scores as any other comparison does.
 
 ### Combining the two {#combining}
 

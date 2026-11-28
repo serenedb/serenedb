@@ -50,7 +50,58 @@ WHERE (NOT body @@ 'dot')::score('constant(2)')
 ORDER BY id;
 ----
 id	score
-2	2
+2	0
+4	0
+
+
+query
+SELECT id, constant(ngs_idx.tableoid, 1) AS score FROM ngs_idx
+WHERE body @@ 'fig' OR NOT (body @@ 'dot' AND tag @@ 'dog')
+ORDER BY id;
+----
+id	score
+2	0
+4	1
+
+
+query
+SELECT id, raw_boost(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE body @@ 'fig' OR id <> 1
+ORDER BY id;
+----
+id	score
+2	0
+3	0
+4	1
+
+
+query
+SELECT id, constant(ngs_idx.tableoid, 1) AS score FROM ngs_idx
+WHERE body @@ 'fig' OR id NOT IN (1, 2)
+ORDER BY id;
+----
+id	score
+3	0
+4	1
+
+
+query
+SELECT id, BM25(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE body @@ 'fig'::tsquery::score('constant(1)') OR NOT (id < 3)
+ORDER BY id;
+----
+id	score
+3	0
+4	1
+
+
+query
+SELECT id, BM25(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE body @@ 'fig'::tsquery::score('constant(1)') OR id >= 3
+ORDER BY id;
+----
+id	score
+3	1
 4	2
 
 

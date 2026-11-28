@@ -29,6 +29,7 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <span>
@@ -227,7 +228,7 @@ inline BoolTarget Negate(BoolTarget parent) {
 //
 // Post-order, and only where the include side is genuinely empty: a node that
 // requires something, or whose optional side its threshold reaches, already
-// has one and must not gain a clause that would score.
+// has one.
 inline void EnsureIncludeSides(irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return;
@@ -240,7 +241,9 @@ inline void EnsureIncludeSides(irs::Filter& filter) {
   });
   if (node.Size(irs::Occur::MustNot) != 0 && node.Size(irs::Occur::Must) == 0 &&
       (node.MinShouldMatch() == 0 || node.Size(irs::Occur::Should) == 0)) {
-    node.Add(std::make_unique<irs::All>(), irs::Occur::Must);
+    auto all = std::make_unique<irs::All>();
+    all->SetScorer(&irs::Unscored::Instance());
+    node.Add(std::move(all), irs::Occur::Must);
   }
 }
 

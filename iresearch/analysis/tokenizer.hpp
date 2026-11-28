@@ -20,9 +20,13 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/planner/expression.hpp>
+#include <duckdb/storage/shared_object_cache.hpp>
 #include <memory>
 #include <string_view>
 #include <tuple>
@@ -131,13 +135,24 @@ IRS_FORCE_INLINE bool ForEachValidRun(const duckdb::UnifiedVectorFormat& fmt,
   return true;
 }
 
+struct BindContext {
+  duckdb::ClientContext& client;
+  duckdb::SharedObjectCache& cache;
+  absl::FunctionRef<bool(const duckdb::Expression&)> row_alone;
+};
+
+duckdb::LogicalTypeId AcceptText(std::string_view stage,
+                                 const duckdb::LogicalType& input);
+
 class Tokenizer {
  public:
   using ptr = std::unique_ptr<Tokenizer>;
 
-  static constexpr duckdb::LogicalTypeId Output(
-    const auto&, duckdb::LogicalTypeId input) noexcept {
-    return input;
+  template<typename Options>
+  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    return AcceptText(Options::Owner::type_name(), input);
   }
 
   virtual ~Tokenizer() = default;

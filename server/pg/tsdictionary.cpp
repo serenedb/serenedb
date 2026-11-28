@@ -75,6 +75,7 @@
 #include <vector>
 
 #include "catalog/entry/tokenizer.h"
+#include "connector/index_expression.hpp"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
 #include "pg/tokenizer_options.h"
@@ -390,9 +391,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     irs::analysis::SqlTokenizer::Options opts;
     opts.expression =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kSqlExpression>();
-    opts.output = irs::analysis::SqlTokenizer::ResolveOutput(
-      opts.expression, _context,
-      duckdb::DatabaseInstance::GetDatabase(_context).GetSharedObjectCache());
     return opts;
   }
 
@@ -805,6 +803,23 @@ void CheckWithClause(const duckdb::named_parameter_map_t& with) {
   }
 }
 
+irs::analysis::TokenizerConfig BindAnyInput(
+  const irs::analysis::TokenizerConfig& cfg, irs::analysis::BindContext& ctx) {
+  std::exception_ptr text_refusal;
+  for (const auto& input : {duckdb::LogicalType{duckdb::LogicalType::VARCHAR},
+                            duckdb::LogicalType{duckdb::LogicalType::BLOB},
+                            duckdb::LogicalType::GEOMETRY()}) {
+    try {
+      return irs::analysis::BindInput(cfg, input, ctx);
+    } catch (const irs::SqlException&) {
+      if (!text_refusal) {
+        text_refusal = std::current_exception();
+      }
+    }
+  }
+  std::rethrow_exception(text_refusal);
+}
+
 }  // namespace
 
 irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
@@ -825,8 +840,13 @@ void CompileTokenizer(duckdb::ClientContext& context,
 
   auto& cache =
     duckdb::DatabaseInstance::GetDatabase(context).GetSharedObjectCache();
+  irs::analysis::BindContext bind_ctx{
+    .client = context,
+    .cache = cache,
+    .row_alone = connector::ComputedFromRowAlone,
+  };
   auto test_analyzer =
-    irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg), cache);
+    irs::analysis::CreateTokenizer(BindAnyInput(cfg, bind_ctx), cache);
   SDB_ASSERT(test_analyzer);
   test_analyzer->Bind(context);
   irs::Finally unbind = [&]() noexcept { test_analyzer->Unbind(); };

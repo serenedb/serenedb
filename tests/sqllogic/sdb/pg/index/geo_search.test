@@ -685,7 +685,8 @@ CREATE TABLE geo_data_g_bad (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
 statement error
 CREATE INDEX geo_data_g_bad_idx ON geo_data_g_bad USING inverted(id, geo geojson_latlng)
 ----
-db error: ERROR: Column 'geo' is GEOMETRY but the geo analyzer uses a LatLng coding;<slt:ignore>
+db error: ERROR: Column 'geo': encode_geojson: a LatLng coding does not take GEOMETRY
+HINT: Use the S2Point or the source coding.
 
 
 # --- CREATE INDEX rejection: GEOMETRY column with geopoint analyzer ---

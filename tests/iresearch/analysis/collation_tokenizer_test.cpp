@@ -228,7 +228,6 @@ TEST(collation_token_stream_test, native_fills_match_pull) {
 
   ASSERT_TRUE(stream.Traits().unique);
   ASSERT_FALSE(stream.Traits().keyword);
-  ASSERT_EQ(duckdb::LogicalTypeId::BLOB, stream.Traits().output);
 
   const std::vector<std::string> values = {
     "\xc3\x84pfel", "Apfel", "Zebra",

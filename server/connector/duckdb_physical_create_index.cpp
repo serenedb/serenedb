@@ -429,9 +429,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
-    [&gstate](irs::field_id id, duckdb::LogicalTypeId input) {
-      return gstate.tokenizers.Acquire(id, input);
-    },
+    [&gstate](irs::field_id id) { return gstate.tokenizers.Acquire(id); },
     IndexedColumnIds(*gstate.config), MakeEntryInfoProvider(*gstate.config),
     gstate.config->pk);
   return lstate;

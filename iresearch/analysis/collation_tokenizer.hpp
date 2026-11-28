@@ -38,8 +38,10 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   };
   static ptr Make(Options opts);
 
-  static constexpr duckdb::LogicalTypeId Output(
-    const Options&, duckdb::LogicalTypeId) noexcept {
+  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    AcceptText(type_name(), input);
     return duckdb::LogicalTypeId::BLOB;
   }
 
@@ -51,7 +53,6 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
 
   TokenTraits Traits() const noexcept final {
     return {
-      .output = duckdb::LogicalTypeId::BLOB,
       .unique = true,
       .offsets = true,
     };

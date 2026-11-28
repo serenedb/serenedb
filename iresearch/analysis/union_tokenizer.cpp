@@ -29,12 +29,8 @@
 namespace irs::analysis {
 namespace {
 
-duckdb::LogicalTypeId CommonOutput(duckdb::LogicalTypeId a,
-                                   duckdb::LogicalTypeId b) noexcept {
-  if (a == duckdb::LogicalTypeId::INVALID ||
-      b == duckdb::LogicalTypeId::INVALID) {
-    return duckdb::LogicalTypeId::INVALID;
-  }
+duckdb::LogicalTypeId CommonTerms(duckdb::LogicalTypeId a,
+                                  duckdb::LogicalTypeId b) noexcept {
   return a == b ? a : duckdb::LogicalTypeId::BLOB;
 }
 
@@ -54,21 +50,20 @@ UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
   }
 }
 
-TokenTraits UnionTokenizer::Traits() const noexcept {
-  auto output = duckdb::LogicalTypeId::VARCHAR;
-  for (const auto& sub : _subs) {
-    output = CommonOutput(output, sub->Traits().output);
+duckdb::LogicalTypeId UnionTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
+  if (opts.children.empty()) {
+    return AcceptText(type_name(), input);
   }
-  return {.output = output, .explicit_pos = true};
-}
-
-duckdb::LogicalTypeId UnionTokenizer::Output(
-  const Options& opts, duckdb::LogicalTypeId input) noexcept {
-  auto output = duckdb::LogicalTypeId::VARCHAR;
-  for (const auto& child : opts.children) {
-    output = CommonOutput(output, OutputOf(*child, input));
+  auto terms = duckdb::LogicalTypeId::VARCHAR;
+  for (auto& child : opts.children) {
+    if (!child) {
+      THROW_SQL_ERROR(ERR_MSG("union: null child analyzer config"));
+    }
+    BindNode(*child, input, ctx);
+    terms = CommonTerms(terms, child->terms);
   }
-  return output;
+  return terms;
 }
 
 Tokenizer::ptr UnionTokenizer::Make(Options opts,

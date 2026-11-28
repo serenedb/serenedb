@@ -46,13 +46,13 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
     using Owner = WildcardTokenizer;
     std::unique_ptr<TokenizerConfig> base_analyzer;
     size_t ngram_size = 3;
+    bool bytes = false;
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr duckdb::LogicalTypeId Output(
-    const Options&, duckdb::LogicalTypeId) noexcept {
-    return duckdb::LogicalTypeId::BLOB;
-  }
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   static constexpr std::string_view type_name() noexcept {
     return "generate_wildcard_ngrams";
@@ -60,7 +60,8 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
 
   static constexpr byte_type kBoundary{0xFF};
 
-  explicit WildcardTokenizer(Tokenizer::ptr base_analyzer, size_t ngram_size);
+  WildcardTokenizer(Tokenizer::ptr base_analyzer, size_t ngram_size,
+                    bool bytes = false, bool binary_terms = false);
   ~WildcardTokenizer() override;
 
   template<TokenLayout Layout, bool KnownAscii>
@@ -73,9 +74,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
                uint32_t count, doc_id_t doc, TokenSink& sink,
                FillCtx ctx) final;
 
-  TokenTraits Traits() const noexcept final {
-    return {.output = duckdb::LogicalTypeId::BLOB, .store = true};
-  }
+  TokenTraits Traits() const noexcept final { return {.store = true}; }
 
   BlockTraits WantedBlockTraits() const noexcept final {
     return {.ascii = true};
@@ -87,12 +86,9 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
 
   void Unbind() noexcept final { _analyzer->Unbind(); }
 
-  void SetByteInput(bool bytes) noexcept { _bytes = bytes; }
   bool ByteInput() const noexcept { return _bytes; }
 
-  bool BinaryTerms() const noexcept {
-    return _analyzer->Traits().output != duckdb::LogicalTypeId::VARCHAR;
-  }
+  bool BinaryTerms() const noexcept { return _binary_terms; }
 
   bool KeepsWholeValues() const noexcept;
 
@@ -125,6 +121,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   std::unique_ptr<SubSink> _sub_sink;
   bool _base_stable = false;
   bool _bytes = false;
+  bool _binary_terms = false;
 };
 
 extern template class TypedTokenizer<WildcardTokenizer>;

@@ -386,6 +386,12 @@ NullMarker NullMarkerOf(const SearchColumnInfo& info) {
   };
 }
 
+duckdb::LogicalType FieldInput(const SearchColumnInfo& info) {
+  const auto& binding = info.tokenizer.analyzer.get_deleter().binding;
+  return duckdb::LogicalType{
+    binding ? binding->Input() : term_dict::ElementKind(info.logical_type)};
+}
+
 void AddNullMarkers(BoolTarget parent, const NullMarker& marker) {
   const auto add = [&](irs::DictMember member) {
     AddTerm(parent, marker.field, {.layout = marker.layout, .member = member},
@@ -485,8 +491,10 @@ void UniqueMarkers(std::vector<NullMarker>& markers) {
 }
 
 catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
-  const FilterContext& ctx, std::string_view name) {
-  auto wrapper = AcquireTokenizer(ctx.client_context, name);
+  const FilterContext& ctx, std::string_view name,
+  const SearchColumnInfo& column_info) {
+  auto wrapper =
+    AcquireTokenizer(ctx.client_context, name, FieldInput(column_info));
   if (!wrapper) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -2273,7 +2281,7 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
       ERR_MSG("::tokenize('keyword'): inner expression has unsupported "
               "shape"));
   }
-  auto wrapper = ResolveTokenizerOrThrow(ctx, tokenizer);
+  auto wrapper = ResolveTokenizerOrThrow(ctx, tokenizer, column_info);
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   if (val) {
     // Don't recurse on a folded constant: its type still carries the
@@ -3213,7 +3221,8 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     } else if (parts->tokenizer == irs::KeywordTokenizer::type_name()) {
       emit(sub_ctx.WithTokenizer(sub_ctx.identity));
     } else {
-      auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
+      auto wrapper =
+        ResolveTokenizerOrThrow(ctx, parts->tokenizer, column_info);
       emit(sub_ctx.WithTokenizer(*wrapper));
     }
   };

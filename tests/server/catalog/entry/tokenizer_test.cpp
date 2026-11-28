@@ -140,21 +140,27 @@ TEST(TokenizerEntry, TrailingBytesAreRefused) {
   EXPECT_FALSE(UnpackError(bytes).empty());
 }
 
-TEST(TokenizerEntry, AnAnalyzerKeepsTheInputItWasAcquiredFor) {
+TEST(TokenizerEntry, AnAnalyzerKeepsTheInputItWasBoundFor) {
   irs::analysis::WildcardTokenizer::Options options;
   options.base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
   const auto wildcard = std::make_shared<Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{.config = std::move(options)});
+  auto& context = sdb::test::EngineContext();
   const auto byte_input = [&](duckdb::LogicalTypeId input) {
-    const auto analyzer = wildcard->Acquire(sdb::test::EngineContext(), input);
+    const auto analyzer =
+      wildcard->Bind(context, duckdb::LogicalType{input})->Acquire(context);
     return irs::utils::downCast<irs::analysis::WildcardTokenizer>(*analyzer)
       .ByteInput();
   };
   EXPECT_TRUE(byte_input(duckdb::LogicalTypeId::BLOB));
   EXPECT_FALSE(byte_input(duckdb::LogicalTypeId::VARCHAR));
   EXPECT_TRUE(byte_input(duckdb::LogicalTypeId::BLOB));
+  EXPECT_EQ(wildcard->Bind(context, duckdb::LogicalType::BLOB),
+            wildcard->Bind(context, duckdb::LogicalType::BLOB));
+  EXPECT_NE(wildcard->Bind(context, duckdb::LogicalType::BLOB),
+            wildcard->Bind(context, duckdb::LogicalType::VARCHAR));
 }
 
 }  // namespace

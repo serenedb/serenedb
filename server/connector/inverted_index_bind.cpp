@@ -49,6 +49,7 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <span>
@@ -860,39 +861,25 @@ void ValidateVectorKey(std::string_view label, const duckdb::LogicalType& type,
   }
 }
 
-void ValidateTokenizerVsColumn(std::string_view column_name,
-                               const duckdb::LogicalType& col_type,
-                               const irs::analysis::Tokenizer& analyzer) {
-  const auto type_id = analyzer.type();
-  const bool is_geojson =
-    type_id == irs::Type<irs::analysis::GeoJsonTokenizer>::id();
-  const bool is_geopoint =
-    type_id == irs::Type<irs::analysis::GeoPointTokenizer>::id();
-  const auto col_id = col_type.id();
-
-  if (is_geojson || is_geopoint) {
-    if (col_id == duckdb::LogicalTypeId::GEOMETRY) {
+void ValidateColumn(std::string_view column_name,
+                    const duckdb::LogicalType& col_type,
+                    const irs::analysis::TokenizerConfig& definition) {
+  const bool geopoint =
+    std::holds_alternative<irs::analysis::GeoPointTokenizer::Options>(
+      definition.config);
+  if (geopoint ||
+      std::holds_alternative<irs::analysis::GeoJsonTokenizer::Options>(
+        definition.config)) {
+    if (col_type.id() == duckdb::LogicalTypeId::GEOMETRY) {
       ValidateGeometryCRS84(col_type,
                             absl::StrCat("Column '", column_name, "'"));
-      if (is_geopoint) {
+      if (geopoint) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
           ERR_MSG("Column '", column_name,
                   "' is GEOMETRY but the analyzer is geopoint; geopoint's "
                   "latitude/longitude paths are JSON-only -- use a geojson "
                   "analyzer for GEOMETRY columns"));
-      }
-      const auto& geojson =
-        irs::utils::downCast<irs::analysis::GeoJsonTokenizer>(analyzer);
-      using Coding = irs::analysis::GeoJsonTokenizer::Coding;
-      const auto coding = geojson.coding();
-      if (coding != Coding::Source && coding != Coding::S2Point) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("Column '", column_name,
-                  "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
-                  "not yet supported for GEOMETRY columns -- use S2Point or "
-                  "source coding"));
       }
     } else if (!col_type.IsJSONType()) {
       THROW_SQL_ERROR(
@@ -902,29 +889,43 @@ void ValidateTokenizerVsColumn(std::string_view column_name,
     }
     return;
   }
+  const auto col_id = col_type.id();
+  const auto& element = col_id == duckdb::LogicalTypeId::LIST
+                          ? duckdb::ListType::GetChildType(col_type)
+                          : (col_id == duckdb::LogicalTypeId::ARRAY
+                               ? duckdb::ArrayType::GetChildType(col_type)
+                               : col_type);
+  if (element.id() != duckdb::LogicalTypeId::VARCHAR &&
+      element.id() != duckdb::LogicalTypeId::BLOB) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG("Column '", column_name,
+              "' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of "
+              "VARCHAR/BLOB (got ",
+              col_type.ToString(), ")"));
+  }
+}
 
-  const auto is_string_leaf = [](duckdb::LogicalTypeId id) {
-    return id == duckdb::LogicalTypeId::VARCHAR ||
-           id == duckdb::LogicalTypeId::BLOB;
-  };
-  if (is_string_leaf(col_id)) {
-    return;
+duckdb::LogicalType ColumnInput(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::LIST:
+      return ColumnInput(duckdb::ListType::GetChildType(type));
+    case duckdb::LogicalTypeId::ARRAY:
+      return ColumnInput(duckdb::ArrayType::GetChildType(type));
+    default:
+      return type.IsJSONType() ? duckdb::LogicalType::VARCHAR : type;
   }
-  if (col_id == duckdb::LogicalTypeId::LIST ||
-      col_id == duckdb::LogicalTypeId::ARRAY) {
-    const auto& child_type = col_id == duckdb::LogicalTypeId::LIST
-                               ? duckdb::ListType::GetChildType(col_type)
-                               : duckdb::ArrayType::GetChildType(col_type);
-    if (is_string_leaf(child_type.id())) {
-      return;
-    }
+}
+
+catalog::TokenizerBindingRef BindColumn(duckdb::ClientContext& context,
+                                        std::string_view column_name,
+                                        const duckdb::LogicalType& type,
+                                        const TokenizerCatalogEntry& dict) {
+  try {
+    return dict.GetTokenizer()->Bind(context, ColumnInput(type));
+  } catch (const std::exception& e) {
+    irs::pg::ThrowWithContext(absl::StrCat("Column '", column_name, "'"), e);
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-    ERR_MSG("Column '", column_name,
-            "' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of "
-            "VARCHAR/BLOB (got ",
-            col_type.ToString(), ")"));
 }
 
 // The opclass a CREATE INDEX key was written with. `options` is nullopt when
@@ -1072,8 +1073,10 @@ void ApplyOpclassToEntry(
     }
     ThrowUnknownOpclassError(opclass.name, label, schema_name);
   }
-  auto analyzer = dict->Acquire(context);
-  ValidateTokenizerVsColumn(label, value_type, *analyzer);
+  ValidateColumn(label, value_type, dict->Config());
+  const auto binding = BindColumn(context, label, value_type, *dict);
+  auto analyzer = binding->Acquire(context);
+  entry.tokenizer = catalog::PackTokenizerConfig(binding->Config());
   FillEntryFromTokenizer(*dict, *analyzer, next_id, entry);
   if (IsGeoSourceAnalyzer(*analyzer)) {
     // Nothing of the analyzer's own reaches the segment, so the query

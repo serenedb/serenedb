@@ -169,7 +169,7 @@ void CheckTokens(const SearchColumnInfo& column_info,
   if (HasPositions(column_info)) {
     return;
   }
-  if (!column_info.tokenizer.analyzer.get_deleter().tokenizer) {
+  if (!column_info.tokenizer.analyzer.get_deleter().binding) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(label,
@@ -190,7 +190,7 @@ void CheckTokens(const SearchColumnInfo& column_info,
   }
   options.set_text(
     column_info.text,
-    [source = column_info.tokenizer.analyzer.get_deleter().tokenizer,
+    [source = column_info.tokenizer.analyzer.get_deleter().binding,
      context = &context, words] -> std::shared_ptr<irs::analysis::Tokenizer> {
       std::shared_ptr<irs::analysis::Tokenizer> tokenizer =
         source->Acquire(*context);
@@ -286,7 +286,7 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
 
 bool MatchesPhrases(const SearchColumnInfo& column_info) {
   return HasPositions(column_info) ||
-         (column_info.tokenizer.analyzer.get_deleter().tokenizer &&
+         (column_info.tokenizer.analyzer.get_deleter().binding &&
           irs::field_limits::valid(column_info.text) &&
           column_info.layout != irs::DictLayout::JsonList &&
           (column_info.logical_type.IsJSONType() ||

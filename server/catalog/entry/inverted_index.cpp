@@ -351,7 +351,8 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
       if (!dict) {
         continue;
       }
-      resolved.tokenizer = dict->GetTokenizer();
+      resolved.binding = dict->GetTokenizer()->Intern(
+        dict->name.GetIdentifierName(), field.tokenizer);
       resolved.features = field.features.GetIndexFeatures();
       if (!field.features.HasFeatures(irs::IndexFeatures::Norm)) {
         resolved.tokenizer_column = field.synthetic_column;
@@ -365,27 +366,31 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
   }
 }
 
-ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
-                                         duckdb::LogicalTypeId input) const {
+ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
   const auto it = _fields.find(field_id);
   if (it == _fields.end()) {
     return {};
   }
   const auto& field = it->second;
-  if (!field.tokenizer) {
+  if (!field.binding) {
     return {.analyzer = Tokenizer::TokenizerWrapper{
               std::make_unique<irs::KeywordTokenizer>().release(),
               Tokenizer::Deleter{}}};
   }
-  return {.analyzer = field.tokenizer->Acquire(*_context, input),
+  return {.analyzer = field.binding->Acquire(*_context),
           .features = field.features,
           .tokenizer_column = field.tokenizer_column};
 }
 
-duckdb::LogicalTypeId IndexTokenizers::Output(
-  irs::field_id field_id, duckdb::LogicalTypeId input) const {
-  const auto& field = _fields.at(field_id);
-  return field.tokenizer ? field.tokenizer->Output(*_context, input) : input;
+TokenizerBindingRef IndexTokenizers::Binding(irs::field_id field_id) const {
+  const auto it = _fields.find(field_id);
+  return it == _fields.end() ? nullptr : it->second.binding;
+}
+
+duckdb::LogicalTypeId IndexTokenizers::Terms(
+  irs::field_id field_id, duckdb::LogicalTypeId values) const {
+  const auto binding = Binding(field_id);
+  return binding ? binding->Terms() : values;
 }
 
 InvertedIndexConfig::InvertedIndexConfig(

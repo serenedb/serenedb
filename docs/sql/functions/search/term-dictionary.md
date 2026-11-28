@@ -32,7 +32,7 @@ The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they 
 
 | Function | Description |
 | :--- | :--- |
-| [`ts_dict_agg(column)`](#ts_dict_agg) | `LIST(VARCHAR)` of the field's terms, in byte order per segment. |
+| [`ts_dict_agg(column)`](#ts_dict_agg) | `LIST(VARCHAR)` of the field's terms, in no particular order. |
 | [`ts_dict_raw_agg(column)`](#ts_dict_agg) | `LIST(BLOB)` of the raw term bytes. |
 | [`ts_dict_count(column)`](#ts_dict_agg) | `LIST(INTEGER)`: live documents per term, aligned with `ts_dict_agg`. |
 | [`ts_dict_freq(column)`](#ts_dict_agg) | `LIST(BIGINT)`: total term occurrences, aligned. Needs `frequency = true` on the dictionary. |

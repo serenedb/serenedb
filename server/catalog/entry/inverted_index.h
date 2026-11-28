@@ -253,15 +253,14 @@ class IndexTokenizers {
   IndexTokenizers(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   const InvertedIndexConfig& config);
 
-  ColumnTokenizer Acquire(
-    irs::field_id field_id,
-    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
-  duckdb::LogicalTypeId Output(irs::field_id field_id,
-                               duckdb::LogicalTypeId input) const;
+  ColumnTokenizer Acquire(irs::field_id field_id) const;
+  TokenizerBindingRef Binding(irs::field_id field_id) const;
+  duckdb::LogicalTypeId Terms(irs::field_id field_id,
+                              duckdb::LogicalTypeId values) const;
 
  private:
   struct Field {
-    TokenizerRef tokenizer;
+    TokenizerBindingRef binding;
     irs::IndexFeatures features = irs::IndexFeatures::None;
     irs::field_id tokenizer_column = irs::field_limits::invalid();
   };

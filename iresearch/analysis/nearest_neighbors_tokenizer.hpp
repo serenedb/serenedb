@@ -47,8 +47,10 @@ class NearestNeighborsTokenizer final
     int32_t top_k{1};
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
-  static constexpr duckdb::LogicalTypeId Output(
-    const Options&, duckdb::LogicalTypeId) noexcept {
+  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    AcceptText(type_name(), input);
     return duckdb::LogicalTypeId::VARCHAR;
   }
 

@@ -158,7 +158,10 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
-  auto tokenizer = gKeywordTokenizer->Acquire(sdb::test::EngineContext());
+  auto tokenizer =
+    gKeywordTokenizer
+      ->Bind(sdb::test::EngineContext(), duckdb::LogicalType::VARCHAR)
+      ->Acquire(sdb::test::EngineContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::None};
 }
@@ -168,7 +171,10 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
     search::Features{}, irs::analysis::TokenizerConfig{
                           .config = irs::analysis::TextTokenizer::Options{}});
-  auto tokenizer = gKeywordTokenizer->Acquire(sdb::test::EngineContext());
+  auto tokenizer =
+    gKeywordTokenizer
+      ->Bind(sdb::test::EngineContext(), duckdb::LogicalType::VARCHAR)
+      ->Acquire(sdb::test::EngineContext());
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
@@ -187,7 +193,10 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   static auto gNGramTokenizer = std::make_shared<catalog::Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
-  auto tokenizer = gNGramTokenizer->Acquire(sdb::test::EngineContext());
+  auto tokenizer =
+    gNGramTokenizer
+      ->Bind(sdb::test::EngineContext(), duckdb::LogicalType::VARCHAR)
+      ->Acquire(sdb::test::EngineContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
@@ -202,7 +211,10 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   static auto gWildcardTokenizer = std::make_shared<catalog::Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
-  auto tokenizer = gWildcardTokenizer->Acquire(sdb::test::EngineContext());
+  auto tokenizer =
+    gWildcardTokenizer
+      ->Bind(sdb::test::EngineContext(), duckdb::LogicalType::VARCHAR)
+      ->Acquire(sdb::test::EngineContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
@@ -215,7 +227,10 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     search::Features{},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonTokenizer::Options{}});
-  auto tokenizer = gGeoTokenizer->Acquire(sdb::test::EngineContext());
+  auto tokenizer =
+    gGeoTokenizer
+      ->Bind(sdb::test::EngineContext(), duckdb::LogicalType::VARCHAR)
+      ->Acquire(sdb::test::EngineContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::None,

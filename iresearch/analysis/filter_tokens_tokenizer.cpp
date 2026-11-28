@@ -28,12 +28,30 @@
 #include "iresearch/analysis/sql_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 
 Tokenizer::ptr FilterTokensTokenizer::Make(Options opts,
                                            duckdb::SharedObjectCache& cache) {
   return std::make_unique<FilterTokensTokenizer>(std::move(opts), cache);
+}
+
+duckdb::LogicalTypeId FilterTokensTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
+  const auto terms = AcceptText(type_name(), input);
+  if (!opts.predicate.empty()) {
+    auto bound =
+      BindSql(ctx, type_name(), opts.predicate, duckdb::LogicalType{terms});
+    if (bound.type != duckdb::LogicalType::BOOLEAN) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG(type_name(), ": the lambda must return BOOLEAN, ",
+                              "got ", bound.type.ToString()));
+    }
+    opts.input = terms;
+    opts.bound = std::move(bound.bytes);
+  }
+  return terms;
 }
 
 FilterTokensTokenizer::FilterTokensTokenizer(Options opts,
@@ -43,8 +61,8 @@ FilterTokensTokenizer::FilterTokensTokenizer(Options opts,
                               : opts.max_length},
     _by_length{opts.min_length != 0 || opts.max_length != 0} {
   if (!opts.predicate.empty()) {
-    _predicate =
-      std::make_unique<SqlPredicate>(type_name(), opts.predicate, cache);
+    _predicate = std::make_unique<SqlPredicate>(type_name(), opts.bound,
+                                                opts.input, cache);
   }
 }
 

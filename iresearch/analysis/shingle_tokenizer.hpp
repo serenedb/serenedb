@@ -62,14 +62,14 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     return "generate_shingles";
   }
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
-  static duckdb::LogicalTypeId Output(const Options& opts,
-                                      duckdb::LogicalTypeId input) noexcept;
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   ShingleTokenizer(Tokenizer::ptr base, Options&& options);
 
   TokenTraits Traits() const noexcept final {
     return {
-      .output = _analyzer->Traits().output,
       .explicit_pos =
         _output_unigrams || _producer.explicit_pos || _min != _max,
       .offsets = _producer.offsets,

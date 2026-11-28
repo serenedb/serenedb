@@ -22,11 +22,11 @@
 
 #include <absl/synchronization/mutex.h>
 
-#include <array>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/parser/parsed_data/create_tokenizer_info.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -41,15 +41,15 @@ std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config);
 irs::analysis::TokenizerConfig UnpackTokenizerConfig(std::string_view name,
                                                      std::string_view bytes);
 
-class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
+class TokenizerBinding final
+  : public std::enable_shared_from_this<TokenizerBinding> {
  public:
   struct Deleter {
-    std::shared_ptr<const Tokenizer> tokenizer;
-    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR;
+    std::shared_ptr<const TokenizerBinding> binding;
 
     void operator()(irs::analysis::Tokenizer* analyzer) const {
-      if (tokenizer) {
-        tokenizer->Release(input, irs::analysis::Tokenizer::ptr{analyzer});
+      if (binding) {
+        binding->Release(irs::analysis::Tokenizer::ptr{analyzer});
       } else {
         delete analyzer;
       }
@@ -58,15 +58,41 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
 
   using TokenizerWrapper = std::unique_ptr<irs::analysis::Tokenizer, Deleter>;
 
+  explicit TokenizerBinding(irs::analysis::TokenizerConfig config)
+    : _config{std::move(config)} {}
+
+  TokenizerWrapper Acquire(duckdb::ClientContext& context) const;
+
+  const irs::analysis::TokenizerConfig& Config() const noexcept {
+    return _config;
+  }
+  duckdb::LogicalTypeId Input() const noexcept { return _config.input; }
+  duckdb::LogicalTypeId Terms() const noexcept { return _config.terms; }
+
+ private:
+  void Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept;
+
+  irs::analysis::TokenizerConfig _config;
+  mutable absl::Mutex _mutex;
+  mutable std::vector<irs::analysis::Tokenizer::ptr> _pool
+    ABSL_GUARDED_BY(_mutex);
+};
+
+using TokenizerBindingRef = std::shared_ptr<const TokenizerBinding>;
+
+class Tokenizer final {
+ public:
+  using Deleter = TokenizerBinding::Deleter;
+  using TokenizerWrapper = TokenizerBinding::TokenizerWrapper;
+
   Tokenizer(search::Features features, irs::analysis::TokenizerConfig config)
     : _config{std::move(config)}, _features{features} {}
 
-  TokenizerWrapper Acquire(
-    duckdb::ClientContext& context,
-    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
+  TokenizerBindingRef Bind(duckdb::ClientContext& context,
+                           const duckdb::LogicalType& input) const;
 
-  duckdb::LogicalTypeId Output(duckdb::ClientContext& context,
-                               duckdb::LogicalTypeId input) const;
+  TokenizerBindingRef Intern(std::string_view name,
+                             std::string_view bound) const;
 
   const irs::analysis::TokenizerConfig& Config() const noexcept {
     return _config;
@@ -75,14 +101,17 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
   search::Features GetFeatures() const noexcept { return _features; }
 
  private:
-  void Release(duckdb::LogicalTypeId input,
-               irs::analysis::Tokenizer::ptr analyzer) const noexcept;
+  TokenizerBindingRef Intern(std::string packed,
+                             irs::analysis::TokenizerConfig bound) const;
 
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
   mutable absl::Mutex _mutex;
-  mutable std::array<std::vector<irs::analysis::Tokenizer::ptr>, 3> _pools
-    ABSL_GUARDED_BY(_mutex);
+  mutable irs::containers::FlatHashMap<std::string, TokenizerBindingRef>
+    _bindings ABSL_GUARDED_BY(_mutex);
+  mutable irs::containers::FlatHashMap<duckdb::LogicalTypeId,
+                                       TokenizerBindingRef>
+    _by_input ABSL_GUARDED_BY(_mutex);
 };
 
 using TokenizerRef = std::shared_ptr<const Tokenizer>;
@@ -107,10 +136,6 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
 
   search::Features GetFeatures() const noexcept {
     return _tokenizer->GetFeatures();
-  }
-
-  Tokenizer::TokenizerWrapper Acquire(duckdb::ClientContext& context) const {
-    return _tokenizer->Acquire(context);
   }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(

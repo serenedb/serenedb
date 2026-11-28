@@ -799,8 +799,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
   };
 
   if (_layout == irs::DictLayout::Json) {
-    _field.PrepareForJsonValue(
-      ResolveTokenizer(field_id, duckdb::LogicalTypeId::VARCHAR), _layout);
+    _field.PrepareForJsonValue(ResolveTokenizer(field_id), _layout);
     if (irs::field_limits::valid(_field.store_column)) {
       EnsureBlobColumnWriter(_field.store_column);
     }
@@ -827,15 +826,14 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       (kind == duckdb::LogicalTypeId::ARRAY ? duckdb::ArrayType::GetSize(type)
                                             : 0);
     if (_layout == irs::DictLayout::JsonList) {
-      _field.PrepareForJsonValue(
-        ResolveTokenizer(field_id, duckdb::LogicalTypeId::VARCHAR), _layout);
+      _field.PrepareForJsonValue(ResolveTokenizer(field_id), _layout);
       append_stored();
       WriteJsonListBatch(count, array_size);
       return;
     }
     if (child_kind == duckdb::LogicalTypeId::VARCHAR ||
         child_kind == duckdb::LogicalTypeId::BLOB) {
-      auto& tokenizer = ResolveTokenizer(field_id, child_kind);
+      auto& tokenizer = ResolveTokenizer(field_id);
       _field.PrepareForStringValue(
         tokenizer, {.layout = _layout, .member = irs::DictMember::Strings});
     } else if (term_dict::IsNumeric(child_kind)) {
@@ -859,7 +857,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB:
     case duckdb::LogicalTypeId::GEOMETRY: {
-      auto& tokenizer = ResolveTokenizer(field_id, kind);
+      auto& tokenizer = ResolveTokenizer(field_id);
       _field.PrepareForStringValue(tokenizer, irs::StringLayout::kStrings);
       append_stored();
       if (_field.keyword) {
@@ -898,10 +896,10 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 }
 
 catalog::ColumnTokenizer& SearchSinkInsertBaseImpl::ResolveTokenizer(
-  irs::field_id field_id, duckdb::LogicalTypeId input) {
+  irs::field_id field_id) {
   auto& tokenizer = _tokenizer_cache.try_emplace(field_id).first->second;
   if (!tokenizer.analyzer) {
-    tokenizer = _tokenizer_provider(field_id, input);
+    tokenizer = _tokenizer_provider(field_id);
   }
   return tokenizer;
 }
@@ -1043,9 +1041,7 @@ SearchTableInsertSink MakeSearchTableInsertSink(
   }
   auto tokenizers = [dicts =
                        catalog::IndexTokenizers{context, catalog, *config}](
-                      irs::field_id id, duckdb::LogicalTypeId input) {
-    return dicts.Acquire(id, input);
-  };
+                      irs::field_id id) { return dicts.Acquire(id); };
   auto entry_of = [config](irs::field_id field_id) {
     const auto* entry = config->FindEntry(field_id);
     return entry ? entry : AllStoredEntry();

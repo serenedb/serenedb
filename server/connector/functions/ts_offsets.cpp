@@ -304,7 +304,7 @@ int64_t EvalOptionalLimit(duckdb::ClientContext& context,
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
-  ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer) {
+  ColumnId column_id, const catalog::TokenizerBindingRef& dict_tokenizer) {
   static constexpr duckdb::idx_t kSyntheticTableIdx = 0;
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 
@@ -379,7 +379,8 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
   }
 
   auto bind = duckdb::make_uniq<OffsetsBindData>();
-  bind->dict_tokenizer = dict->GetTokenizer();
+  bind->dict_tokenizer =
+    dict->GetTokenizer()->Bind(context, duckdb::LogicalType::VARCHAR);
   bind->filter = BuildFilterFromTSQuery(
     context, *arguments[2], kStandaloneColumnId, bind->dict_tokenizer);
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;

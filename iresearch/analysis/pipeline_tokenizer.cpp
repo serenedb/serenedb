@@ -61,13 +61,6 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
     SDB_ASSERT(options[i]);
     auto& child = *options[i];
     const auto traits = child.Traits();
-    if (i != 0 && _traits.output != traits.input) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                      ERR_MSG("pipeline: stage ", i, " expects ",
-                              duckdb::LogicalTypeIdToString(traits.input),
-                              " input, but the preceding stage produces ",
-                              duckdb::LogicalTypeIdToString(_traits.output)));
-    }
     if (traits.store) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -83,7 +76,6 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
       _traits = traits;
     } else {
       _split_mixed_blocks |= child.WantedBlockTraits().ascii;
-      _traits.output = traits.output;
       _traits.unique &= traits.unique;
       _traits.offsets &= traits.offsets;
       _traits.stable &= traits.stable;
@@ -462,9 +454,7 @@ Tokenizer::ptr PipelineTokenizer::Make(Options opts,
     }
     auto tokenizer = CreateTokenizer(std::move(*child), cache);
     SDB_ENSURE(tokenizer);
-    const auto traits = tokenizer->Traits();
-    if (!live_children.empty() && traits.keyword) {
-      SDB_ASSERT(traits.input == traits.output);
+    if (!live_children.empty() && tokenizer->Traits().keyword) {
       continue;
     }
     live_children.emplace_back(std::move(tokenizer));
@@ -478,12 +468,20 @@ Tokenizer::ptr PipelineTokenizer::Make(Options opts,
   return std::make_unique<PipelineTokenizer>(std::move(live_children));
 }
 
-duckdb::LogicalTypeId PipelineTokenizer::Output(
-  const Options& opts, duckdb::LogicalTypeId input) noexcept {
-  for (const auto& child : opts.children) {
-    input = OutputOf(*child, input);
+duckdb::LogicalTypeId PipelineTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
+  if (opts.children.empty()) {
+    return AcceptText(type_name(), input);
   }
-  return input;
+  duckdb::LogicalType stage_input = input;
+  for (auto& child : opts.children) {
+    if (!child) {
+      THROW_SQL_ERROR(ERR_MSG("pipeline: null child analyzer config"));
+    }
+    BindNode(*child, stage_input, ctx);
+    stage_input = duckdb::LogicalType{child->terms};
+  }
+  return stage_input.id();
 }
 
 void PipelineTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt,

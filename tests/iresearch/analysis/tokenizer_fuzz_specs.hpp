@@ -35,7 +35,7 @@ namespace tests::fuzz {
 struct Spec {
   std::string name;
   std::function<irs::analysis::TokenizerConfig()> config;
-  std::function<void(irs::analysis::Tokenizer&)> setup;
+  duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR;
   std::vector<std::string> dict;
   std::vector<std::string> native;
   Model model = Model::None;

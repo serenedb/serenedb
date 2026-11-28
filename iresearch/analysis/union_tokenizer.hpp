@@ -43,8 +43,9 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
     std::vector<std::unique_ptr<TokenizerConfig>> children;
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
-  static duckdb::LogicalTypeId Output(const Options& opts,
-                                      duckdb::LogicalTypeId input) noexcept;
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
 
   static constexpr std::string_view type_name() noexcept { return "union"; }
 
@@ -55,7 +56,7 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
     return irs::Type<UnionTokenizer>::id();
   }
 
-  TokenTraits Traits() const noexcept final;
+  TokenTraits Traits() const noexcept final { return {.explicit_pos = true}; }
 
   using Tokenizer::Fill;
 

@@ -48,17 +48,16 @@ class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
   };
   static ptr Make(Options opts);
 
-  static duckdb::LogicalTypeId Output(const Options& opts,
-                                      duckdb::LogicalTypeId input) noexcept {
-    return opts.delimiter.empty() ? duckdb::LogicalTypeId::BLOB : input;
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    const auto terms = AcceptText(type_name(), input);
+    return opts.delimiter.empty() ? duckdb::LogicalTypeId::BLOB : terms;
   }
 
   explicit DelimitedTokenizer(std::string_view delimiter);
   TokenTraits Traits() const noexcept final {
-    return {.output = _mode == Mode::Chars ? duckdb::LogicalTypeId::BLOB
-                                           : duckdb::LogicalTypeId::VARCHAR,
-            .offsets = true,
-            .keeps_ascii = true};
+    return {.offsets = true, .keeps_ascii = true};
   }
 
   auto PrepareBatch(BlockTraits) const { return std::tuple{_mode}; }

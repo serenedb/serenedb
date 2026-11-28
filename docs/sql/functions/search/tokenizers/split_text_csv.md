@@ -63,7 +63,7 @@ Offsets cover the raw piece, so the quotes are counted even though they are not 
 
 `DELIMITER = ''` switches the template to per-byte splitting: every byte becomes its own token, except that a `"`-quoted run is kept together as one unquoted token. With `DELIMITER = ''` the value `abc,"def"` yields `a`, `b`, `c`, `,` and `def`, the last one covering bytes 4–9. An unterminated `"` swallows the rest of the value, and that token keeps its quote.
 
-A byte of a multi-byte character is not text, so the tokens of this mode are `BLOB` terms: the function form and `ts_lexize` return `BLOB[]`, `ts_lexize` takes the dictionary name only as a constant, [`ts_dict_raw_agg`](../term-dictionary.md#ts_dict_agg) lists them where `ts_dict_agg` rejects the column, and the template can only be the last step of a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md).
+A byte of a multi-byte character is not text, so the tokens of this mode are `BLOB` terms: the function form and `ts_lexize` return `BLOB[]`, `ts_lexize` takes the dictionary name only as a constant, [`ts_dict_raw_agg`](../term-dictionary.md#ts_dict_agg) lists them where `ts_dict_agg` rejects the column, and a later step of a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) reads them as bytes.
 
 ## Examples
 

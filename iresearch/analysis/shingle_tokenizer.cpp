@@ -37,9 +37,13 @@ Tokenizer::ptr ShingleTokenizer::Make(Options opts,
   return std::make_unique<ShingleTokenizer>(std::move(base), std::move(opts));
 }
 
-duckdb::LogicalTypeId ShingleTokenizer::Output(
-  const Options& opts, duckdb::LogicalTypeId input) noexcept {
-  return opts.base_analyzer ? OutputOf(*opts.base_analyzer, input) : input;
+duckdb::LogicalTypeId ShingleTokenizer::BindInput(
+  Options& opts, const duckdb::LogicalType& input, BindContext& ctx) {
+  if (!opts.base_analyzer) {
+    return AcceptText(type_name(), input);
+  }
+  BindNode(*opts.base_analyzer, input, ctx);
+  return opts.base_analyzer->terms;
 }
 
 ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)

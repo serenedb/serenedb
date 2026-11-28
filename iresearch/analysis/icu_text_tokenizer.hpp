@@ -48,9 +48,10 @@ class IcuTextTokenizer : private util::Noncopyable {
   };
 
   static Tokenizer::ptr Make(Options opts);
-  static constexpr duckdb::LogicalTypeId Output(
-    const Options&, duckdb::LogicalTypeId input) noexcept {
-    return input;
+  static duckdb::LogicalTypeId BindInput(Options& /*opts*/,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& /*ctx*/) {
+    return AcceptText(type_name(), input);
   }
 
   virtual ~IcuTextTokenizer() = default;

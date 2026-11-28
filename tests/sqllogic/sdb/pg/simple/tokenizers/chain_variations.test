@@ -288,28 +288,36 @@ SELECT typeof(ts_lexize('union_sql', 'A,B')) AS text_union,
 text_union	mixed_union	binary_union
 VARCHAR[]	BLOB[]	BLOB[]
 
-statement error
+statement ok
 CREATE TEXT SEARCH DICTIONARY union_collate_then_lower AS [collate_tokens('en_US.UTF-8'), split_text_csv(' ')] | normalize_tokens(case := 'lower');
-----
-db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
 
-
-statement error
+statement ok
 CREATE TEXT SEARCH DICTIONARY binary_grams_then_lower AS generate_ngrams(2, 2, input_type := 'binary') | normalize_tokens(case := 'lower');
-----
-db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
 
-
-statement error
+statement ok
 CREATE TEXT SEARCH DICTIONARY bytes_then_lower AS split_text_csv('') | normalize_tokens(case := 'lower');
+
+query
+SELECT typeof(ts_lexize('union_collate_then_lower', 'A b')) AS union_then_lower,
+       typeof(ts_lexize('binary_grams_then_lower', 'AB')) AS grams_then_lower,
+       typeof(ts_lexize('bytes_then_lower', 'AB')) AS bytes_then_lower;
 ----
-db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+union_then_lower	grams_then_lower	bytes_then_lower
+BLOB[]	BLOB[]	BLOB[]
+
+query
+SELECT list_transform(ts_lexize('binary_grams_then_lower', 'AB'), lambda t: hex(t)) AS grams;
+----
+grams
+{6162}
 
 
 statement error
 CREATE TEXT SEARCH DICTIONARY md5_then_upper AS (lambda x: unhex(md5(x))) | (lambda x: upper(x));
 ----
-db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+db error: ERROR: sql: No function matches the given name and argument types 'upper(BLOB)'. You might need to add explicit type casts.
+	Candidate functions:
+	upper(string VARCHAR) -> VARCHAR
 
 
 statement ok

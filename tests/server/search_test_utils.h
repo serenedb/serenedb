@@ -57,13 +57,14 @@ inline duckdb::DatabaseInstance& EngineDb() {
   return irs::DuckDBEngine::Instance().instance();
 }
 
-inline catalog::ColumnTokenizer KeywordTokenizer(irs::field_id,
-                                                 duckdb::LogicalTypeId) {
+inline catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
   static auto gTokenizer = std::make_shared<catalog::Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
-  return {.analyzer = gTokenizer->Acquire(EngineContext()),
-          .features = irs::IndexFeatures::None};
+  return {
+    .analyzer = gTokenizer->Bind(EngineContext(), duckdb::LogicalType::VARCHAR)
+                  ->Acquire(EngineContext()),
+    .features = irs::IndexFeatures::None};
 }
 
 inline void WriteValues(

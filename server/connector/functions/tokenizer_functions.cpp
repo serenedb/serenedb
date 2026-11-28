@@ -45,6 +45,7 @@
 
 #include "catalog/entry/tokenizer.h"
 #include "connector/functions/list_token_sink.hpp"
+#include "connector/index_expression.hpp"
 #include "pg/connection_context.h"
 #include "pg/tokenizer_options.h"
 #include "pg/tsdictionary.h"
@@ -281,9 +282,18 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
                      operation)));
   }
 
-  auto config = pg::BuildStage(context, group.name, std::move(options),
-                               std::move(children), operation);
   auto& db = duckdb::DatabaseInstance::GetDatabase(context);
+  const auto& value_type = fn.GetArguments()[0];
+  irs::analysis::BindContext bind_ctx{
+    .client = context,
+    .cache = db.GetSharedObjectCache(),
+    .row_alone = connector::ComputedFromRowAlone,
+  };
+  auto config = irs::analysis::BindInput(
+    pg::BuildStage(context, group.name, std::move(options), std::move(children),
+                   operation),
+    list_input ? duckdb::ListType::GetChildType(value_type) : value_type,
+    bind_ctx);
   auto key = catalog::PackTokenizerConfig(config);
 
   auto pool = irs::analysis::TokenizerPool::Get(db, key);
@@ -296,7 +306,8 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   probe->Bind(context);
   pool->Release(std::move(probe));
 
-  fn.SetReturnType(duckdb::LogicalType::LIST(irs::analysis::OutputOf(config)));
+  fn.SetReturnType(
+    duckdb::LogicalType::LIST(duckdb::LogicalType{config.terms}));
   if (!list_input) {
     fn.SetFunctionCallback(TokenizeValues);
   } else if (wrapper) {

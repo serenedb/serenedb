@@ -29,22 +29,9 @@
 #include <utility>
 
 #include "catalog/persistence/blob.h"
+#include "connector/index_expression.hpp"
 
 namespace sdb::catalog {
-namespace {
-
-size_t PoolOf(duckdb::LogicalTypeId input) noexcept {
-  switch (input) {
-    case duckdb::LogicalTypeId::BLOB:
-      return 1;
-    case duckdb::LogicalTypeId::GEOMETRY:
-      return 2;
-    default:
-      return 0;
-  }
-}
-
-}  // namespace
 
 std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config) {
   return persistence::Pack(config);
@@ -72,47 +59,72 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
   permissions = info.permissions;
 }
 
-Tokenizer::TokenizerWrapper Tokenizer::Acquire(
-  duckdb::ClientContext& context, duckdb::LogicalTypeId input) const {
+TokenizerBinding::TokenizerWrapper TokenizerBinding::Acquire(
+  duckdb::ClientContext& context) const {
   irs::analysis::Tokenizer::ptr analyzer;
   {
     const absl::MutexLock lock{&_mutex};
-    auto& pool = _pools[PoolOf(input)];
-    if (!pool.empty()) {
-      analyzer = std::move(pool.back());
-      pool.pop_back();
+    if (!_pool.empty()) {
+      analyzer = std::move(_pool.back());
+      _pool.pop_back();
     }
   }
   if (!analyzer) {
     analyzer = irs::analysis::CreateTokenizer(
       irs::analysis::Clone(_config),
       irs::DuckDBEngine::Instance().instance().GetSharedObjectCache());
-    irs::analysis::SetInput(*analyzer, input);
   }
-  TokenizerWrapper wrapper{analyzer.release(),
-                           Deleter{shared_from_this(), input}};
+  TokenizerWrapper wrapper{analyzer.release(), Deleter{shared_from_this()}};
   wrapper->Bind(context);
   return wrapper;
 }
 
-duckdb::LogicalTypeId Tokenizer::Output(duckdb::ClientContext& context,
-                                        duckdb::LogicalTypeId input) const {
-  const auto output = irs::analysis::OutputOf(_config, input);
-  if (output != duckdb::LogicalTypeId::INVALID) {
-    return output;
-  }
-  auto typed = irs::analysis::Clone(_config);
-  irs::analysis::ResolveSqlOutputs(
-    typed, context,
-    irs::DuckDBEngine::Instance().instance().GetSharedObjectCache());
-  return irs::analysis::OutputOf(typed, input);
-}
-
-void Tokenizer::Release(duckdb::LogicalTypeId input,
-                        irs::analysis::Tokenizer::ptr analyzer) const noexcept {
+void TokenizerBinding::Release(
+  irs::analysis::Tokenizer::ptr analyzer) const noexcept {
   analyzer->Unbind();
   const absl::MutexLock lock{&_mutex};
-  _pools[PoolOf(input)].emplace_back(std::move(analyzer));
+  _pool.emplace_back(std::move(analyzer));
+}
+
+TokenizerBindingRef Tokenizer::Bind(duckdb::ClientContext& context,
+                                    const duckdb::LogicalType& input) const {
+  {
+    const absl::ReaderMutexLock lock{&_mutex};
+    if (const auto it = _by_input.find(input.id()); it != _by_input.end()) {
+      return it->second;
+    }
+  }
+  irs::analysis::BindContext ctx{
+    .client = context,
+    .cache = irs::DuckDBEngine::Instance().instance().GetSharedObjectCache(),
+    .row_alone = connector::ComputedFromRowAlone,
+  };
+  auto bound = irs::analysis::BindInput(_config, input, ctx);
+  auto packed = PackTokenizerConfig(bound);
+  auto binding = Intern(std::move(packed), std::move(bound));
+  const absl::MutexLock lock{&_mutex};
+  return _by_input.try_emplace(input.id(), std::move(binding)).first->second;
+}
+
+TokenizerBindingRef Tokenizer::Intern(std::string_view name,
+                                      std::string_view bound) const {
+  {
+    const absl::ReaderMutexLock lock{&_mutex};
+    if (const auto it = _bindings.find(bound); it != _bindings.end()) {
+      return it->second;
+    }
+  }
+  return Intern(std::string{bound}, UnpackTokenizerConfig(name, bound));
+}
+
+TokenizerBindingRef Tokenizer::Intern(
+  std::string packed, irs::analysis::TokenizerConfig bound) const {
+  const absl::MutexLock lock{&_mutex};
+  auto& binding = _bindings[std::move(packed)];
+  if (!binding) {
+    binding = std::make_shared<TokenizerBinding>(std::move(bound));
+  }
+  return binding;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {

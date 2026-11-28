@@ -20,51 +20,37 @@
 
 #include "iresearch/analysis/tokenizer_config.hpp"
 
-#include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 
-duckdb::LogicalTypeId OutputOf(const TokenizerConfig& cfg,
-                               duckdb::LogicalTypeId input) noexcept {
-  return std::visit(
-    [&]<typename Options>(const Options& opts) {
-      return Options::Owner::Output(opts, input);
-    },
-    cfg.config);
-}
-
-void SetInput(Tokenizer& tokenizer, duckdb::LogicalTypeId input) {
-  if (input == duckdb::LogicalTypeId::GEOMETRY) {
-    GeoTokenizer::Cast(tokenizer).SetWkbInput(true);
-  } else if (input == duckdb::LogicalTypeId::BLOB &&
-             tokenizer.type() == irs::Type<WildcardTokenizer>::id()) {
-    utils::downCast<WildcardTokenizer>(tokenizer).SetByteInput(true);
+duckdb::LogicalTypeId AcceptText(std::string_view stage,
+                                 const duckdb::LogicalType& input) {
+  const auto id = input.id();
+  if (id != duckdb::LogicalTypeId::VARCHAR &&
+      id != duckdb::LogicalTypeId::BLOB) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG(stage, ": takes text or bytes, not ", input.ToString()));
   }
+  return id;
 }
 
-void ResolveSqlOutputs(TokenizerConfig& cfg, duckdb::ClientContext& ctx,
-                       duckdb::SharedObjectCache& cache) {
-  std::visit(
+void BindNode(TokenizerConfig& node, const duckdb::LogicalType& input,
+              BindContext& ctx) {
+  node.terms = std::visit(
     [&]<typename Options>(Options& opts) {
-      if constexpr (std::is_same_v<Options, SqlTokenizer::Options>) {
-        opts.output = SqlTokenizer::ResolveOutput(opts.expression, ctx, cache);
-      } else if constexpr (std::is_same_v<Options,
-                                          PipelineTokenizer::Options> ||
-                           std::is_same_v<Options, UnionTokenizer::Options>) {
-        for (auto& child : opts.children) {
-          SDB_ASSERT(child);
-          ResolveSqlOutputs(*child, ctx, cache);
-        }
-      } else if constexpr (std::is_same_v<Options,
-                                          WildcardTokenizer::Options> ||
-                           std::is_same_v<Options, ShingleTokenizer::Options>) {
-        if (opts.base_analyzer) {
-          ResolveSqlOutputs(*opts.base_analyzer, ctx, cache);
-        }
-      }
+      return Options::Owner::BindInput(opts, input, ctx);
     },
-    cfg.config);
+    node.config);
+  node.input = input.id();
+}
+
+TokenizerConfig BindInput(const TokenizerConfig& definition,
+                          const duckdb::LogicalType& input, BindContext& ctx) {
+  auto bound = Clone(definition);
+  BindNode(bound, input, ctx);
+  return bound;
 }
 
 }  // namespace irs::analysis

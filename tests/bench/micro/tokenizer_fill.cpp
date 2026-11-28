@@ -58,6 +58,7 @@
 #include <string_view>
 #include <vector>
 
+#include "bound_config.hpp"
 #include "test_resources.hpp"
 
 namespace {
@@ -951,17 +952,15 @@ Tokenizer::ptr MakeGeoJsonShape() {
 }
 
 Tokenizer::ptr MakeGeoJsonPointWkb() {
-  auto stream = MakeGeoJsonPoint();
-  static_cast<GeoJsonTokenizer*>(stream.get())->SetWkbInput(true);
-  return stream;
+  return GeoJsonTokenizer::Make({.type = GeoJsonTokenizer::Type::Point,
+                                 .coding = GeoJsonTokenizer::Coding::S2Point,
+                                 .wkb = true});
 }
 
 Tokenizer::ptr MakeGeoPoint() { return GeoPointTokenizer::Make({}); }
 
 Tokenizer::ptr MakeGeoPointWkb() {
-  auto stream = GeoPointTokenizer::Make({});
-  static_cast<GeoPointTokenizer*>(stream.get())->SetWkbInput(true);
-  return stream;
+  return GeoPointTokenizer::Make({.wkb = true});
 }
 
 Tokenizer::ptr MakeStem() {
@@ -1028,18 +1027,25 @@ Tokenizer::ptr MakeStopwords() {
 
 Tokenizer::ptr MakeDelimiter() { return DelimitedTokenizer::Make({","}); }
 
-Tokenizer::ptr MakeSqlUpper() {
-  return SqlTokenizer::Make({.expression = "upper(input)"}, tests::Cache());
+Tokenizer::ptr MakeSql(std::string expression) {
+  return tests::MakeBound(irs::analysis::TokenizerConfig{SqlTokenizer::Options{
+                            .expression = std::move(expression)}},
+                          duckdb::LogicalType::VARCHAR, *gBinder->con.context);
 }
 
-Tokenizer::ptr MakeSqlSplit() {
-  return SqlTokenizer::Make({.expression = "string_split(input, ',')"},
-                            tests::Cache());
+Tokenizer::ptr MakeFilterPredicate(std::string predicate) {
+  return tests::MakeBound(
+    irs::analysis::TokenizerConfig{
+      FilterTokensTokenizer::Options{.predicate = std::move(predicate)}},
+    duckdb::LogicalType::VARCHAR, *gBinder->con.context);
 }
+
+Tokenizer::ptr MakeSqlUpper() { return MakeSql("upper(input)"); }
+
+Tokenizer::ptr MakeSqlSplit() { return MakeSql("string_split(input, ',')"); }
 
 Tokenizer::ptr MakeSqlSplitLower() {
-  return SqlTokenizer::Make({.expression = "string_split(lower(input), ',')"},
-                            tests::Cache());
+  return MakeSql("string_split(lower(input), ',')");
 }
 
 Tokenizer::ptr MakeUnion2() {
@@ -1496,19 +1502,18 @@ Tokenizer::ptr MakePipelineSegLength() {
 }
 
 Tokenizer::ptr MakePipelineSegLengthLambda() {
-  return MakePipelineSegThen(FilterTokensTokenizer::Make(
-    {.predicate = "length(input) BETWEEN 2 AND 6"}, tests::Cache()));
+  return MakePipelineSegThen(
+    MakeFilterPredicate("length(input) BETWEEN 2 AND 6"));
 }
 
 Tokenizer::ptr MakePipelineSegLengthSql() {
-  return MakePipelineSegThen(SqlTokenizer::Make(
-    {.expression = "CASE WHEN length(input) BETWEEN 2 AND 6 THEN input END"},
-    tests::Cache()));
+  return MakePipelineSegThen(
+    MakeSql("CASE WHEN length(input) BETWEEN 2 AND 6 THEN input END"));
 }
 
 Tokenizer::ptr MakePipelineSegStopLambda() {
-  return MakePipelineSegThen(FilterTokensTokenizer::Make(
-    {.predicate = "input NOT IN ('the', 'and', 'of', 'a')"}, tests::Cache()));
+  return MakePipelineSegThen(
+    MakeFilterPredicate("input NOT IN ('the', 'and', 'of', 'a')"));
 }
 
 Tokenizer::ptr MakeHtmlStrip() { return HtmlStripTokenizer::Make({}); }
@@ -1537,15 +1542,13 @@ Tokenizer::ptr MakePipelineT2Stem() { return MakePipelineT2RewriteImpl(true); }
 Tokenizer::ptr MakePipelineT2Sql() {
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(DelimitedTokenizer::Make({","}));
-  subs.push_back(
-    SqlTokenizer::Make({.expression = "upper(input)"}, tests::Cache()));
+  subs.push_back(MakeSql("upper(input)"));
   return std::make_unique<PipelineTokenizer>(std::move(subs));
 }
 
 Tokenizer::ptr MakePipelineSqlSplitNorm() {
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SqlTokenizer::Make({.expression = "string_split(input, ',')"},
-                                    tests::Cache()));
+  subs.push_back(MakeSql("string_split(input, ',')"));
   NormalizingTokenizer::Options o;
   o.locale = duckdb::text::Locale::FromName("en");
   o.case_convert = Case::Lower;

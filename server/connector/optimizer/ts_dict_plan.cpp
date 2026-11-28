@@ -339,7 +339,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   const auto [kind, agg_name] = *fn_info;
   const bool bytes = element == duckdb::LogicalTypeId::BLOB;
   if (kind == TsDictColumn::Term) {
-    const auto output = scan.Bind().relation.ResolveTokenizers(context).Output(
+    const auto output = scan.Bind().relation.ResolveTokenizers(context).Terms(
       index->TermField(col_id), element);
     if (output != duckdb::LogicalTypeId::VARCHAR) {
       THROW_SQL_ERROR(
@@ -2180,8 +2180,8 @@ class TsDictFilterClaim {
     }
     auto& req = _bind_data.ts_dict.requests.front();
     if (!req.bytes) {
-      const auto output = _getters.tokenizers.Output(
-        req.field_id, duckdb::LogicalTypeId::VARCHAR);
+      const auto output =
+        _getters.tokenizers.Terms(req.field_id, duckdb::LogicalTypeId::VARCHAR);
       if (output != duckdb::LogicalTypeId::VARCHAR) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

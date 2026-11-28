@@ -180,12 +180,14 @@ duckdb::Vector MakeSqlNullVector(duckdb::idx_t count) {
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
-  static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id,
-                                                   duckdb::LogicalTypeId) {
+  static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
     static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
       search::Features{}, irs::analysis::TokenizerConfig{
                             .config = irs::KeywordTokenizer::Options{}});
-    auto tokenizer = gKeywordTokenizer->Acquire(sdb::test::EngineContext());
+    auto& context = sdb::test::EngineContext();
+    auto tokenizer =
+      gKeywordTokenizer->Bind(context, duckdb::LogicalType::VARCHAR)
+        ->Acquire(context);
     return {.analyzer = std::move(tokenizer),
             .features = irs::IndexFeatures::None};
   }
@@ -201,7 +203,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   ::tests::IndexWriter::ptr _data_writer;
 };
 
-TEST(TokenizerPoolTest, AGeoLeaseKeepsTheInputItWasAcquiredFor) {
+TEST(TokenizerPoolTest, AGeoLeaseKeepsTheInputItWasBoundFor) {
   auto dict = std::make_shared<catalog::Tokenizer>(
     search::Features{},
     irs::analysis::TokenizerConfig{
@@ -228,19 +230,20 @@ TEST(TokenizerPoolTest, AGeoLeaseKeepsTheInputItWasAcquiredFor) {
     return ok && consumer.count > 0;
   };
 
-  auto wkb =
-    dict->Acquire(sdb::test::EngineContext(), duckdb::LogicalTypeId::GEOMETRY);
+  auto& context = sdb::test::EngineContext();
+  const auto geometry = dict->Bind(context, duckdb::LogicalType::GEOMETRY());
+  auto wkb = geometry->Acquire(context);
   auto* wkb_instance = wkb.get();
   ASSERT_FALSE(fill(*wkb));
   wkb.reset();
 
-  auto text = dict->Acquire(sdb::test::EngineContext());
+  auto text =
+    dict->Bind(context, duckdb::LogicalType::VARCHAR)->Acquire(context);
   ASSERT_NE(wkb_instance, text.get());
   ASSERT_TRUE(fill(*text));
   text.reset();
 
-  auto again =
-    dict->Acquire(sdb::test::EngineContext(), duckdb::LogicalTypeId::GEOMETRY);
+  auto again = geometry->Acquire(context);
   ASSERT_EQ(wkb_instance, again.get());
   ASSERT_FALSE(fill(*again));
 }

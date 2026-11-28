@@ -283,14 +283,15 @@ TEST(pipeline_token_stream_test, empty_pipeline) {
   ASSERT_TRUE(made_tokens->empty());
 }
 
-TEST(pipeline_token_stream_test, incompatible_types_rejected) {
+TEST(pipeline_token_stream_test, a_text_stage_reads_binary_terms) {
   std::vector<irs::analysis::Tokenizer::ptr> pipeline_options;
   pipeline_options.emplace_back(MakeCollation("en_US.UTF-8"));
   pipeline_options.emplace_back(MakeDelimiter(" "));
 
-  ASSERT_THROW(
-    irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options)),
-    irs::SqlException);
+  irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
+  const auto tokens = tests::Analyze(pipe, "b a");
+  ASSERT_TRUE(tokens.has_value());
+  EXPECT_FALSE(tokens->empty());
 }
 
 TEST(pipeline_token_stream_test, many_tokenizers) {
@@ -1687,8 +1688,6 @@ TEST(pipeline_token_stream_test, traits_propagate_ends) {
   subs.push_back(MakeCollation("en_US.UTF-8"));
   const auto traits =
     irs::analysis::PipelineTokenizer{std::move(subs)}.Traits();
-  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, traits.input);
-  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, traits.output);
   EXPECT_TRUE(traits.unique);
   EXPECT_FALSE(traits.explicit_pos);
 }

@@ -93,9 +93,6 @@ TEST(TokenizerLifecycle, PooledInstancesStayEquivalent) {
       ASSERT_EQ(raw, borrowed.get())
         << "the pool handed back a different instance";
       borrowed->Bind(*conn.context);
-      if (spec->setup) {
-        spec->setup(*borrowed);
-      }
       const auto after = Drive(*borrowed, values, layout);
       ASSERT_NO_FATAL_FAILURE(
         ExpectSame(baseline, after, "recycled through the pool"));
@@ -150,9 +147,6 @@ TEST(TokenizerLifecycle, OnePoolPerDictionaryAcrossThreads) {
           borrowed = Make(*spec, *worker_conn.context);
         } else {
           borrowed->Bind(*worker_conn.context);
-          if (spec->setup) {
-            spec->setup(*borrowed);
-          }
         }
         if (!borrowed) {
           ++failures;

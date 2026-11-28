@@ -30,6 +30,7 @@
 #include <variant>
 #include <vector>
 
+#include "bound_config.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
@@ -122,8 +123,6 @@ TEST(TokenizerFuzz, EverySpecConstructsAndDeclaresSaneTraits) {
 
     const auto traits = tokenizer->Traits();
     const auto again = tokenizer->Traits();
-    EXPECT_EQ(traits.input, again.input);
-    EXPECT_EQ(traits.output, again.output);
     EXPECT_EQ(traits.unique, again.unique);
     EXPECT_EQ(traits.keyword, again.keyword);
     EXPECT_EQ(traits.explicit_pos, again.explicit_pos);
@@ -132,10 +131,11 @@ TEST(TokenizerFuzz, EverySpecConstructsAndDeclaresSaneTraits) {
     EXPECT_EQ(traits.stable, again.stable);
     EXPECT_TRUE(!traits.keyword || traits.unique)
       << "keyword traits imply unique";
-    EXPECT_TRUE(traits.output == duckdb::LogicalTypeId::VARCHAR ||
-                traits.output == duckdb::LogicalTypeId::BLOB)
-      << "unexpected output type";
-    EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, traits.input);
+    const auto terms =
+      tests::Bound(spec->config(), duckdb::LogicalType{spec->input}).terms;
+    EXPECT_TRUE(terms == duckdb::LogicalTypeId::VARCHAR ||
+                terms == duckdb::LogicalTypeId::BLOB)
+      << "unexpected term type";
 
     const auto wanted = tokenizer->WantedBlockTraits();
     EXPECT_EQ(wanted.ascii, tokenizer->WantedBlockTraits().ascii);

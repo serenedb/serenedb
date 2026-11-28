@@ -68,6 +68,7 @@ struct FieldRecord {
   bool is_keyword = false;
   irs::ColumnOptions column_options;
   duckdb::idx_t text_dictionary = 0;
+  std::string tokenizer;
 };
 
 struct UniqueKeyRecord {

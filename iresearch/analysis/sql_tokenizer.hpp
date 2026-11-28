@@ -29,15 +29,17 @@
 
 #include "tokenizer.hpp"
 
-namespace duckdb {
-
-class Expression;
-class ParsedExpression;
-
-}  // namespace duckdb
 namespace irs::analysis {
 
 struct SqlCall;
+
+struct BoundSql {
+  std::string bytes;
+  duckdb::LogicalType type;
+};
+
+BoundSql BindSql(BindContext& ctx, std::string_view owner,
+                 std::string_view text, const duckdb::LogicalType& input);
 
 class SqlExpression final : public duckdb::ObjectCacheEntry {
  public:
@@ -46,22 +48,21 @@ class SqlExpression final : public duckdb::ObjectCacheEntry {
   }
 
   static duckdb::shared_ptr<SqlExpression> Get(duckdb::SharedObjectCache& cache,
-                                               std::string_view owner,
-                                               std::string_view text);
+                                               std::string_view bound);
 
-  SqlExpression(std::string_view owner, std::string_view text);
+  explicit SqlExpression(std::string_view bound);
   ~SqlExpression() final;
 
   std::string GetObjectType() final { return std::string{ObjectType()}; }
 
   duckdb::optional_idx GetEstimatedCacheMemory() const final { return 0u; }
 
-  const duckdb::Expression& Bind(duckdb::ClientContext& ctx);
+  const duckdb::Expression& Deserialize(duckdb::ClientContext& ctx,
+                                        std::string_view owner);
 
  private:
-  std::string_view _owner;
   absl::Mutex _mutex;
-  std::unique_ptr<duckdb::ParsedExpression> _parsed ABSL_GUARDED_BY(_mutex);
+  std::string _bound ABSL_GUARDED_BY(_mutex);
   std::unique_ptr<duckdb::Expression> _expr ABSL_GUARDED_BY(_mutex);
 };
 
@@ -70,18 +71,17 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
   struct Options {
     using Owner = SqlTokenizer;
     std::string expression;
+    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::INVALID;
     duckdb::LogicalTypeId output = duckdb::LogicalTypeId::INVALID;
+    bool list = false;
+    std::string bound;
   };
 
   static constexpr std::string_view type_name() noexcept { return "sql"; }
 
-  static duckdb::LogicalTypeId Output(const Options& opts,
-                                      duckdb::LogicalTypeId) noexcept {
-    return opts.output;
-  }
-  static duckdb::LogicalTypeId ResolveOutput(std::string_view expression,
-                                             duckdb::ClientContext& ctx,
-                                             duckdb::SharedObjectCache& cache);
+  static duckdb::LogicalTypeId BindInput(Options& opts,
+                                         const duckdb::LogicalType& input,
+                                         BindContext& ctx);
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   SqlTokenizer(const Options& opts, duckdb::SharedObjectCache& cache);
@@ -91,7 +91,7 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
     return irs::Type<SqlTokenizer>::id();
   }
 
-  TokenTraits Traits() const noexcept final;
+  TokenTraits Traits() const noexcept final { return {.unique = !_list}; }
 
   void Bind(duckdb::ClientContext& ctx) final;
   void Unbind() noexcept final;
@@ -107,15 +107,15 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
 
  private:
   duckdb::shared_ptr<SqlExpression> _expression;
-  const duckdb::Expression* _expr = nullptr;
   std::unique_ptr<SqlCall> _call;
-  duckdb::LogicalTypeId _output;
+  duckdb::LogicalType _input;
+  bool _list;
 };
 
 class SqlPredicate final : private util::Noncopyable {
  public:
-  SqlPredicate(std::string_view owner, std::string_view expression,
-               duckdb::SharedObjectCache& cache);
+  SqlPredicate(std::string_view owner, std::string_view bound,
+               duckdb::LogicalTypeId input, duckdb::SharedObjectCache& cache);
   ~SqlPredicate();
 
   void Bind(duckdb::ClientContext& ctx);
@@ -130,6 +130,7 @@ class SqlPredicate final : private util::Noncopyable {
   std::string_view _owner;
   duckdb::shared_ptr<SqlExpression> _expression;
   std::unique_ptr<SqlCall> _call;
+  duckdb::LogicalType _input;
 };
 
 }  // namespace irs::analysis

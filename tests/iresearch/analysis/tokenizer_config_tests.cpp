@@ -29,6 +29,7 @@
 #include <string>
 #include <vector>
 
+#include "bound_config.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -183,14 +184,6 @@ std::vector<Rejected> RejectedConfigs() {
     opts.children.push_back(nullptr);
     return Cfg{std::move(opts)};
   });
-  Collect(out, "pipeline/blob_into_varchar", [] {
-    PipelineTokenizer::Options opts;
-    opts.children.push_back(Child(Cfg{CollationTokenizer::Options{
-      .locale = duckdb::text::Locale::FromName("en_US.UTF-8")}}));
-    opts.children.push_back(
-      Child(Cfg{DelimitedTokenizer::Options{.delimiter = ","}}));
-    return Cfg{std::move(opts)};
-  });
   Collect(out, "pipeline/store_stage", [] {
     PipelineTokenizer::Options opts;
     opts.children.push_back(
@@ -232,8 +225,7 @@ TEST(TokenizerConfig, InvalidOptionsAreRefused) {
     irs::analysis::Tokenizer::ptr tokenizer;
     bool threw = false;
     try {
-      tokenizer =
-        irs::analysis::CreateTokenizer(rejected.config(), tests::Cache());
+      tokenizer = tests::MakeBound(rejected.config());
     } catch (...) {
       threw = true;
     }
@@ -246,8 +238,7 @@ TEST(TokenizerConfig, RefusalLeavesTheCacheUsable) {
   for (const auto& rejected : RejectedConfigs()) {
     SCOPED_TRACE(rejected.name);
     try {
-      auto ignored =
-        irs::analysis::CreateTokenizer(rejected.config(), tests::Cache());
+      auto ignored = tests::MakeBound(rejected.config());
     } catch (...) {
     }
   }
@@ -267,19 +258,10 @@ TEST(TokenizerConfig, InvalidSqlExpressionsAreRefused) {
        {"", "not_a_function(input)", "upper(", "input +", "1 +",
         "unknown_column", "upper(missing_arg_name)"}) {
     SCOPED_TRACE(expression);
-    bool threw = false;
-    try {
-      auto tokenizer = SqlTokenizer::Make(
-        {.expression = std::string{expression}}, tests::Cache());
-      if (tokenizer) {
-        tokenizer->Bind(tests::EngineContext());
-      } else {
-        threw = true;
-      }
-    } catch (...) {
-      threw = true;
-    }
-    EXPECT_TRUE(threw) << "expression was accepted: " << expression;
+    EXPECT_THROW(
+      tests::Bound(Cfg{SqlTokenizer::Options{.expression = expression}}),
+      irs::SqlException)
+      << "expression was accepted: " << expression;
   }
 }
 
@@ -339,50 +321,41 @@ TEST(TokenizerConfig, EverySpecRoundTripsThroughTheBinaryFormat) {
   EXPECT_GT(round_tripped, tests::fuzz::AllSpecs().size() / 2);
 }
 
-TEST(TokenizerConfig, EverySpecDeclaresTheOutputItsTokenizerReports) {
+TEST(TokenizerConfig, EveryBoundSpecRoundTripsThroughTheBinaryFormat) {
+  size_t round_tripped = 0;
   for (const auto& spec : tests::fuzz::AllSpecs()) {
     SCOPED_TRACE(spec.name);
-    auto cfg = spec.config();
-    irs::analysis::ResolveSqlOutputs(cfg, tests::EngineContext(),
-                                     tests::Cache());
-    const auto tokenizer =
-      irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg), tests::Cache());
-    EXPECT_EQ(irs::analysis::OutputOf(cfg), tokenizer->Traits().output);
+    std::string bytes;
+    try {
+      bytes =
+        Pack(tests::Bound(spec.config(), duckdb::LogicalType{spec.input}));
+    } catch (const std::exception& e) {
+      EXPECT_NE(std::string_view{e.what()}.find("for Accept"),
+                std::string_view::npos)
+        << e.what();
+      continue;
+    }
+    EXPECT_EQ(Pack(Unpack(bytes)), bytes);
+    ++round_tripped;
   }
+  EXPECT_GT(round_tripped, tests::fuzz::AllSpecs().size() / 2);
 }
 
-TEST(TokenizerConfig, AnSqlStageWithoutItsTypeLeavesTheOutputUnknown) {
-  const auto untyped = [] {
-    return Cfg{SqlTokenizer::Options{.expression = "x"}};
-  };
-  EXPECT_EQ(duckdb::LogicalTypeId::INVALID, OutputOf(untyped()));
-  PipelineTokenizer::Options pipeline;
-  pipeline.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
-  pipeline.children.push_back(Child(untyped()));
-  EXPECT_EQ(duckdb::LogicalTypeId::INVALID, OutputOf(Cfg{std::move(pipeline)}));
-  UnionTokenizer::Options members;
-  members.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
-  members.children.push_back(Child(untyped()));
-  EXPECT_EQ(duckdb::LogicalTypeId::INVALID, OutputOf(Cfg{std::move(members)}));
-  UnionTokenizer::Options unknown_first;
-  unknown_first.children.push_back(Child(untyped()));
-  unknown_first.children.push_back(
-    Child(Cfg{irs::KeywordTokenizer::Options{}}));
-  EXPECT_EQ(duckdb::LogicalTypeId::INVALID,
-            OutputOf(Cfg{std::move(unknown_first)}));
-  UnionTokenizer::Options mixed;
-  mixed.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
-  mixed.children.push_back(Child(Cfg{SqlTokenizer::Options{
-    .expression = "x", .output = duckdb::LogicalTypeId::BLOB}}));
-  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, OutputOf(Cfg{std::move(mixed)}));
-}
-
-TEST(TokenizerConfig, AKeywordStageKeepsTheTypeItIsGiven) {
+TEST(TokenizerConfig, ATextTemplateKeepsTheTypeItIsGiven) {
   const Cfg keyword{irs::KeywordTokenizer::Options{}};
-  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, OutputOf(keyword));
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, tests::Bound(keyword).terms);
   EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
-            OutputOf(keyword, duckdb::LogicalTypeId::BLOB));
+            tests::Bound(keyword, duckdb::LogicalType::BLOB).terms);
+  EXPECT_THROW(tests::Bound(keyword, duckdb::LogicalType::INTEGER),
+               irs::SqlException);
 
+  const Cfg shingle{ShingleTokenizer::Options{}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, tests::Bound(shingle).terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(shingle, duckdb::LogicalType::BLOB).terms);
+}
+
+TEST(TokenizerConfig, APipelineThreadsTheTermTypeThroughItsStages) {
   const auto bytes = [] {
     return Cfg{NGramTokenizer::Options{
       .min_gram = 2,
@@ -390,36 +363,83 @@ TEST(TokenizerConfig, AKeywordStageKeepsTheTypeItIsGiven) {
       .preserve_original = false,
       .stream_bytes_type = NGramTokenizer::InputType::Binary}};
   };
-  PipelineTokenizer::Options trailing;
-  trailing.children.push_back(Child(bytes()));
-  trailing.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
-  PipelineTokenizer::Options leading;
-  leading.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
-  leading.children.push_back(Child(bytes()));
-  const auto check = [](const Cfg& pipeline) {
-    EXPECT_EQ(duckdb::LogicalTypeId::BLOB, OutputOf(pipeline));
-    EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
-              irs::analysis::CreateTokenizer(irs::analysis::Clone(pipeline),
-                                             tests::Cache())
-                ->Traits()
-                .output);
+  const auto keyword = [] { return Cfg{irs::KeywordTokenizer::Options{}}; };
+  const auto text = [] { return Cfg{TextTokenizer::Options{}}; };
+  const auto pipeline = [](auto... stages) {
+    PipelineTokenizer::Options opts;
+    (opts.children.push_back(Child(stages())), ...);
+    return Cfg{std::move(opts)};
   };
-  check(Cfg{std::move(trailing)});
-  check(Cfg{std::move(leading)});
+  for (const auto& cfg : {pipeline(bytes, keyword), pipeline(keyword, bytes),
+                          pipeline(bytes, text)}) {
+    const auto bound = tests::Bound(cfg);
+    EXPECT_EQ(duckdb::LogicalTypeId::BLOB, bound.terms);
+    const auto& stages = std::get<PipelineTokenizer::Options>(bound.config);
+    for (size_t i = 1; i < stages.children.size(); ++i) {
+      EXPECT_EQ(stages.children[i - 1]->terms, stages.children[i]->input);
+    }
+    EXPECT_NE(nullptr, tests::MakeBound(cfg));
+  }
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
+            tests::Bound(pipeline(keyword, text)).terms);
 }
 
-TEST(TokenizerConfig, AShingleWithoutABaseKeepsTheTypeItIsGiven) {
-  Cfg shingle{ShingleTokenizer::Options{}};
-  irs::analysis::ResolveSqlOutputs(shingle, tests::EngineContext(),
-                                   tests::Cache());
-  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
-            OutputOf(shingle, duckdb::LogicalTypeId::BLOB));
-  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, OutputOf(shingle));
+TEST(TokenizerConfig, AUnionTakesTheTypeItsMembersShare) {
+  const auto members = [](Cfg a, Cfg b) {
+    UnionTokenizer::Options opts;
+    opts.children.push_back(Child(std::move(a)));
+    opts.children.push_back(Child(std::move(b)));
+    return Cfg{std::move(opts)};
+  };
   EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
-            irs::analysis::CreateTokenizer(irs::analysis::Clone(shingle),
-                                           tests::Cache())
-              ->Traits()
-              .output);
+            tests::Bound(members(Cfg{irs::KeywordTokenizer::Options{}},
+                                 Cfg{TextTokenizer::Options{}}))
+              .terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(members(Cfg{irs::KeywordTokenizer::Options{}},
+                                 Cfg{CollationTokenizer::Options{}}))
+              .terms);
+}
+
+TEST(TokenizerConfig, AnSqlStageBindsItsExpressionToItsInput) {
+  const Cfg identity{SqlTokenizer::Options{.expression = "input"}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR, tests::Bound(identity).terms);
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB,
+            tests::Bound(identity, duckdb::LogicalType::BLOB).terms);
+  const Cfg hex{SqlTokenizer::Options{.expression = "hex(input)"}};
+  EXPECT_EQ(duckdb::LogicalTypeId::VARCHAR,
+            tests::Bound(hex, duckdb::LogicalType::BLOB).terms);
+  const Cfg upper{SqlTokenizer::Options{.expression = "upper(input)"}};
+  EXPECT_THROW(tests::Bound(upper, duckdb::LogicalType::BLOB),
+               irs::SqlException);
+}
+
+TEST(TokenizerConfig, GeoTakesJsonTextOrGeometry) {
+  const auto wkb = [](const Cfg& cfg, const duckdb::LogicalType& input) {
+    return std::get<GeoJsonTokenizer::Options>(tests::Bound(cfg, input).config)
+      .wkb;
+  };
+  const Cfg geojson{GeoJsonTokenizer::Options{}};
+  EXPECT_FALSE(wkb(geojson, duckdb::LogicalType::VARCHAR));
+  EXPECT_TRUE(wkb(geojson, duckdb::LogicalType::GEOMETRY()));
+  EXPECT_THROW(tests::Bound(geojson, duckdb::LogicalType::BLOB),
+               irs::SqlException);
+  const Cfg latlng{
+    GeoJsonTokenizer::Options{.coding = GeoJsonTokenizer::Coding::S2LatLngF64}};
+  EXPECT_THROW(tests::Bound(latlng, duckdb::LogicalType::GEOMETRY()),
+               irs::SqlException);
+}
+
+TEST(TokenizerConfig, AWildcardCutsByteGramsForBytes) {
+  const auto bytes = [](const duckdb::LogicalType& input) {
+    return std::get<WildcardTokenizer::Options>(
+             tests::Bound(Cfg{WildcardTokenizer::Options{.ngram_size = 3}},
+                          input)
+               .config)
+      .bytes;
+  };
+  EXPECT_FALSE(bytes(duckdb::LogicalType::VARCHAR));
+  EXPECT_TRUE(bytes(duckdb::LogicalType::BLOB));
 }
 
 TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {

@@ -1179,3 +1179,91 @@ SELECT ts_dict_agg(h) AS hexes FROM btext_idx
 ----
 hexes
 {6162}
+
+statement ok
+INSERT INTO btext VALUES (2, '\x6162'::bytea, '\x5c783431'::bytea), (3, '\x6162'::bytea, '\x41'::bytea)
+
+query
+SELECT list_sort(ts_dict_agg(h)) AS hexes FROM btext_idx
+----
+hexes
+{41,5C783431,6162}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY btext_long AS split_text() | filter_tokens(lambda x: length(x) > 2)
+
+statement ok
+CREATE TABLE bfilter(id INTEGER PRIMARY KEY, w BYTEA)
+
+statement ok
+CREATE INDEX bfilter_idx ON bfilter USING inverted(id, w btext_long)
+
+statement ok
+INSERT INTO bfilter VALUES (1, '\x616220c3a9c3a9'::bytea)
+
+query
+SELECT list_transform(ts_dict_raw_agg(w), lambda t: hex(t)) AS terms FROM bfilter_idx
+----
+terms
+{C3A9C3A9}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY btext_cast AS (lambda x: x::VARCHAR)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY btext_upper AS (lambda x: upper(x))
+
+statement error
+CREATE INDEX btext_cast_idx ON bfilter USING inverted(id, w btext_cast)
+----
+db error: ERROR: Column 'w': sql: the expression depends on the session
+HINT: Its result must follow from the value alone, not from settings such as TimeZone or bytea_output.
+
+
+statement error
+CREATE INDEX btext_upper_idx ON bfilter USING inverted(id, w btext_upper)
+----
+db error: ERROR: Column 'w': sql: No function matches the given name and argument types 'upper(BLOB)'. You might need to add explicit type casts.
+	Candidate functions:
+	upper(string VARCHAR) -> VARCHAR
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY btext_b64 AS to_base64()
+
+statement ok
+CREATE TABLE bb64(id INTEGER PRIMARY KEY, b BYTEA)
+
+statement ok
+CREATE INDEX bb64_idx ON bb64 USING inverted(id, b btext_b64)
+
+statement ok
+INSERT INTO bb64 VALUES (1, '\x41'::bytea)
+
+query
+SELECT ts_dict_agg(b) AS terms FROM bb64_idx
+----
+terms
+{QQ==}
+
+query
+SELECT ts_lexize('btext_b64', '\x41'::bytea) AS lexemes
+----
+lexemes
+{QQ==}
+
+query
+SELECT id FROM bb64_idx WHERE b @@ '\x41'::bytea
+----
+id
+1
+
+statement ok
+CREATE TABLE bb64t(id INTEGER PRIMARY KEY, t VARCHAR)
+
+statement error
+CREATE INDEX bb64t_idx ON bb64t USING inverted(id, t btext_b64)
+----
+db error: ERROR: Column 't': sql: No function matches the given name and argument types 'to_base64(VARCHAR)'. You might need to add explicit type casts.
+	Candidate functions:
+	to_base64(blob BLOB) -> VARCHAR

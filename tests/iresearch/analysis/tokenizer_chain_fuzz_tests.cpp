@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "bound_config.hpp"
 #include "pipeline_reference.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
@@ -49,9 +50,8 @@ using irs::analysis::UnionTokenizer;
 
 duckdb::ClientContext& Context() { return tests::EngineContext(); }
 
-Tokenizer::ptr Build(TokenizerConfig config) {
-  auto tokenizer =
-    irs::analysis::CreateTokenizer(std::move(config), tests::Cache());
+Tokenizer::ptr Build(const TokenizerConfig& config) {
+  auto tokenizer = tests::MakeBound(config);
   if (tokenizer) {
     tokenizer->Bind(Context());
   }
@@ -111,16 +111,16 @@ std::optional<std::vector<std::string>> Sequential(
 }
 
 bool Chainable(const Spec& spec) {
-  if (spec.model != Model::None || spec.setup) {
+  if (spec.model != Model::None ||
+      spec.input != duckdb::LogicalTypeId::VARCHAR) {
     return false;
   }
   auto tokenizer = Make(spec, Context());
   if (!tokenizer) {
     return false;
   }
-  const auto traits = tokenizer->Traits();
-  if (traits.input != duckdb::LogicalTypeId::VARCHAR ||
-      traits.output != duckdb::LogicalTypeId::VARCHAR || traits.store) {
+  if (tests::Bound(spec.config()).terms != duckdb::LogicalTypeId::VARCHAR ||
+      tokenizer->Traits().store) {
     return false;
   }
   auto probes = SpecCorpus(spec, Seed(), 4);

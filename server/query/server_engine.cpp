@@ -219,6 +219,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterSereneDBOptimizers(db);
 
+  for (const auto name : Registry<SqlFunctions>::Names()) {
+    Registry<SqlFunctions>::Find(name)->register_functions(db);
+  }
+
   duckdb::IndexType inverted;
   inverted.name = catalog::kInvertedIndexTypeName;
   inverted.create_plan = &connector::SereneDBCreateIndexPlan;

@@ -37,8 +37,7 @@ UniqueId UniqueId::New() {
   UniqueId id;
   const auto millis = static_cast<uint64_t>(absl::ToUnixMillis(absl::Now()));
   for (size_t i = 0; i != kTimeBytes; ++i) {
-    id._bytes[i] =
-      static_cast<uint8_t>(millis >> (8 * (kTimeBytes - 1 - i)));
+    id._bytes[i] = static_cast<uint8_t>(millis >> (8 * (kTimeBytes - 1 - i)));
   }
   absl::BitGen gen;
   for (size_t i = kTimeBytes; i != kBytes; ++i) {

@@ -156,9 +156,9 @@ TEST_F(PgControlTest, PositionsNeverGoBelowTheFloor) {
   const uint64_t floor = uint64_t{1} << 62;
   const auto id = UniqueId::New();
   const auto nonce = NewMockNonce();
-  WritePgControl(_root, {.system_identifier = id.High(),
-                         .checkpoint = floor,
-                         .mock_nonce = nonce});
+  WritePgControl(
+    _root,
+    {.system_identifier = id.High(), .checkpoint = floor, .mock_nonce = nonce});
   auto& positions = PositionSource::Instance();
   positions.Adopt(_root, id, nonce, false);
   EXPECT_EQ(positions.Issue(), floor + 1);

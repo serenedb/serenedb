@@ -146,12 +146,11 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
     network::pg::hba::SetHbaConfig(config.hba_config);
   }
   try {
-    catalog::InitCatalog(
-      {.default_database = config.default_database,
-       .require_existing = config.require_existing,
-       .abandon_wal = config.abandon_wal,
-       .wal_owner = _wal_owner ? &*_wal_owner : nullptr,
-       .temp_owner = _temp_owner ? &*_temp_owner : nullptr});
+    catalog::InitCatalog({.default_database = config.default_database,
+                          .require_existing = config.require_existing,
+                          .abandon_wal = config.abandon_wal,
+                          .wal_owner = _wal_owner ? &*_wal_owner : nullptr,
+                          .temp_owner = _temp_owner ? &*_temp_owner : nullptr});
     _search.Start();
   } catch (...) {
     Close();

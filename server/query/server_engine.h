@@ -21,6 +21,9 @@
 #pragma once
 
 #include <duckdb/main/database.hpp>
+#include <string_view>
+
+#include "server/utils/registry.h"
 
 namespace duckdb {
 
@@ -43,4 +46,13 @@ void ConfigureShellDBConfig(duckdb::DBConfig& config);
 // caches. Called from serened main() right after DuckDBEngine::Initialize().
 void RegisterServerExtensions(duckdb::DatabaseInstance& db);
 
+struct SqlFunctions {
+  static constexpr std::string_view kKind = "sql functions";
+
+  void (*register_functions)(duckdb::DatabaseInstance& db);
+};
+
 }  // namespace sdb::server::query
+
+#define SDB_SQL_FUNCTIONS \
+  const ::sdb::Registry<::sdb::server::query::SqlFunctions>::Register

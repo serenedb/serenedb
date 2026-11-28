@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
@@ -28,6 +29,7 @@ namespace sdb::docs {
 
 inline constexpr std::string_view kLayoutFile = "sdb_docs.layout";
 inline constexpr std::string_view kSegmentsFile = "sdb_docs.segments";
+inline constexpr std::size_t kIndexAlignment = 64;
 
 struct IndexFile {
   std::string_view name;

@@ -1,0 +1,103 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE ctfc_before (id INT);
+
+
+statement ok
+INSERT INTO ctfc_before VALUES (1);
+
+
+connection checkpointer
+statement ok
+SET sdb_faults = 'pause_cover_after_collect';
+
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+
+connection creator
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_cover_after_collect:parked';
+
+
+connection creator
+statement ok
+SET sdb_faults = 'pause_after_log_maintenance';
+
+
+connection creator
+statement ok
+SET sdb_faults = 'fold_log_tail';
+
+
+connection creator
+statement ok
+CREATE TABLE ctfc_during (id INT);
+
+
+connection creator
+statement ok
+SET sdb_faults = 'pause_cover_after_collect:release';
+
+
+wait
+
+
+connection creator
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_after_log_maintenance:parked';
+
+
+connection creator
+statement ok
+CREATE TABLE ctfc_while_maintaining (id INT);
+
+
+connection creator
+statement ok
+SET sdb_faults = 'pause_after_log_maintenance:release';
+
+
+connection creator
+statement ok
+INSERT INTO ctfc_during VALUES (2);
+
+
+connection creator
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection creator
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname FROM pg_class WHERE relname LIKE 'ctfc_%' ORDER BY relname;
+----
+relname
+ctfc_before
+ctfc_during
+ctfc_while_maintaining
+
+
+connection after_crash
+query
+SELECT id FROM ctfc_before;
+----
+id
+1
+
+
+connection after_crash
+query
+SELECT id FROM ctfc_during;
+----
+id
+2

@@ -25,6 +25,6 @@
 namespace sdb::docs {
 
 bool BuildDocsIndex(const std::filesystem::path& corpus,
-                    const std::filesystem::path& index);
+                    const std::filesystem::path& image);
 
 }  // namespace sdb::docs

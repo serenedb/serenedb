@@ -97,36 +97,30 @@ std::nullopt_t Miss(irs::pg::SqlErrorData* soft_error,
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> LookupSchema(
-  const Session& session, std::string_view name) {
+  const Session& session, std::string_view name, duckdb::AclMode use) {
   if (!session.database) {
     return nullptr;
   }
   const auto path = absl::c_find_if(
     session.search_path,
     [&](const SessionSchema& schema) { return schema.name == name; });
-  auto schema = path != session.search_path.end()
-                  ? path->entry
-                  : session.database->GetSchema(
-                      *session.transaction, duckdb::Identifier{name},
-                      duckdb::OnEntryNotFound::RETURN_NULL);
-  return schema && Shown(session, *schema) ? schema : nullptr;
-}
-
-duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
-  const Session& session, std::string_view name) {
-  auto schema = LookupSchema(session, name);
-  if (schema) {
-    duckdb::Check(*session.context, session.role, *schema,
-                  duckdb::AclMode::Usage)
-      .Require();
+  if (path != session.search_path.end() && path->entry) {
+    return path->entry;
   }
-  return schema;
+  return duckdb::CatalogEntryRetriever{*session.context, session.role}
+    .GetSchema(
+      duckdb::EntryLookupInfo{
+        duckdb::CatalogType::SCHEMA_ENTRY,
+        duckdb::QualifiedName{session.database->GetName(), duckdb::Identifier{},
+                              duckdb::Identifier{name}},
+        use},
+      duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
   const Session& session, std::string_view schema_name,
   duckdb::CatalogType type, std::string_view name) {
-  auto schema = FindSchema(session, schema_name);
+  auto schema = LookupSchema(session, schema_name, duckdb::AclMode::Usage);
   if (!schema) {
     return nullptr;
   }
@@ -146,7 +140,7 @@ std::optional<uint64_t> SchemaOid(const Session& session,
   if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
     return system->oid;
   }
-  if (auto entry = LookupSchema(session, schema)) {
+  if (auto entry = LookupSchema(session, schema, duckdb::AclMode::NoRights)) {
     return entry->oid;
   }
   return Miss(soft_error, SQL_ERROR_DATA(
@@ -213,7 +207,7 @@ uint64_t ResolveRelation(const Session& session,
       session,
       SessionSchema{
         .name = schema,
-        .entry = FindSchema(session, schema),
+        .entry = LookupSchema(session, schema, duckdb::AclMode::Usage),
         .system = FindSystemObject(kSystemNamespaces, schema) != nullptr},
       relation);
   }

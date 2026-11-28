@@ -100,8 +100,7 @@ RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
                       info.oid,
                       info.options,
                       info.member_of,
-                      duckdb::PredefinedRoleCapability(info.oid),
-                      IsPredefinedRole(info.oid)},
+                      info.oid != pg::kInvalidOid && info.oid < pg::kMinSystem},
     _conn_limit{info.conn_limit},
     _valid_until{info.valid_until},
     _password{info.password},
@@ -193,9 +192,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("role \"", granted.GetIdentifierName(), "\" does not exist"));
     }
-    if (!alter.revoke &&
-        (oid == target->oid ||
-         RolesOf(&context)->MembershipsOf(target->oid).IsMember(oid))) {
+    const auto roles = RolesOf(&context);
+    const auto target_access = roles->Access(target->oid);
+    if (!alter.revoke && (oid == target->oid ||
+                          (target_access && target_access->BelongsTo(oid)))) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
         ERR_MSG("role \"", target->name.GetIdentifierName(),

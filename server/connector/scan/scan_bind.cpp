@@ -688,7 +688,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   if (auto host =
         index.GetRelation(index.catalog.GetCatalogTransaction(context));
       host && host->type == duckdb::CatalogType::VIEW_ENTRY) {
-    duckdb::Check(context, role, *host, duckdb::AclMode::Select).Require();
+    duckdb::Check<duckdb::AclMode::Select>(context, role, *host).Require();
   }
   auto data = BindIndexScan(
     context, irs::utils::downCast<catalog::InvertedIndexEntry>(index));

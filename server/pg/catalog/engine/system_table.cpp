@@ -76,7 +76,9 @@ uint64_t VisibilityBits(const duckdb::CatalogEntry& entry) {
 }
 
 uint64_t ViewerBits(const duckdb::RoleAccess& role) {
-  if (role.is_superuser || role.capabilities != duckdb::RoleCapability::None) {
+  if (role.is_superuser ||
+      role.PredefinedRoleModes(duckdb::CatalogType::TABLE_ENTRY) !=
+        duckdb::AclMode::NoRights) {
     return kVisibleToAll;
   }
   auto bits = kPublicBit | RoleBit(role.role);
@@ -203,17 +205,18 @@ bool SystemScan::Declared(uint64_t provided) const {
 SystemScan::~SystemScan() = default;
 
 bool SystemScan::ShowsColumn(const duckdb::CatalogEntry& relation,
-                             std::span<const duckdb::AclItem> acl) {
+                             std::span<const duckdb::LogicalIndex> column) {
+  constexpr auto kAnyColumnPrivilege =
+    duckdb::ACL_COLUMN_PRIVILEGES | duckdb::AclMode::Any;
   if (&relation != _columns_of) {
     _columns_of = &relation;
     _all_columns =
-      _role.MemberOf(duckdb::PermissionsOf(relation).owner) ||
-      duckdb::Check(_context, _role, relation,
-                    duckdb::ACL_COLUMN_PRIVILEGES | duckdb::AclMode::Any);
+      duckdb::Check<duckdb::AclMode::Own>(_context, _role, relation) ||
+      duckdb::Check<kAnyColumnPrivilege>(_context, _role, relation);
   }
   return _all_columns ||
-         (_role.HeldModes(acl) & duckdb::ACL_COLUMN_PRIVILEGES) !=
-           duckdb::AclMode::NoRights;
+         duckdb::Check<kAnyColumnPrivilege>(
+           _context, _role, duckdb::PrivilegeTarget::Columns(relation, column));
 }
 
 void SystemScan::Begin(duckdb::DataChunk& output) {

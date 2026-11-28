@@ -167,10 +167,7 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // feeding the scheduler. Default external_threads=1 would over-count
   // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
   // workers; zero makes the count exact and `threads=1` a true single worker.
-  // Sessions run as tasks on that pool, so it must never be left empty; the
-  // setting is declared internal, so no client can change it, which is what
-  // keeps `threads - external_threads` from ever resolving to zero internal
-  // workers.
+  // Sessions run as tasks on that pool, so it must never be left empty.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
 }
 

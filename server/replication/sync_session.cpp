@@ -25,6 +25,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
@@ -407,7 +408,9 @@ void SyncSession::UseRole(duckdb::idx_t table_owner) {
   if (!_target.run_as_owner && table_owner != role &&
       table_owner != pg::kInvalidOid) {
     auto& context = *this->_conn->context;
-    if (!duckdb::Role(context, role).CanSet(table_owner)) {
+    if (!duckdb::Check<duckdb::AclMode::SetRole>(
+          context, duckdb::Role(context, role),
+          duckdb::PrivilegeTarget::Role(table_owner))) {
       const auto roles = catalog::RolesOf(&context);
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),

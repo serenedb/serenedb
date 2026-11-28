@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
@@ -108,9 +109,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
           database.oid = entry.oid;
           database.connect =
             principal &&
-            (principal->is_superuser ||
-             principal->Can(duckdb::CatalogType::DATABASE_ENTRY,
-                            entry.permissions, duckdb::AclMode::Connect));
+            duckdb::Check<duckdb::AclMode::Connect>(*principal, entry);
           database.allow_connections = entry.AllowConnections();
           database.conn_limit = entry.ConnLimit();
         }) ||
@@ -167,7 +166,9 @@ bool IsHbaMember(std::string_view user, std::string_view group) {
         [&](const catalog::RoleCatalogEntry& role) { group_oid = role.oid; })) {
     return false;
   }
-  return catalog::RolesOf(nullptr)->MembershipsOf(user_oid).IsMember(group_oid);
+  const auto roles = catalog::RolesOf(nullptr);
+  const auto user_access = roles->Access(user_oid);
+  return user_access && user_access->BelongsTo(group_oid);
 }
 
 }  // namespace sdb::pg

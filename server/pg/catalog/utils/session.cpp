@@ -23,10 +23,10 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_data.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/static_strings.hpp>
 
 #include "catalog/catalog.h"
@@ -57,46 +57,37 @@ Session MakeSession(
     session.transaction.emplace(
       session.database->GetCatalogTransaction(*context));
   }
-  const auto add = [&](std::string_view name) {
-    if (absl::c_any_of(session.search_path, [&](const SessionSchema& schema) {
-          return schema.name == name;
-        })) {
-      return;
-    }
-    auto entry = session.database
-                   ? session.database->GetSchema(
-                       *session.transaction, duckdb::Identifier{name},
-                       duckdb::OnEntryNotFound::RETURN_NULL)
-                   : nullptr;
-    if (entry && !duckdb::Check(*session.context, session.role, *entry,
-                                duckdb::AclMode::Usage)) {
-      return;
-    }
-    session.search_path.emplace_back(
-      std::string{name}, entry,
-      static_cast<bool>(FindSystemObject(kSystemNamespaces, name)));
+  const auto added = [&](std::string_view name) {
+    return absl::c_any_of(
+      session.search_path,
+      [&](const SessionSchema& schema) { return schema.name == name; });
   };
-  std::optional<duckdb::CatalogSearchPath> body_path;
-  if (body_search_path) {
-    body_path.emplace(*context, *body_search_path);
-  }
-  const auto& search_path =
-    body_path ? *body_path
-              : *duckdb::ClientData::Get(*context).catalog_search_path;
-  const auto database =
-    duckdb::DatabaseManager::TryGetDefaultDatabase(*context);
-  if (absl::c_none_of(search_path.GetResolvedSetPaths(),
-                      [](const duckdb::CatalogSearchEntry& entry) {
-                        return entry.GetSchema() ==
-                               irs::StaticStrings::kPgCatalogSchema;
-                      })) {
-    add(irs::StaticStrings::kPgCatalogSchema);
-  }
-  for (const auto& entry : search_path.Get()) {
-    const auto& catalog = entry.GetCatalog();
-    if (catalog.empty() || catalog == database.GetIdentifierName()) {
-      add(entry.GetSchema().GetIdentifierName());
+  if (session.database) {
+    duckdb::CatalogEntryRetriever retriever{*context, session.role};
+    if (body_search_path) {
+      retriever.ReplaceSearchPath(*body_search_path);
     }
+    retriever.VisitSearchSchemas([&](const duckdb::Identifier& identifier,
+                                     duckdb::SchemaCatalogEntry& schema) {
+      const auto& name = identifier.GetIdentifierName();
+      if (!added(name)) {
+        session.search_path.emplace_back(
+          name, &schema,
+          static_cast<bool>(FindSystemObject(kSystemNamespaces, name)));
+      }
+    });
+  }
+  if (!added(irs::StaticStrings::kPgCatalogSchema)) {
+    session.search_path.emplace(
+      session.search_path.begin(),
+      std::string{irs::StaticStrings::kPgCatalogSchema},
+      session.database
+        ? session.database->GetSchema(
+            *session.transaction,
+            duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema},
+            duckdb::OnEntryNotFound::RETURN_NULL)
+        : nullptr,
+      true);
   }
   auto& temporary =
     duckdb::ClientData::Get(*context).temporary_objects->GetCatalog();

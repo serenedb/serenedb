@@ -27,16 +27,10 @@
 #include <string>
 #include <string_view>
 
-#include "pg/catalog/oids.h"
-
 namespace sdb::catalog {
 
 using RoleOption = duckdb::RoleOption;
 using duckdb::HasOption;
-
-constexpr bool IsPredefinedRole(duckdb::idx_t oid) {
-  return oid != pg::kInvalidOid && oid < pg::kMinSystem;
-}
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name);
 std::string StoredPassword(duckdb::ClientContext& context,

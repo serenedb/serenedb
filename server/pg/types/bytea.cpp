@@ -128,8 +128,8 @@ bool ByteaToText(duckdb::Vector& source, duckdb::Vector& result,
 duckdb::BoundCastInfo BindByteaToText(duckdb::BindCastInput& input,
                                       const duckdb::LogicalType&,
                                       const duckdb::LogicalType&) {
-  const auto output =
-    GetEnumSetting<ByteaOutput>(*input.context, "bytea_output");
+  const auto output = magic_enum::enum_value<ByteaOutput>(GetEnumSetting(
+    *input.context, "bytea_output", magic_enum::enum_names<ByteaOutput>()));
   return duckdb::BoundCastInfo(ByteaToText, duckdb::make_uniq<ByteaOutCastData>(
                                               output == ByteaOutput::Escape));
 }

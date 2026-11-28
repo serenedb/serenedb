@@ -99,8 +99,7 @@ class ConstraintKeyEncoder {
   std::unique_ptr<Prepared> _prepared;
 };
 
-// The key's values as PostgreSQL shows them in a DETAIL: `(a, b)=(1, x)`, to a
-// role that may read every key column of `table`.
+// The key's values as PostgreSQL shows them in a DETAIL: `(a, b)=(1, x)`.
 std::optional<std::string> ConstraintKeyText(
   duckdb::ClientContext& context, const duckdb::RoleAccess& role,
   const duckdb::TableCatalogEntry& table, const search::KeySpec& spec,

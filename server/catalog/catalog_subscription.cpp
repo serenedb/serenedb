@@ -289,7 +289,9 @@ void RequirePasswordOption(const duckdb::RoleAccess& role,
 void RequireConnInfo(const duckdb::RoleAccess& role, std::string_view conninfo,
                      bool must_use_password) {
   if (replication::NamesServerFiles(conninfo) &&
-      !role.Has(duckdb::RoleCapability::ReadServerFiles)) {
+      !duckdb::Check<duckdb::AclMode::Usage>(
+        role, duckdb::PrivilegeTarget::Role(
+                duckdb::RoleCapability::ReadServerFiles))) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to use server files in the connection string"),

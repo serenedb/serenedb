@@ -11,7 +11,19 @@ PRIVILEGES = os.path.join(DUCKDB_INCLUDE, 'catalog', 'privileges.hpp')
 CONTAINERS = ('NONE', 'CLUSTER', 'DATABASE', 'SCHEMA', 'RELATION')
 
 USES = (('See', 32), ('Own', 33), ('Drop', 34), ('Rename', 35),
-        ('SetRole', 37), ('Any', 38))
+        ('SetRole', 37), ('Any', 38), ('GrantOption', 39), ('Admin', 40),
+        ('Member', 41))
+
+ROUTINES = ('OBJECT_FUNCTION', 'OBJECT_AGGREGATE', 'OBJECT_PROCEDURE',
+            'OBJECT_ROUTINE')
+
+PREDEFINED_ROLE_MODES = {
+    'OBJECT_TABLE': (('SELECT',), ('INSERT', 'UPDATE', 'DELETE'),
+                     ('MAINTAIN',)),
+    'OBJECT_SEQUENCE': (('SELECT',), ('INSERT', 'UPDATE', 'DELETE'),
+                        ('MAINTAIN',)),
+    'OBJECT_SCHEMA': (('USAGE',), ('USAGE',), ()),
+}
 
 KINDS = (
     ('OBJECT_TABLE', 'SCHEMA', ('TABLE_ENTRY', ('VIEW_ENTRY', 'OBJECT_VIEW'))),
@@ -159,6 +171,10 @@ def generate(gen):
         '\tAclMode public_privileges;',
         '\tidx_t pg_class;',
         '\tbool shared;',
+        '\tbool routine;',
+        '\tAclMode read_all_data;',
+        '\tAclMode write_all_data;',
+        '\tAclMode maintain;',
         '\tstd::string_view noun;',
         '};',
         '',
@@ -166,6 +182,7 @@ def generate(gen):
         '\tswitch (type) {',
     ]
     unnamed = []
+    relation_kinds = []
     for objtype, container, kinds in named_kinds():
         public, owner = defaults.get(objtype, ([], []))
         pg_class = classes.get(objtype, 0)
@@ -173,20 +190,30 @@ def generate(gen):
             if container == 'NONE' and name not in nouns:
                 unnamed.append(kind)
                 continue
+            if pg_class and pg_class == classes['OBJECT_TABLE']:
+                relation_kinds.append(kind)
             acl_class = kind if container == 'NONE' else kinds[0][0]
+            read, write, maintain = PREDEFINED_ROLE_MODES.get(
+                objtype, ((), (), ()))
             lines.append(f'\tcase CatalogType::{kind}:')
             lines.append(f'\t\treturn {{CatalogType::{acl_class}, '
                          f'ObjectContainer::{container}, {mode(owner)}, '
                          f'{mode(public)}, {pg_class}, '
                          f'{cpp_bool(pg_class in shared)}, '
+                         f'{cpp_bool(name in ROUTINES)}, {mode(read)}, '
+                         f'{mode(write)}, {mode(maintain)}, '
                          f'{cpp_str(nouns.get(name, ""))}}};')
     lines += [f'\tcase CatalogType::{kind}:' for kind in unnamed]
     lines += [
         '\t\tbreak;',
         '\t}',
         '\treturn {type, ObjectContainer::NONE, AclMode::NoRights, '
-        'AclMode::NoRights, 0, false, {}};',
+        'AclMode::NoRights, 0, false, false, AclMode::NoRights, '
+        'AclMode::NoRights, AclMode::NoRights, {}};',
         '}',
+        '',
+        'inline constexpr CatalogType RELATION_KINDS[] = {'
+        + ', '.join(f'CatalogType::{kind}' for kind in relation_kinds) + '};',
         '',
         'inline constexpr auto OBJECT_KINDS = [] {',
         '\tstd::array<ObjectKind, std::numeric_limits<std::underlying_type_t'

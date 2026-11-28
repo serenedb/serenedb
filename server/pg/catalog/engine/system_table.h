@@ -618,10 +618,14 @@ class SystemScan {
     return _retriever.View(schema);
   }
   bool ShowsColumn(const duckdb::CatalogEntry& relation,
-                   std::span<const duckdb::AclItem> acl);
+                   std::span<const duckdb::LogicalIndex> column);
   bool ShowsActivityOf(duckdb::idx_t role) const {
-    return _role.Has(duckdb::RoleCapability::ReadAllStats) ||
-           _role.MemberOf(role);
+    return duckdb::Check<duckdb::AclMode::Usage>(
+             _context, _role,
+             duckdb::PrivilegeTarget::Role(
+               duckdb::RoleCapability::ReadAllStats)) ||
+           duckdb::Check<duckdb::AclMode::Usage>(
+             _context, _role, duckdb::PrivilegeTarget::Role(role));
   }
   catalog::BaseCatalog& Database() const noexcept { return _database; }
   const duckdb::CatalogTransaction& Transaction() const noexcept {

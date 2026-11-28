@@ -92,7 +92,7 @@ connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 DROP TABLE edcp_other_${__DATABASE__}.public.edcp_owned;
 ----
-db error: ERROR: Table with name edcp_owned does not exist!<slt:ignore>
+db error: ERROR: Table with name "edcp_other_<slt:ignore>.public.edcp_owned" does not exist because schema "edcp_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw

@@ -203,7 +203,7 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   // the passes run on internal connections and reach no other gate.
   const duckdb::StatementNaming index_naming{.noun = "index",
                                              .name = {&target.index->name, 1}};
-  duckdb::Check(context, duckdb::Role(context), view, duckdb::AclMode::Maintain)
+  duckdb::Check<duckdb::AclMode::Maintain>(context, duckdb::Role(context), view)
     .Require(index_naming);
   target.relation_name = view.name.GetIdentifierName();
   target.relation_id = view.oid;

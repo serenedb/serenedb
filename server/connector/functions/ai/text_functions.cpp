@@ -27,6 +27,7 @@
 #include <absl/strings/substitute.h>
 #include <simdjson.h>
 
+#include <duckdb/catalog/role_graph.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/function_set.hpp>

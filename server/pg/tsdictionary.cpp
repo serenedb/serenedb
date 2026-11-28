@@ -255,8 +255,10 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (OptionsParser::HasOption(Info.name)) {
       if constexpr (&Info == &tokenizer_options::kStopwordsPath ||
                     &Info == &tokenizer_options::kModelLocation) {
-        if (!duckdb::Role(_context).Has(
-              duckdb::RoleCapability::ReadServerFiles)) {
+        if (!duckdb::Check<duckdb::AclMode::Usage>(
+              _context, duckdb::Role(_context),
+              duckdb::PrivilegeTarget::Role(
+                duckdb::RoleCapability::ReadServerFiles))) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
             ERR_MSG("permission denied to use option \"", Info.name, "\""),

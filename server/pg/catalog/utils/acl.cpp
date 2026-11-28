@@ -145,54 +145,6 @@ std::string_view DefaultAclObjects(duckdb::CatalogType type) {
 
 }  // namespace
 
-bool HasPrivilege(const duckdb::RoleAccess& role, duckdb::CatalogType type,
-                  const duckdb::Permissions& permissions,
-                  duckdb::AclMode privileges, duckdb::AclMode grant_options,
-                  std::span<const std::span<const duckdb::AclItem>> columns,
-                  const duckdb::ColumnList* all_columns) {
-  using duckdb::AclMode;
-  if (role.is_superuser) {
-    return true;
-  }
-  if (privileges == AclMode::NoRights && grant_options == AclMode::NoRights) {
-    return false;
-  }
-  const auto any_column = [&](auto&& visit) {
-    for (const auto acl : columns) {
-      if (visit(acl)) {
-        return true;
-      }
-    }
-    if (all_columns) {
-      for (const auto& column : all_columns->Logical()) {
-        if (visit(std::span<const duckdb::AclItem>{column.Acl()})) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-  if (privileges != AclMode::NoRights &&
-      (role.CanAny(type, permissions, privileges) ||
-       any_column([&](std::span<const duckdb::AclItem> acl) {
-         return (role.HeldModes(acl) & privileges) != AclMode::NoRights;
-       }))) {
-    return true;
-  }
-  if (grant_options == AclMode::NoRights) {
-    return false;
-  }
-  if (role.MemberOf(permissions.owner)) {
-    return true;
-  }
-  auto held = role.GrantableModes(permissions.acl);
-  any_column([&](std::span<const duckdb::AclItem> acl) {
-    held |= role.GrantableModes(acl);
-    return false;
-  });
-  return (held & grant_options) != AclMode::NoRights;
-}
-
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
                const duckdb::SecuritySnapshot& roles) {
   if (item.grantee != duckdb::ACL_ID_PUBLIC) {

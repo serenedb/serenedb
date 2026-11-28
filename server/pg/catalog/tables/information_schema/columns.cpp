@@ -255,7 +255,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     const auto system = SystemColumns(table);
     for (const auto& column : table.GetColumns().Logical()) {
-      if (!ShowsColumn(table, column.Acl())) {
+      const auto index = column.Logical();
+      if (!ShowsColumn(table, {&index, 1})) {
         continue;
       }
       Emit<kTableColumn>(
@@ -284,7 +285,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     }
     const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      if (!ShowsColumn(view, view.ColumnAcl(i))) {
+      const duckdb::LogicalIndex index{i};
+      if (!ShowsColumn(view, {&index, 1})) {
         continue;
       }
       Emit<kViewColumn>({.scan = *this,

@@ -394,7 +394,9 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
                         duckdb::CatalogType::ROLE_ENTRY,
                         duckdb::QualifiedName{duckdb::Identifier{name}}})
                       ->oid;
-  if (!duckdb::Role(ctx, conn.GetSessionRoleId()).CanSet(role)) {
+  if (!duckdb::Check<duckdb::AclMode::SetRole>(
+        ctx, duckdb::Role(ctx, conn.GetSessionRoleId()),
+        duckdb::PrivilegeTarget::Role(role))) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }
@@ -411,10 +413,12 @@ void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
                         duckdb::QualifiedName{duckdb::Identifier{name}}})
                       ->oid;
   const auto login = conn.GetLoginRoleId();
-  if (role != login && !duckdb::Role(ctx, login).is_superuser) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to set session authorization \"", name, "\""));
+  if (role != login) {
+    const duckdb::Identifier identifier{name};
+    const duckdb::StatementNaming naming{.name = {&identifier, 1}};
+    duckdb::Check<duckdb::StatementRule::SetSessionAuthorization>(
+      duckdb::Role(ctx, login))
+      .Require(&naming);
   }
   conn.SetSessionRole(role);
   conn.SetSetting("role", "none", false);

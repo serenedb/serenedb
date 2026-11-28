@@ -98,15 +98,19 @@ def capabilities(gen, roles):
         '\treturn a;',
         '}',
         '',
-        'constexpr RoleCapability PredefinedRoleCapability(idx_t role) {',
+        'inline constexpr RoleCapability PREDEFINED_ROLES[] = {'
+        + ', '.join(f'RoleCapability::{capability}'
+                    for capability in names.values()) + '};',
+        '',
+        'constexpr idx_t PredefinedRoleOid(RoleCapability role) {',
         '\tswitch (role) {',
     ]
     for name, capability in names.items():
-        lines += [f'\tcase {roles[name]["oid"]}:',
-                  f'\t\treturn RoleCapability::{capability};']
+        lines += [f'\tcase RoleCapability::{capability}:',
+                  f'\t\treturn {roles[name]["oid"]};']
     lines += [
         '\tdefault:',
-        '\t\treturn RoleCapability::None;',
+        '\t\treturn 0;',
         '\t}',
         '}',
         '',

@@ -30,7 +30,6 @@
 
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/functions.h"
-#include "pg/catalog/utils/acl.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
@@ -88,8 +87,8 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a sequence"));
     }
-    if (!duckdb::Check(*session.context, session.role, *entry,
-                       AclMode::Select | AclMode::Usage | AclMode::Any)) {
+    if (!duckdb::Check<AclMode::Select | AclMode::Usage | AclMode::Any>(
+          *session.context, session.role, *entry)) {
       writer.WriteNull();
       continue;
     }
@@ -155,9 +154,13 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
     }
     const auto type =
       relation->entry ? relation->entry->type : CatalogType::TABLE_ENTRY;
-    if (!HasPrivilege(session.role, type, *relation->permissions,
-                      AclMode::Select | AclMode::Update | AclMode::Usage,
-                      AclMode::NoRights)) {
+    const auto target =
+      relation->entry && !relation->system
+        ? duckdb::PrivilegeTarget{*relation->entry, *relation->permissions}
+        : duckdb::PrivilegeTarget{CatalogType::TABLE_ENTRY,
+                                  *relation->permissions};
+    if (!duckdb::Check<AclMode::Select | AclMode::Update | AclMode::Usage |
+                       AclMode::Any>(*session.context, session.role, target)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for sequence ",
                               NameOf(*session.transaction, *relation).name));
@@ -210,8 +213,8 @@ void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("lastval is not yet defined in this session"));
   }
-  duckdb::Check(context, SessionOf(state).role, *entry,
-                AclMode::Select | AclMode::Usage | AclMode::Any)
+  duckdb::Check<AclMode::Select | AclMode::Usage | AclMode::Any>(
+    context, SessionOf(state).role, *entry)
     .Require();
   result.Reference(duckdb::Value::BIGINT(last->value),
                    duckdb::count_t(args.size()));

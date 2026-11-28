@@ -34,7 +34,6 @@
 #include <duckdb/function/function.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context_state.hpp>
-#include <duckdb/planner/binder.hpp>
 #include <exception>
 #include <limits>
 #include <memory>

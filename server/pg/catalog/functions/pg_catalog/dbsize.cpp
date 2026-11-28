@@ -246,8 +246,11 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
       const auto entry = DatabaseEntry(context, key);
       duckdb::optional_ptr<duckdb::Catalog> database =
         entry &&
-            (role.Has(duckdb::RoleCapability::ReadAllStats) ||
-             duckdb::Check(context, role, *entry, duckdb::AclMode::Connect))
+            (duckdb::Check<duckdb::AclMode::Connect>(context, role, *entry) ||
+             duckdb::Check<duckdb::AclMode::Usage>(
+               context, role,
+               duckdb::PrivilegeTarget::Role(
+                 duckdb::RoleCapability::ReadAllStats)))
           ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
           : nullptr;
       if (!database) {
@@ -303,9 +306,11 @@ duckdb::idx_t SessionTablespace(const Session& session) {
 int64_t TablespaceBytes(const Session& session,
                         const catalog::TablespaceCatalogEntry& tablespace) {
   if (tablespace.oid != SessionTablespace(session) &&
-      !session.role.Has(duckdb::RoleCapability::ReadAllStats)) {
-    duckdb::Check(*session.context, session.role, tablespace,
-                  duckdb::AclMode::Create)
+      !duckdb::Check<duckdb::AclMode::Usage>(
+        *session.context, session.role,
+        duckdb::PrivilegeTarget::Role(duckdb::RoleCapability::ReadAllStats))) {
+    duckdb::Check<duckdb::AclMode::Create>(*session.context, session.role,
+                                           tablespace)
       .Require();
   }
   if (tablespace.oid == kPgGlobalTablespace) {

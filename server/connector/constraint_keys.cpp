@@ -158,7 +158,7 @@ std::optional<std::string> ConstraintKeyText(
   duckdb::ClientContext& context, const duckdb::RoleAccess& role,
   const duckdb::TableCatalogEntry& table, const search::KeySpec& spec,
   std::string_view key) {
-  if (!duckdb::Check(context, role, table, duckdb::AclMode::Select)) {
+  if (!duckdb::Check<duckdb::AclMode::Select>(context, role, table)) {
     std::vector<duckdb::LogicalIndex> columns;
     if (spec.key.expressions.empty()) {
       for (const auto id : spec.key.columns) {
@@ -170,9 +170,8 @@ std::optional<std::string> ConstraintKeyText(
       }
     }
     if (columns.empty() ||
-        !duckdb::Check(context, role,
-                       duckdb::PrivilegeTarget::Columns(table, columns),
-                       duckdb::AclMode::Select)) {
+        !duckdb::Check<duckdb::AclMode::Select>(
+          context, role, duckdb::PrivilegeTarget::Columns(table, columns))) {
       return std::nullopt;
     }
   }

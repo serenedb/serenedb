@@ -34,6 +34,7 @@
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/operator/comparison_operators.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/bit.hpp>
@@ -594,8 +595,12 @@ void SignalBackendFunction(duckdb::DataChunk& args,
                      : "Only roles with the SUPERUSER attribute may cancel "
                        "queries of roles with the SUPERUSER attribute.");
       }
-    } else if (!caller.MemberOf(role) &&
-               !caller.Has(duckdb::RoleCapability::SignalBackend)) {
+    } else if (!duckdb::Check<duckdb::AclMode::Usage>(
+                 context, caller, duckdb::PrivilegeTarget::Role(role)) &&
+               !duckdb::Check<duckdb::AclMode::Usage>(
+                 context, caller,
+                 duckdb::PrivilegeTarget::Role(
+                   duckdb::RoleCapability::SignalBackend))) {
       ThrowSignalDenied<kTerminate>(
         kTerminate
           ? "Only roles with privileges of the role whose process is being "

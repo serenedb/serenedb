@@ -340,8 +340,8 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
 bool MayMaintain(ConnectionContext& conn_ctx,
                  const duckdb::CatalogEntry& relation, std::string_view name,
                  std::string_view verb) {
-  if (duckdb::Check(conn_ctx, duckdb::Role(conn_ctx), relation,
-                    duckdb::AclMode::Maintain)) {
+  if (duckdb::Check<duckdb::AclMode::Maintain>(conn_ctx, duckdb::Role(conn_ctx),
+                                               relation)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(

@@ -1,0 +1,60 @@
+statement ok
+DROP ROLE IF EXISTS sro_plain;
+
+
+statement ok
+DROP ROLE IF EXISTS sro_creator;
+
+
+statement ok
+CREATE ROLE sro_plain LOGIN PASSWORD 'sro_pw';
+
+
+statement ok
+CREATE ROLE sro_creator LOGIN CREATEROLE PASSWORD 'sro_pw';
+
+
+connection c_plain user=sro_plain password=sro_pw
+statement error
+CREATE DATABASE sro_db OWNER sro_no_such_role;
+----
+db error: ERROR: role "sro_no_such_role" does not exist
+
+
+connection c_plain user=sro_plain password=sro_pw
+statement error
+CREATE DATABASE sro_db OWNER sro_creator;
+----
+db error: ERROR: permission denied to create database
+
+
+connection c_plain user=sro_plain password=sro_pw
+statement error
+DROP ROLE sro_no_such_role;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
+
+
+connection c_creator user=sro_creator password=sro_pw
+statement error
+CREATE ROLE sro_made SUPERUSER;
+----
+db error: ERROR: permission denied to create role
+DETAIL: Only roles with the SUPERUSER attribute may create roles with the SUPERUSER attribute.
+
+
+connection c_creator user=sro_creator password=sro_pw
+statement error
+CREATE ROLE sro_made CREATEDB;
+----
+db error: ERROR: permission denied to create role
+DETAIL: Only roles with the CREATEDB attribute may create roles with the CREATEDB attribute.
+
+
+statement ok
+DROP ROLE sro_plain;
+
+
+statement ok
+DROP ROLE sro_creator;

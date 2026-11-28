@@ -14,7 +14,9 @@ TREES = (
     "third_party/duckdb_iceberg/src",
     "third_party/duckdb_spatial/src",
 )
-CAPABILITY_TEST = re.compile(r"\bHas\(\s*(?:duckdb::)?RoleCapability::(?:Read|Write)ServerFiles\b")
+CAPABILITY_TEST = re.compile(
+    r"\bPrivilegeTarget::Role\(\s*(?:duckdb::)?RoleCapability::(?:Read|Write)ServerFiles\b"
+)
 ALLOWED = {
     "third_party/duckdb/src/planner/binder/tableref/bind_basetableref.cpp",
     "server/catalog/catalog_subscription.cpp",

@@ -25,23 +25,14 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/parser/column_list.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 
 #include "pg/catalog/oids.h"
 
 namespace sdb::pg {
-
-bool HasPrivilege(
-  const duckdb::RoleAccess& role, duckdb::CatalogType type,
-  const duckdb::Permissions& permissions, duckdb::AclMode privileges,
-  duckdb::AclMode grant_options,
-  std::span<const std::span<const duckdb::AclItem>> columns = {},
-  const duckdb::ColumnList* all_columns = nullptr);
 
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
                const duckdb::SecuritySnapshot& roles);

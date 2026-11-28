@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <duckdb/catalog/role_graph.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/function/scalar_function.hpp>

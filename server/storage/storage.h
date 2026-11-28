@@ -39,6 +39,7 @@ struct StorageConfig {
 };
 
 catalog::ServerDirectory ReadServerDirectory(std::string directory);
+std::string ReadTempDirectory(const std::string& directory);
 StorageConfig ReadStorageConfig();
 
 class Storage final {
@@ -54,6 +55,9 @@ class Storage final {
   FileLock _lock;
   FileLock _log_lock;
   search::SearchEngine _search;
+  std::string _directory;
+  bool _remote = false;
+  bool _started = false;
 };
 
 }  // namespace sdb

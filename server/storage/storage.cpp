@@ -22,11 +22,15 @@
 #include "storage/storage.h"
 
 #include <absl/flags/flag.h>
+#include <absl/random/random.h>
+#include <absl/strings/str_format.h>
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/path.hpp>
 #include <duckdb/main/database.hpp>
 #include <exception>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <string>
@@ -51,7 +55,13 @@ ABSL_FLAG(std::string, hba_config, "",
 
 ABSL_FLAG(std::string, log_directory, "",
           "Local directory for the log of the commits since the last "
-          "snapshot. Empty uses <server directory>/logs.");
+          "snapshot. Empty uses <server directory>/logs; a server directory "
+          "on an object store needs it.");
+
+ABSL_FLAG(std::string, temp_directory, "",
+          "Local directory for the temporary files of queries that spill to "
+          "disk. Empty uses <server directory>/temp; a server directory on an "
+          "object store needs it.");
 
 ABSL_FLAG(bool, require_existing, false,
           "Refuse to start when the server directory holds no server, "
@@ -64,10 +74,27 @@ ABSL_FLAG(bool, checkpoint_at_stop, false,
 namespace sdb {
 namespace {
 
-constexpr std::string_view kLockFile = "LOCK";
-
 duckdb::FileSystem& DataFileSystem() {
   return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
+}
+
+std::string NewLogId() {
+  absl::BitGen gen;
+  return absl::StrFormat("%016x%016x", absl::Uniform<uint64_t>(gen),
+                         absl::Uniform<uint64_t>(gen));
+}
+
+void RequireLocal(std::string_view flag, std::string_view value,
+                  std::string_view directory) {
+  if (value.empty()) {
+    SDB_FATAL(GENERAL, "the server directory '", directory,
+              "' is on an object store, so --", flag,
+              " has to name a local directory");
+  }
+  if (duckdb::Path::IsRemote(value)) {
+    SDB_FATAL(GENERAL, "--", flag, " '", value,
+              "' has to name a local directory");
+  }
 }
 
 }  // namespace
@@ -83,6 +110,14 @@ catalog::ServerDirectory ReadServerDirectory(std::string directory) {
   return {std::move(directory), std::move(log)};
 }
 
+std::string ReadTempDirectory(const std::string& directory) {
+  auto temp = absl::GetFlag(FLAGS_temp_directory);
+  if (temp.empty() && !directory.empty()) {
+    temp = duckdb::FileSystem::JoinPath(directory, "temp");
+  }
+  return temp;
+}
+
 StorageConfig ReadStorageConfig() {
   auto& fs = DataFileSystem();
   StorageConfig config{
@@ -91,6 +126,14 @@ StorageConfig ReadStorageConfig() {
     .require_existing = absl::GetFlag(FLAGS_require_existing),
   };
   const auto& directory = config.layout.directory;
+  if (duckdb::Path::IsRemote(directory)) {
+    RequireLocal("log_directory", absl::GetFlag(FLAGS_log_directory),
+                 directory);
+    RequireLocal("temp_directory", absl::GetFlag(FLAGS_temp_directory),
+                 directory);
+  } else if (duckdb::Path::IsRemote(config.layout.LogDir())) {
+    RequireLocal("log_directory", config.layout.LogDir(), directory);
+  }
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
     config.hba_config = fs.JoinPath(directory, "pg_hba.conf");
   } else if (fs.IsPathAbsolute(hba)) {
@@ -114,6 +157,9 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
     Close();
     throw;
   }
+  _remote = duckdb::Path::IsRemote(config.layout.directory);
+  _directory = config.layout.directory;
+  _started = true;
 }
 
 Storage::~Storage() { Close(); }
@@ -137,20 +183,34 @@ void Storage::Lock(const catalog::ServerDirectory& layout) {
     }
     return std::move(*lock);
   };
-  if (create(directory)) {
-    SDB_INFO(STARTUP, "Created server directory: ", directory);
-  }
-  try {
-    _lock = take(backup::OpenPgVersion(directory));
-  } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "Unable to open '",
-              fs.JoinPath(directory, backup::kPgVersionFile),
-              "': ", duckdb::ErrorData{e}.RawMessage());
+  const bool remote = duckdb::Path::IsRemote(directory);
+  if (!remote) {
+    if (create(directory)) {
+      SDB_INFO(STARTUP, "Created server directory: ", directory);
+    }
+    try {
+      _lock = take(backup::OpenPgVersion(directory));
+    } catch (const std::exception& e) {
+      SDB_FATAL(GENERAL, "Unable to open '",
+                fs.JoinPath(directory, backup::kPgVersionFile),
+                "': ", duckdb::ErrorData{e}.RawMessage());
+    }
   }
   create(layout.LogDir());
-  if (layout.LogDir() != catalog::ServerDirectory::DefaultLog(directory)) {
-    _log_lock = take(fs.JoinPath(layout.LogDir(), kLockFile));
+  if (!remote &&
+      layout.LogDir() == catalog::ServerDirectory::DefaultLog(directory)) {
+    return;
   }
+  const auto log_lock = fs.JoinPath(layout.LogDir(), catalog::kLockFile);
+  try {
+    if (!fs.FileExists(log_lock)) {
+      irs::WriteWhole(fs, log_lock, NewLogId(), true);
+    }
+  } catch (const std::exception& e) {
+    SDB_FATAL(GENERAL, "Unable to create '", log_lock,
+              "': ", duckdb::ErrorData{e}.RawMessage());
+  }
+  _log_lock = take(log_lock);
 }
 
 void Storage::Close() noexcept {
@@ -159,7 +219,7 @@ void Storage::Close() noexcept {
   _runtime.Background().Drain();
   auto& transactions = catalog::Transactions::Get();
   std::optional<catalog::Transactions::FinalCheckpoint> final;
-  if (absl::GetFlag(FLAGS_checkpoint_at_stop)) {
+  if (_started && absl::GetFlag(FLAGS_checkpoint_at_stop)) {
     try {
       final = transactions.CaptureFinalCheckpoint();
     } catch (const std::exception& ex) {
@@ -171,9 +231,13 @@ void Storage::Close() noexcept {
   try {
     irs::DuckDBEngine::Instance().CloseDatabases();
     if (final) {
-      transactions.WriteFinalCheckpoint(std::move(*final),
-                                        catalog::StorageTidy());
+      const bool clean = transactions.WriteFinalCheckpoint(
+        std::move(*final), catalog::StorageTidy());
       transactions.Close();
+      if (clean && _remote) {
+        auto& fs = DataFileSystem();
+        fs.TryRemoveFile(fs.JoinPath(_directory, catalog::kLockFile));
+      }
     } else {
       catalog::CloseLog();
     }

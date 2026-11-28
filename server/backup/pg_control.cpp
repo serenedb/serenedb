@@ -194,6 +194,24 @@ PositionSource& PositionSource::Instance() {
   return gSource;
 }
 
+ControlState PositionSource::NewState() {
+  return {.system_identifier = NewSystemIdentifier(),
+          .checkpoint = 0,
+          .mock_nonce = NewMockNonce()};
+}
+
+void PositionSource::Adopt(const ControlState& state) {
+  absl::MutexLock lock{&_mutex};
+  _data_dir.clear();
+  _state = state;
+}
+
+ControlState PositionSource::State() {
+  absl::MutexLock lock{&_mutex};
+  SDB_ASSERT(_state);
+  return *_state;
+}
+
 void PositionSource::Open(const std::string& data_dir) {
   absl::MutexLock lock{&_mutex};
   auto state = ReadPgControl(data_dir);
@@ -229,6 +247,7 @@ uint64_t PositionSource::SystemIdentifier() {
 uint64_t PositionSource::Issue() {
   absl::MutexLock lock{&_mutex};
   SDB_ASSERT(_state);
+  SDB_ASSERT(!_data_dir.empty());
   auto next = *_state;
   next.checkpoint = std::max(ClockPosition(), _state->checkpoint + 1);
   WritePgControl(_data_dir, next);

@@ -41,6 +41,8 @@ struct DBConfig;
 }  // namespace duckdb
 namespace sdb::catalog {
 
+inline constexpr std::string_view kLockFile = "LOCK";
+
 struct ServerDirectory {
   ServerDirectory() = default;
   ServerDirectory(std::string directory, std::string log);

@@ -805,7 +805,7 @@ Transactions::CaptureFinalCheckpoint() {
   return final;
 }
 
-void Transactions::WriteFinalCheckpoint(FinalCheckpoint final, bool tidy) {
+bool Transactions::WriteFinalCheckpoint(FinalCheckpoint final, bool tidy) {
   absl::MutexLock round{&_truncate_mutex};
   const bool clean = tidy && _log->End() == final.covered;
   _log->WriteSnapshot(final.covered, final.records, &CatalogPart,
@@ -815,6 +815,7 @@ void Transactions::WriteFinalCheckpoint(FinalCheckpoint final, bool tidy) {
   } else {
     _log->DropCovered();
   }
+  return clean;
 }
 
 Lsn Transactions::ReservedEnd() const {

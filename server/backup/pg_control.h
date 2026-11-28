@@ -49,8 +49,11 @@ std::string OpenPgVersion(const std::string& data_dir);
 class PositionSource final {
  public:
   static PositionSource& Instance();
+  static ControlState NewState();
 
   void Open(const std::string& data_dir);
+  void Adopt(const ControlState& state);
+  ControlState State();
   uint64_t SystemIdentifier();
   uint64_t Issue();
   std::array<uint8_t, kMockNonceLen> MockNonce();

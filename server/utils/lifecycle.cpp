@@ -140,6 +140,9 @@ std::string ResolveDataDir(std::string flag_value) {
   }
   dir.erase(dir.find_last_not_of(std::filesystem::path::preferred_separator) +
             1);
+  if (duckdb::Path::IsRemote(dir)) {
+    return dir;
+  }
   std::error_code ec;
   if (auto abs = std::filesystem::absolute(dir, ec); !ec) {
     dir = duckdb::Path::Normalize(abs.string());

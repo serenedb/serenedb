@@ -26,6 +26,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -132,9 +133,18 @@ class Log {
   using Compact = absl::FunctionRef<std::vector<std::vector<uint8_t>>(
     std::span<const std::span<uint8_t>>)>;
 
+  struct Identity {
+    uint64_t system_identifier = 0;
+    std::array<uint8_t, 32> mock_nonce{};
+
+    explicit operator bool() const noexcept { return system_identifier != 0; }
+    bool operator==(const Identity&) const = default;
+  };
+
   struct Replayed {
     bool snapshot = false;
     bool clean = false;
+    Identity identity;
   };
 
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
@@ -151,6 +161,7 @@ class Log {
   Log(duckdb::FileSystem& fs, std::string dir, std::string snapshot);
 
   Replayed Replay(Apply apply, CatalogPart part);
+  void SetIdentity(const Identity& identity) noexcept { _identity = identity; }
 
   Range Reserve(size_t payload_size);
   void Write(const Range& range, RecordBuffer& record);
@@ -243,6 +254,7 @@ class Log {
   duckdb::FileSystem& _fs;
   std::string _dir;
   std::string _snapshot_path;
+  Identity _identity;
   mutable absl::Mutex _mutex;
   absl::btree_map<Lsn, std::shared_ptr<Chunk>> _chunks ABSL_GUARDED_BY(_mutex);
   uint64_t _next_number ABSL_GUARDED_BY(_mutex) = 0;

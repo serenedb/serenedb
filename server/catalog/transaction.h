@@ -233,7 +233,7 @@ class Transactions final {
   };
 
   std::optional<FinalCheckpoint> CaptureFinalCheckpoint();
-  void WriteFinalCheckpoint(FinalCheckpoint final, bool tidy);
+  bool WriteFinalCheckpoint(FinalCheckpoint final, bool tidy);
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {
     return _checkpoints.Close(context);

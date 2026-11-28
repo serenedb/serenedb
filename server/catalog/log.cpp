@@ -59,6 +59,8 @@ struct SnapshotHeader {
   uint64_t number = 0;
   Lsn begin = 0;
   uint64_t clean = 0;
+  uint64_t system_identifier = 0;
+  std::array<uint8_t, 32> mock_nonce{};
 };
 
 struct LinkedChunk {
@@ -302,6 +304,7 @@ struct Scanned {
   Lsn covered = 0;
   bool snapshot = false;
   bool clean = false;
+  Log::Identity identity;
   uint64_t snapshot_bytes = 0;
   size_t torn_from = 0;
   size_t torn_to = 0;
@@ -323,6 +326,8 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
     .end = snapshot.covered,
     .covered = snapshot.covered,
     .snapshot = past.exists,
+    .identity = {.system_identifier = snapshot.system_identifier,
+                 .mock_nonce = snapshot.mock_nonce},
     .snapshot_bytes = past.bytes.size(),
   };
   std::vector<uint8_t> last;
@@ -542,7 +547,9 @@ Log::Replayed Log::Replay(Apply apply, CatalogPart part) {
   _reserved = end;
   _written.store(end, std::memory_order_release);
   _durable.store(end, std::memory_order_release);
-  return {.snapshot = scanned.snapshot, .clean = scanned.clean};
+  return {.snapshot = scanned.snapshot,
+          .clean = scanned.clean,
+          .identity = scanned.identity};
 }
 
 Log::Range Log::Reserve(size_t payload_size) {
@@ -817,7 +824,9 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
   absl::MutexLock files{&_files_mutex};
   SnapshotHeader header{.version = kSnapshotVersion,
                         .covered = covered,
-                        .clean = clean ? uint64_t{1} : uint64_t{0}};
+                        .clean = clean ? uint64_t{1} : uint64_t{0},
+                        .system_identifier = _identity.system_identifier,
+                        .mock_nonce = _identity.mock_nonce};
   {
     absl::MutexLock lock{&_mutex};
     SDB_ASSERT(covered <= _durable.load(std::memory_order_acquire));

@@ -41,6 +41,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -68,6 +69,57 @@ namespace {
 constexpr std::string_view kLogDir = "logs";
 constexpr std::string_view kSnapshotFile = "snapshot";
 constexpr std::string_view kBackupsDir = "backups";
+
+std::optional<std::string> ReadServerLock(duckdb::FileSystem& fs,
+                                          const ServerDirectory& layout) {
+  const auto path = fs.JoinPath(layout.directory, kLockFile);
+  if (!fs.FileExists(path)) {
+    return std::nullopt;
+  }
+  return irs::ReadWhole<std::string>(duckdb::QueryContext{}, fs, path);
+}
+
+void TakeServerLock(duckdb::FileSystem& fs, const ServerDirectory& layout,
+                    const std::string& log_id) {
+  const auto path = fs.JoinPath(layout.directory, kLockFile);
+  try {
+    const auto file =
+      fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                          duckdb::FileFlags::FILE_FLAGS_EXCLUSIVE_CREATE);
+    file->Write(duckdb::QueryContext{}, const_cast<char*>(log_id.data()),
+                log_id.size(), 0);
+    file->Close();
+  } catch (const std::exception& e) {
+    SDB_FATAL(STARTUP, "could not take the server directory '",
+              layout.directory, "' for the log directory ", log_id, ": ",
+              duckdb::ErrorData{e}.RawMessage());
+  }
+}
+
+Log::Identity AdoptIdentity(Log::Identity identity, bool remote) {
+  auto& positions = backup::PositionSource::Instance();
+  if (remote) {
+    if (!identity) {
+      const auto state = backup::PositionSource::NewState();
+      identity = {.system_identifier = state.system_identifier,
+                  .mock_nonce = state.mock_nonce};
+    }
+    positions.Adopt({.system_identifier = identity.system_identifier,
+                     .mock_nonce = identity.mock_nonce});
+    return identity;
+  }
+  const auto state = positions.State();
+  if (identity && identity.system_identifier != state.system_identifier) {
+    SDB_FATAL(STARTUP,
+              "the snapshot belongs to the server with system "
+              "identifier ",
+              identity.system_identifier, ", and ", backup::kPgControlFile,
+              " to the server with system identifier ",
+              state.system_identifier);
+  }
+  return {.system_identifier = state.system_identifier,
+          .mock_nonce = state.mock_nonce};
+}
 
 struct LiveStorage {
   search::Store* storage;
@@ -238,9 +290,26 @@ void InitCatalog(bool default_database, bool require_existing) {
   const auto& layout = cluster.Layout();
   auto& fs = StorageFileSystem();
   bool created = false;
+  const bool remote =
+    !layout.InMemory() && duckdb::Path::IsRemote(layout.directory);
+  std::string log_id;
+  std::optional<std::string> owner;
   if (!layout.InMemory()) {
     BeginStorageWork();
-    backup::PrepareServerDirectory(layout);
+    if (remote) {
+      log_id = irs::ReadWhole<std::string>(
+        duckdb::QueryContext{}, fs, fs.JoinPath(layout.LogDir(), kLockFile));
+      owner = ReadServerLock(fs, layout);
+      if (owner && *owner != log_id) {
+        SDB_FATAL(STARTUP, "the server directory '", layout.directory,
+                  "' belongs to the log directory ", *owner,
+                  ", which may hold commits its snapshot does not have: "
+                  "start the server with that log directory, or stop it with "
+                  "--checkpoint_at_stop first");
+      }
+    } else {
+      backup::PrepareServerDirectory(layout);
+    }
     created = !Log::HasSnapshot(fs, layout.SnapshotPath());
     if (created) {
       if (require_existing) {
@@ -254,9 +323,6 @@ void InitCatalog(bool default_database, bool require_existing) {
                   "empty server over them");
       }
     }
-    fs.CreateDirectoryExtended(
-      layout.StoreDir(),
-      {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
   }
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
@@ -266,7 +332,8 @@ void InitCatalog(bool default_database, bool require_existing) {
   if (!layout.InMemory()) {
     auto log =
       std::make_unique<Log>(fs, layout.LogDir(), layout.SnapshotPath());
-    if (created) {
+    const bool takeover = remote && !owner;
+    if (created || takeover) {
       log->Clear();
     }
     const auto target = [&](duckdb::idx_t id) {
@@ -282,6 +349,13 @@ void InitCatalog(bool default_database, bool require_existing) {
     transactions.SetReplaying(false);
     initialized = replayed.snapshot;
     clean = clean || replayed.clean;
+    log->SetIdentity(AdoptIdentity(replayed.identity, remote));
+    if (takeover) {
+      TakeServerLock(fs, layout, log_id);
+    }
+    fs.CreateDirectoryExtended(
+      layout.StoreDir(),
+      {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
     if (clean) {
       log->Append(StartupRecord());
     }

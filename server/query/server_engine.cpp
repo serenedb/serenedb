@@ -87,10 +87,6 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "auto-detect from cpu_count. `SET GLOBAL threads = N` resizes the "
           "pool at runtime.");
 
-ABSL_FLAG(std::string, temp_directory, "",
-          "Local directory for the temporary files of queries that spill to "
-          "disk. Empty uses <server directory>/temp.");
-
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
 namespace sdb::server::query {
@@ -130,10 +126,7 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   const auto directory =
     lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
   ConfigureEngineDBConfig(config, ReadServerDirectory(directory));
-  auto temp = absl::GetFlag(FLAGS_temp_directory);
-  if (temp.empty()) {
-    temp = duckdb::FileSystem::JoinPath(directory, "temp");
-  }
+  const auto temp = ReadTempDirectory(directory);
   config.SetOptionByName("temp_directory", duckdb::Value{temp});
   config.SetOptionByName(
     "secret_directory",

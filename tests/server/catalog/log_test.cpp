@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <array>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
@@ -340,6 +341,8 @@ TEST_F(LogTest, ASnapshotOfAnotherVersionIsRefused) {
     uint64_t number;
     Lsn begin;
     uint64_t clean;
+    uint64_t system_identifier;
+    std::array<uint8_t, 32> mock_nonce;
   };
   const Header header{.version = uint64_t{1} << 40};
   const std::string payload{reinterpret_cast<const char*>(&header),
@@ -357,6 +360,18 @@ TEST_F(LogTest, ASnapshotOfAnotherVersionIsRefused) {
               std::string_view::npos)
       << e.what();
   }
+}
+
+TEST_F(LogTest, ASnapshotKeepsTheIdentityOfItsServer) {
+  const Log::Identity identity{.system_identifier = 42, .mock_nonce = {7}};
+  {
+    auto log = Open();
+    EXPECT_FALSE(_replayed.identity);
+    log->SetIdentity(identity);
+    Snapshot(*log, log->Append(Bytes(Payload('A'))));
+  }
+  Open();
+  EXPECT_EQ(_replayed.identity, identity);
 }
 
 TEST_F(LogTest, ACleanSnapshotStartsWithoutTheLog) {

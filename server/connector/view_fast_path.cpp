@@ -66,10 +66,6 @@ struct RegistryEntry {
   std::string_view function_name;
   PkSpec single_pk_spec;
   PkSpec glob_pk_spec;
-  // Whether the reader's lookup applies pushed table filters. text only
-  // fetches rows by offset and ignores filters, so filters on its lookup
-  // columns must NOT be pushed (they'd be silently dropped) -- see
-  // supports_pushdown.
   bool supports_filters = false;
 };
 
@@ -140,7 +136,6 @@ const RegistryEntry kRegistry[] = {
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .supports_filters = true,
   },
-  // TODO: postgres_scan / postgres_query.
 };
 
 constexpr struct {

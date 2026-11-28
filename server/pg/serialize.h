@@ -53,11 +53,6 @@ namespace sdb::pg {
 enum class VarFormat : int16_t {
   Text = 0,
   Binary = 1,
-  // PG COPY text field renderer: reuses the Text value renderers but, driven by
-  // SerializationContext::copy_text, backslash-escapes the field body inline
-  // (no int32 length prefix; NULL is emitted as the two bytes \N by the
-  // caller's wrapper). Field/row framing (tab between columns, newline per row)
-  // is done by ChunkSerializer, not the serializer.
   CopyText = 2,
   CopyCsv = 3,
   CopyCsvQuoted = 4,

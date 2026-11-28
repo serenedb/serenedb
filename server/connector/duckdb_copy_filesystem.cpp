@@ -56,11 +56,6 @@ ConnectionContext& GetConnection(duckdb::FileOpener* opener,
 
 }  // namespace
 
-// Reads the COPY FROM STDIN wire stream in order: through the session's
-// registered row stream when the format's reader scans it directly (csv,
-// json), else SINGLE-PASS from the batches, where a re-opened handle refuses
-// to read -- a non-seekable stream has nothing to replay. The session has
-// already sent CopyInResponse by the time the handle exists.
 struct CopyInFileHandle final : public duckdb::FileHandle {
   CopyInFileHandle(duckdb::FileSystem& fs, ConnectionContext& state,
                    pg::CopyInBatches& batches,
@@ -85,9 +80,6 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
       return static_cast<int64_t>(read);
     }
     if (_reopened) {
-      // A re-open would need to replay from offset 0, but the wire stream is
-      // non-seekable and already drained past that point, so fail loudly
-      // rather than feed the reader bytes from the wrong offset.
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG(

@@ -836,10 +836,6 @@ const char* ReadLimit(const DeserializeContext& ctx, std::string_view data) {
             : data.size());
 }
 
-// PG's float input accepts surrounding whitespace, a leading '+' and inf/nan:
-// the flags cover the leading whitespace + plus, `general` keeps inf/nan, and
-// the field must otherwise be fully consumed (trailing whitespace is skip-only
-// at the head, so drop it here) to reject junk.
 template<typename T>
 struct NumberText {
   template<typename Sink>

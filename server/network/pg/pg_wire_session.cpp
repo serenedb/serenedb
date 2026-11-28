@@ -327,10 +327,6 @@ inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
          statement.Cast<duckdb::CreateStatement>().info->temporary;
 }
 
-// Binary, text and csv are the native PG COPY formats serenedb (de)serializes
-// itself: TO STDOUT through the wire collector (parallel, zero-copy), FROM
-// STDIN through the batch queue. The other formats (json/parquet/...) go
-// through DuckDB's own CopyFunction instead.
 inline bool IsNativeCopyFormat(CopyFormat format) {
   return format == CopyFormat::Binary || format == CopyFormat::Text ||
          format == CopyFormat::Csv;
@@ -366,10 +362,6 @@ duckdb::CopyFormat NativeCopyFormat(CopyFormat format) {
                                    : duckdb::CopyFormat::TEXT;
 }
 
-// The pg-wire CopyResponse overall-format byte (1 = binary, 0 = text): binary
-// PGCOPY, parquet and Arrow IPC are binary; text/csv/json are text. New binary
-// formats (excel/pdf/...) extend this one spot rather than scattered
-// `== Parquet` tests.
 inline bool IsBinaryWireFormat(CopyFormat format) {
   return format == CopyFormat::Binary || format == CopyFormat::Parquet ||
          format == CopyFormat::Arrow || format == CopyFormat::Arrows ||
@@ -1509,11 +1501,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     this->_recv.Consume(_dispatch_consume);
     _dispatch_consume = 0;
   }
-  // parquet and the Arrow file format need a seekable file (footer at EOF);
-  // they cannot be read from a non-seekable STDIN pipe. Reject here -- before
-  // CopyInResponse -- so the client gets a clear error instead of a deep
-  // filesystem failure mid-COPY. The Arrow stream format (arrows) has no
-  // footer and streams.
+  // parquet needs a seekable file (footer at EOF); it cannot be read from a
+  // non-seekable STDIN pipe. Reject here -- before CopyInResponse -- so the
+  // client gets a clear error instead of a deep filesystem failure mid-COPY.
   if (format == CopyFormat::Parquet) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1615,8 +1605,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
-  // Only the native PG formats reach here: binary is PGCOPY, text and csv are
-  // the PG text formats.
   const bool binary = format == CopyFormat::Binary;
   auto& copy = statement->Cast<duckdb::CopyStatement>();
   const auto bound_info =
@@ -1649,8 +1637,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   if (!binary) {
     sdb::connector::SetCopyFormat(wire->proto, options,
                                   prepared->ColumnCount());
-    // PG-compat: HEADER emits the column-name line before the rows (committed
-    // here, before the drive arms).
     if (options.header) {
       WriteCopyHeader(this->_send, prepared->GetNames(), wire->proto,
                       format == CopyFormat::Csv);

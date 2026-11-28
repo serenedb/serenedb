@@ -47,9 +47,6 @@ struct CopyRowError {
 [[noreturn]] void ThrowCopyRowError(const pg::CopyInTarget& target,
                                     const CopyRowError& error, uint64_t line);
 
-// Decodes the tuples of COPY FROM in PostgreSQL's binary format: a walk over
-// their length-prefixed fields, then PostgreSQL's binary input functions one
-// column at a time.
 class BinaryCopyDecoder {
  public:
   BinaryCopyDecoder(duckdb::ClientContext& context, pg::CopyInTarget target);

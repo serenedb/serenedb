@@ -134,9 +134,6 @@ struct PgServerContext {
 };
 
 // COPY wire format, from info->format (the lowercased copy-function name).
-// Binary, text and csv are serenedb's own (de)serialized PG COPY formats;
-// parquet needs a seekable file; Other (json, csv with DuckDB-only options)
-// goes through DuckDB's copy functions.
 enum class CopyFormat : uint8_t {
   Other,
   Text,

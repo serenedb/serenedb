@@ -2805,10 +2805,6 @@ struct MultiDimArrayCore {
   }
 };
 
-// Select the column-level (framed) serializer for the wire format: binary and
-// top-level text are both int32-length-framed (BinaryField; top-level text just
-// wraps the text core), COPY text uses \N framing, COPY csv quotes the field,
-// an in-record field uses the bare record-text framing.
 template<typename TextCore, typename TextRecCore, typename BinaryCore>
 SerializationFunction SelectFieldSerializer(VarFormat format,
                                             SerializationContext& context) {

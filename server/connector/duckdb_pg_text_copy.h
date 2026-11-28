@@ -32,9 +32,6 @@
 
 namespace sdb::connector {
 
-// Registers the PostgreSQL text formats of COPY: "text" (tab-separated fields,
-// \N for NULL, backslash escapes) and "csv", which replaces DuckDB's CSV copy
-// function. Both render values through the PostgreSQL output functions.
 void RegisterPgTextCopyFunctions(duckdb::DatabaseInstance& db);
 
 void SetCopyFormat(sdb::pg::SerializationContext& context,

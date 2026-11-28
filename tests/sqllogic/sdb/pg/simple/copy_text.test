@@ -300,3 +300,38 @@ content
 
 statement ok
 RESET TimeZone;
+
+
+statement ok
+CREATE TABLE copy_text_tns (a TIME_NS, b TEXT);
+
+
+statement ok
+INSERT INTO copy_text_tns VALUES ('01:02:03.123456789', 'x:y'), (NULL, NULL);
+
+
+statement count 2
+COPY copy_text_tns TO '${__TEST_DIR__}/copy_text_tns_colon.txt' (FORMAT text, DELIMITER ':');
+
+
+query
+SELECT replace(replace(content, chr(10), '|'), chr(92), '/') AS content FROM read_text('${__TEST_DIR__}/copy_text_tns_colon.txt');
+----
+content
+01/:02/:03.123456789:x/:y|/N:/N|
+
+
+statement ok
+CREATE TABLE copy_text_tns_in (a TIME_NS, b TEXT);
+
+
+statement count 2
+COPY copy_text_tns_in FROM '${__TEST_DIR__}/copy_text_tns_colon.txt' (FORMAT text, DELIMITER ':');
+
+
+query
+SELECT a::TEXT AS a, b FROM copy_text_tns_in ORDER BY a NULLS LAST;
+----
+a	b
+01:02:03.123456789	x:y
+NULL	NULL

@@ -3042,28 +3042,9 @@ void WriteStringColumn(SerializationContext& ctx, const RUVF& v,
   const auto& unified = v.unified;
   const auto* data =
     duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(unified);
-  if constexpr (F == Framing::CsvField && std::is_same_v<Body, VarcharBody>) {
-    if (EscapesNothing(ctx)) {
-      for (auto row = begin; row < end; ++row, ++cursors) {
-        const auto idx = unified.sel->get_index(row);
-        auto* d = *cursors;
-        if (!unified.validity.RowIsValid(idx)) {
-          *cursors = WriteNullField<F>(ctx, d);
-          continue;
-        }
-        const std::string_view field{data[idx].GetData(), data[idx].GetSize()};
-        auto* out = reinterpret_cast<char*>(d);
-        if (CsvNeedsQuotes(ctx, field)) {
-          *cursors = d + duckdb::CsvWriteQuoted(out, field, ctx.csv_quote,
-                                                ctx.csv_escape);
-        } else {
-          std::memcpy(out, field.data(), field.size());
-          *cursors = d + field.size();
-        }
-      }
-      return;
-    }
-  }
+  constexpr bool kPlainCsv =
+    F == Framing::CsvField && std::is_same_v<Body, VarcharBody>;
+  SDB_ASSERT(!kPlainCsv || EscapesNothing(ctx));
   for (auto row = begin; row < end; ++row, ++cursors) {
     const auto idx = unified.sel->get_index(row);
     auto* d = *cursors;
@@ -3071,11 +3052,20 @@ void WriteStringColumn(SerializationContext& ctx, const RUVF& v,
       *cursors = WriteNullField<F>(ctx, d);
       continue;
     }
-    const auto& value = data[idx];
-    *cursors =
-      FinishField<F>(ctx, d,
-                     Body::Render(ctx, {value.GetData(), value.GetSize()},
-                                  d + kBodyOffset<F>));
+    const std::string_view field{data[idx].GetData(), data[idx].GetSize()};
+    if constexpr (kPlainCsv) {
+      auto* out = reinterpret_cast<char*>(d);
+      if (CsvNeedsQuotes(ctx, field)) {
+        *cursors =
+          d + duckdb::CsvWriteQuoted(out, field, ctx.csv_quote, ctx.csv_escape);
+      } else {
+        std::memcpy(out, field.data(), field.size());
+        *cursors = d + field.size();
+      }
+    } else {
+      *cursors =
+        FinishField<F>(ctx, d, Body::Render(ctx, field, d + kBodyOffset<F>));
+    }
   }
 }
 

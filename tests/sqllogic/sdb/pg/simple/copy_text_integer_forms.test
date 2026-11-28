@@ -1,0 +1,230 @@
+control substitution on
+
+statement count 14
+COPY (SELECT unnest(['0x1F', '0o17', '0b101', '-0x10', '0x_1F', ' +5 ', '0X1f', '0O7', '0B11', '-128', '127', '1_2', chr(9) || '6' || chr(11), '-0'])) TO '${__TEST_DIR__}/cif_signed.txt' (FORMAT text);
+
+
+statement count 8
+COPY (SELECT unnest(['0x1F', '0o17', '0b101', '0x_1F', ' +5 ', '255', '0B11', '-0'])) TO '${__TEST_DIR__}/cif_unsigned.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE cif_i1 (v TINYINT);
+
+
+statement ok
+CREATE TABLE cif_u1 (v UTINYINT);
+
+
+statement ok
+CREATE TABLE cif_u2 (v USMALLINT);
+
+
+statement ok
+CREATE TABLE cif_u4 (v UINTEGER);
+
+
+statement ok
+CREATE TABLE cif_u8 (v UBIGINT);
+
+
+statement ok
+CREATE TABLE cif_hugeint (v HUGEINT);
+
+
+statement ok
+CREATE TABLE cif_numeric (v NUMERIC(4, 1));
+
+
+statement count 14
+COPY cif_i1 FROM '${__TEST_DIR__}/cif_signed.txt' (FORMAT text);
+
+
+statement count 8
+COPY cif_u1 FROM '${__TEST_DIR__}/cif_unsigned.txt' (FORMAT text);
+
+
+statement count 8
+COPY cif_u2 FROM '${__TEST_DIR__}/cif_unsigned.txt' (FORMAT csv);
+
+
+statement count 8
+COPY cif_u4 FROM '${__TEST_DIR__}/cif_unsigned.txt' (FORMAT text);
+
+
+statement count 8
+COPY cif_u8 FROM '${__TEST_DIR__}/cif_unsigned.txt' (FORMAT csv);
+
+
+query
+SELECT (SELECT string_agg(v::TEXT, ',' ORDER BY rowid) FROM cif_i1) AS i1, (SELECT string_agg(v::TEXT, ',' ORDER BY rowid) FROM cif_u1) AS u1,
+       (SELECT sum(v) FROM cif_u2) AS u2, (SELECT sum(v) FROM cif_u4) AS u4, (SELECT sum(v) FROM cif_u8) AS u8;
+----
+i1	u1	u2	u4	u8
+31,15,5,-16,31,5,31,7,3,-128,127,12,6,0	31,15,5,31,5,255,3,0	345	345	345
+
+
+statement count 2
+COPY (SELECT unnest(['4294967295', '0xFFFF_FFFF'])) TO '${__TEST_DIR__}/cif_u4_max.txt' (FORMAT text);
+
+
+statement count 2
+COPY (SELECT unnest(['18446744073709551615', '0xFFFFFFFFFFFFFFFF'])) TO '${__TEST_DIR__}/cif_u8_max.txt' (FORMAT text);
+
+
+statement count 2
+COPY cif_u4 FROM '${__TEST_DIR__}/cif_u4_max.txt' (FORMAT text);
+
+
+statement count 2
+COPY cif_u8 FROM '${__TEST_DIR__}/cif_u8_max.txt' (FORMAT text);
+
+
+query
+SELECT max(v)::TEXT AS v FROM cif_u4 UNION ALL SELECT max(v)::TEXT FROM cif_u8 ORDER BY length(v);
+----
+v
+4294967295
+18446744073709551615
+
+
+statement error
+COPY cif_i1 FROM '${__TEST_DIR__}/cif_unsigned.txt' (FORMAT text);
+----
+db error: ERROR: value "255" is out of range for type tinyint
+
+
+statement error
+COPY cif_u1 FROM '${__TEST_DIR__}/cif_signed.txt' (FORMAT text);
+----
+db error: ERROR: value "-0x10" is out of range for type utinyint
+
+
+statement count 1
+COPY (SELECT '256') TO '${__TEST_DIR__}/cif_over_u1.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '65536') TO '${__TEST_DIR__}/cif_over_u2.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '0x1_0000_0000') TO '${__TEST_DIR__}/cif_over_u4.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '18446744073709551616') TO '${__TEST_DIR__}/cif_over_u8.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '0x10000000000000000') TO '${__TEST_DIR__}/cif_over_u8_hex.txt' (FORMAT text);
+
+
+statement error
+COPY cif_u1 FROM '${__TEST_DIR__}/cif_over_u1.txt' (FORMAT text);
+----
+db error: ERROR: value "256" is out of range for type utinyint
+
+
+statement error
+COPY cif_u2 FROM '${__TEST_DIR__}/cif_over_u2.txt' (FORMAT text);
+----
+db error: ERROR: value "65536" is out of range for type usmallint
+
+
+statement error
+COPY cif_u4 FROM '${__TEST_DIR__}/cif_over_u4.txt' (FORMAT text);
+----
+db error: ERROR: value "0x1_0000_0000" is out of range for type uinteger
+
+
+statement error
+COPY cif_u8 FROM '${__TEST_DIR__}/cif_over_u8.txt' (FORMAT csv);
+----
+db error: ERROR: value "18446744073709551616" is out of range for type ubigint
+
+
+statement error
+COPY cif_u8 FROM '${__TEST_DIR__}/cif_over_u8_hex.txt' (FORMAT text);
+----
+db error: ERROR: value "0x10000000000000000" is out of range for type ubigint
+
+
+statement count 1
+COPY (SELECT '-170141183460469231731687303715884105729') TO '${__TEST_DIR__}/cif_over_hugeint.txt' (FORMAT text);
+
+
+statement error
+COPY cif_hugeint FROM '${__TEST_DIR__}/cif_over_hugeint.txt' (FORMAT text);
+----
+db error: ERROR: value "-170141183460469231731687303715884105729" is out of range for type hugeint
+
+
+statement count 1
+COPY (SELECT '+12345') TO '${__TEST_DIR__}/cif_over_numeric_plus.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '-1e+5') TO '${__TEST_DIR__}/cif_over_numeric_minus.txt' (FORMAT text);
+
+
+statement error
+COPY cif_numeric FROM '${__TEST_DIR__}/cif_over_numeric_plus.txt' (FORMAT text);
+----
+db error: ERROR: numeric field overflow
+DETAIL: A field with precision 4, scale 1 must round to an absolute value less than 10^3.
+
+
+statement error
+COPY cif_numeric FROM '${__TEST_DIR__}/cif_over_numeric_minus.txt' (FORMAT text);
+----
+db error: ERROR: numeric field overflow
+DETAIL: A field with precision 4, scale 1 must round to an absolute value less than 10^3.
+
+
+statement count 1
+COPY (SELECT '1_') TO '${__TEST_DIR__}/cif_trailing_underscore.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '1__2') TO '${__TEST_DIR__}/cif_double_underscore.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '_12') TO '${__TEST_DIR__}/cif_leading_underscore.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT '   ') TO '${__TEST_DIR__}/cif_blank.txt' (FORMAT text);
+
+
+statement count 1
+COPY (SELECT chr(1) || '5') TO '${__TEST_DIR__}/cif_control.txt' (FORMAT text);
+
+
+statement error
+COPY cif_u1 FROM '${__TEST_DIR__}/cif_trailing_underscore.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type utinyint: "1_"
+
+
+statement error
+COPY cif_u2 FROM '${__TEST_DIR__}/cif_double_underscore.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type usmallint: "1__2"
+
+
+statement error
+COPY cif_u4 FROM '${__TEST_DIR__}/cif_leading_underscore.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type uinteger: "_12"
+
+
+statement error
+COPY cif_u8 FROM '${__TEST_DIR__}/cif_blank.txt' (FORMAT text);
+----
+db error: ERROR: invalid input syntax for type ubigint: "   "
+
+
+statement error invalid input syntax for type tinyint
+COPY cif_i1 FROM '${__TEST_DIR__}/cif_control.txt' (FORMAT text);

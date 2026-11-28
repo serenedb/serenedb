@@ -20,20 +20,29 @@
 
 #include "catalog/database_directory.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
 #include <absl/synchronization/mutex.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
+#include <array>
 #include <atomic>
+#include <cerrno>
+#include <cstring>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/path.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -43,6 +52,7 @@
 #include <vector>
 
 #include "backup/pg_control.h"
+#include "server/utils/unique_id.h"
 #include "runtime/runtime.h"
 #include "server/utils/lifecycle.h"
 
@@ -75,6 +85,8 @@ StorageWork& Work() {
 struct Ownership {
   absl::Mutex mutex;
   irs::containers::FlatHashSet<std::string> released ABSL_GUARDED_BY(mutex);
+  irs::containers::FlatHashMap<std::string, FileLock> locked
+    ABSL_GUARDED_BY(mutex);
 };
 
 Ownership& Owners() {
@@ -83,8 +95,42 @@ Ownership& Owners() {
 }
 
 std::string Owner() {
-  return absl::StrCat(backup::PositionSource::Instance().SystemIdentifier(),
-                      "\n");
+  return std::string{backup::PositionSource::Instance().ServerId().Bytes()};
+}
+
+std::string OwnerName(std::string_view content) {
+  const auto id = UniqueId::FromBytes(content);
+  return id ? absl::StrCat("the server ", id->Hex()) : "an unreadable owner";
+}
+
+[[noreturn]] void ThrowFileError(int error, std::string_view what,
+                                 std::string_view path) {
+  THROW_SQL_ERROR(ERR_CODE(irs::pg::ErrcodeForFileAccess(error)),
+                  ERR_MSG("could not ", what, " file \"", path,
+                          "\": ", std::strerror(error)));
+}
+
+std::string ReadLocalFile(const std::string& path) {
+  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    ThrowFileError(errno, "open", path);
+  }
+  absl::Cleanup close = [fd] { ::close(fd); };
+  std::string content;
+  std::array<char, 64> buffer;
+  while (true) {
+    const auto read = ::read(fd, buffer.data(), buffer.size());
+    if (read < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      ThrowFileError(errno, "read", path);
+    }
+    if (read == 0) {
+      return content;
+    }
+    content.append(buffer.data(), static_cast<size_t>(read));
+  }
 }
 
 std::string_view LocationOf(std::string_view store) {
@@ -120,6 +166,7 @@ void ReleaseIfEmpty(std::string_view location) noexcept {
       return;
     }
     const auto owner = fs.JoinPath(*it, kOwnerFile);
+    owners.locked.erase(*it);
     if (fs.FileExists(owner) &&
         irs::ReadWhole<std::string>(duckdb::QueryContext{}, fs, owner) ==
           Owner()) {
@@ -278,12 +325,88 @@ void ClaimLocation(const std::string& location) {
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
       ERR_MSG("tablespace location \"", location,
               "\" belongs to another server"),
-      ERR_DETAIL("Its ", kOwnerFile,
-                 " file names the server with system identifier ",
-                 absl::StripTrailingAsciiWhitespace(named), "."),
+      ERR_DETAIL("Its ", kOwnerFile, " file names ", OwnerName(named), "."),
       ERR_HINT(
         "Use another location, or remove this one once no server uses it."));
   }
+  if (duckdb::Path::IsRemote(location) || owners.locked.contains(location)) {
+    return;
+  }
+  auto locked = FileLock::Take(owner, FileLock::Mode::Exclusive);
+  if (!locked.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("tablespace location \"", location,
+              "\" is in use by another running server"),
+      ERR_DETAIL(locked.status().message()));
+  }
+  owners.locked.emplace(location, std::move(*locked));
+}
+
+LockedOwner LockOwner(const std::string& directory) {
+  auto path = duckdb::FileSystem::JoinPath(directory, kOwnerFile);
+  const int fd =
+    ::open(path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+  if (fd < 0) {
+    ThrowFileError(errno, "create", path);
+  }
+  ::close(fd);
+  StorageFileSystem().SyncDirectory(directory);
+  auto locked = FileLock::Take(path, FileLock::Mode::Exclusive);
+  if (!locked.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("directory \"", directory,
+                            "\" is in use by another running server"),
+                    ERR_DETAIL(locked.status().message()));
+  }
+  LockedOwner owner{.path = std::move(path), .lock = std::move(*locked)};
+  owner.content = ReadLocalFile(owner.path);
+  return owner;
+}
+
+void WriteOwner(LockedOwner& owner, std::string content) {
+  const int fd = ::open(owner.path.c_str(), O_WRONLY | O_TRUNC | O_CLOEXEC);
+  if (fd < 0) {
+    ThrowFileError(errno, "open", owner.path);
+  }
+  absl::Cleanup close = [fd] { ::close(fd); };
+  for (size_t written = 0; written < content.size();) {
+    const auto n =
+      ::write(fd, content.data() + written, content.size() - written);
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      ThrowFileError(errno, "write", owner.path);
+    }
+    written += static_cast<size_t>(n);
+  }
+  if (::fsync(fd) != 0) {
+    ThrowFileError(errno, "sync", owner.path);
+  }
+  owner.content = std::move(content);
+}
+
+void EmptyDirectory(const std::string& directory, std::string_view keep) {
+  auto& fs = StorageFileSystem();
+  std::vector<std::pair<std::string, bool>> entries;
+  fs.ListFiles(
+    directory,
+    [&](duckdb::OpenFileInfo& info) {
+      if (info.path != keep) {
+        entries.emplace_back(fs.JoinPath(directory, info.path),
+                             duckdb::FileSystem::IsDirectory(info));
+      }
+    },
+    nullptr, {.strict = true});
+  for (const auto& [path, directory_entry] : entries) {
+    if (directory_entry) {
+      RemoveTreeOrThrow(path);
+    } else {
+      fs.RemoveFile(path);
+    }
+  }
+  fs.SyncDirectory(directory);
 }
 
 void ReleaseLocation(std::string location) {

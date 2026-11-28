@@ -34,11 +34,13 @@
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <iresearch/utils/group_commit.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "server/utils/message_buffer.h"
+#include "server/utils/unique_id.h"
 
 namespace sdb::catalog {
 
@@ -134,10 +136,12 @@ class Log {
     std::span<const std::span<uint8_t>>)>;
 
   struct Identity {
-    uint64_t system_identifier = 0;
+    UniqueId server_id;
     std::array<uint8_t, 32> mock_nonce{};
 
-    explicit operator bool() const noexcept { return system_identifier != 0; }
+    explicit operator bool() const noexcept {
+      return static_cast<bool>(server_id);
+    }
     bool operator==(const Identity&) const = default;
   };
 
@@ -151,6 +155,8 @@ class Log {
 
   static std::string ChunkName(uint64_t number);
   static bool HasSnapshot(duckdb::FileSystem& fs, const std::string& snapshot);
+  static std::optional<Identity> ReadIdentity(duckdb::FileSystem& fs,
+                                              const std::string& snapshot);
   static void Read(duckdb::FileSystem& fs, const std::string& dir,
                    const std::string& snapshot, Apply apply);
   static void Copy(duckdb::FileSystem& fs, const std::string& from,

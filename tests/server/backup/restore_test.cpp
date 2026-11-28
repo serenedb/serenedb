@@ -255,7 +255,6 @@ TEST_F(RestoreTest, ACrashBeforeTheLabelIsRetiredIsFinishedByTheNextBoot) {
 TEST_F(RestoreTest, WithoutALabelOnlyTheSessionPinsGo) {
   const auto named = std::filesystem::path{_layout->BackupsDir()} / "named";
   WriteFile(named, 4, 'N');
-  std::filesystem::remove(_root / kPgControlFile);
   Prepare();
   EXPECT_FALSE(Exists(Pin()));
   EXPECT_TRUE(Exists(named));
@@ -264,7 +263,6 @@ TEST_F(RestoreTest, WithoutALabelOnlyTheSessionPinsGo) {
                                     Payload('D'), Payload('E')}));
   EXPECT_TRUE(Exists(StoreDir() / kSegmentFile));
   EXPECT_TRUE(Exists(_root / "recovery.signal"));
-  EXPECT_TRUE(ReadPgControl(_root.string()));
 }
 
 TEST_F(RestoreTest, RefusesATamperedLabel) {

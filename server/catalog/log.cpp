@@ -60,7 +60,7 @@ struct SnapshotHeader {
   uint64_t number = 0;
   Lsn begin = 0;
   uint64_t clean = 0;
-  uint64_t system_identifier = 0;
+  std::array<uint8_t, UniqueId::kBytes> server_id{};
   std::array<uint8_t, 32> mock_nonce{};
 };
 
@@ -151,6 +151,32 @@ struct SnapshotFile {
   std::vector<std::span<uint8_t>> records;
 };
 
+Log::Identity IdentityOf(const SnapshotHeader& header) {
+  const std::string_view id{reinterpret_cast<const char*>(header.server_id.data()),
+                            header.server_id.size()};
+  return {.server_id = *UniqueId::FromBytes(id),
+          .mock_nonce = header.mock_nonce};
+}
+
+SnapshotHeader CheckHeader(const std::string& path,
+                           std::span<const uint8_t> record) {
+  if (record.size() >= sizeof(uint64_t)) {
+    const auto version = Load<uint64_t>(record, 0);
+    if (version != kSnapshotVersion) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("snapshot '", path, "' was written in storage version ",
+                version, ", and this build reads only version ",
+                kSnapshotVersion));
+    }
+  }
+  if (record.size() != sizeof(SnapshotHeader)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("snapshot '", path, "' is damaged"));
+  }
+  return Load<SnapshotHeader>(record, 0);
+}
+
 SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& path) {
   SnapshotFile snapshot;
   auto bytes = ReadFile(fs, path);
@@ -163,19 +189,11 @@ SnapshotFile ReadSnapshot(duckdb::FileSystem& fs, const std::string& path) {
     snapshot.bytes, 0, [&](size_t, size_t, std::span<uint8_t> payload) {
       snapshot.records.push_back(payload);
     });
-  if (parsed != snapshot.bytes.size() || snapshot.records.empty() ||
-      snapshot.records.front().size() != sizeof(SnapshotHeader)) {
+  if (parsed != snapshot.bytes.size() || snapshot.records.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
                     ERR_MSG("snapshot '", path, "' is damaged"));
   }
-  snapshot.header = Load<SnapshotHeader>(snapshot.records.front(), 0);
-  if (snapshot.header.version != kSnapshotVersion) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("snapshot '", path, "' was written in storage version ",
-              snapshot.header.version, ", and this build reads only version ",
-              kSnapshotVersion));
-  }
+  snapshot.header = CheckHeader(path, snapshot.records.front());
   snapshot.records.erase(snapshot.records.begin());
   return snapshot;
 }
@@ -328,8 +346,7 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
     .end = snapshot.covered,
     .covered = snapshot.covered,
     .snapshot = past.exists,
-    .identity = {.system_identifier = snapshot.system_identifier,
-                 .mock_nonce = snapshot.mock_nonce},
+    .identity = IdentityOf(snapshot),
     .snapshot_bytes = past.bytes.size(),
   };
   std::vector<uint8_t> last;
@@ -390,6 +407,29 @@ std::string Log::ChunkName(uint64_t number) {
 
 bool Log::HasSnapshot(duckdb::FileSystem& fs, const std::string& snapshot) {
   return fs.FileExists(snapshot);
+}
+
+std::optional<Log::Identity> Log::ReadIdentity(duckdb::FileSystem& fs,
+                                               const std::string& snapshot) {
+  const auto file =
+    fs.OpenFile(snapshot, duckdb::FileFlags::FILE_FLAGS_READ |
+                            duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS);
+  if (!file) {
+    return std::nullopt;
+  }
+  std::vector<uint8_t> bytes(sizeof(Header) + sizeof(SnapshotHeader));
+  std::optional<SnapshotHeader> header;
+  if (file->GetFileSize() >= bytes.size()) {
+    file->Read(bytes.data(), bytes.size(), 0);
+    ParseRecords(bytes, 0, [&](size_t, size_t, std::span<uint8_t> payload) {
+      header = CheckHeader(snapshot, payload);
+    });
+  }
+  if (!header) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("snapshot '", snapshot, "' is damaged"));
+  }
+  return IdentityOf(*header);
 }
 
 void Log::Read(duckdb::FileSystem& fs, const std::string& dir,
@@ -827,8 +867,8 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
   SnapshotHeader header{.version = kSnapshotVersion,
                         .covered = covered,
                         .clean = clean ? uint64_t{1} : uint64_t{0},
-                        .system_identifier = _identity.system_identifier,
                         .mock_nonce = _identity.mock_nonce};
+  absl::c_copy(_identity.server_id.Bytes(), header.server_id.begin());
   {
     absl::MutexLock lock{&_mutex};
     SDB_ASSERT(covered <= _durable.load(std::memory_order_acquire));

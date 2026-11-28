@@ -28,6 +28,8 @@
 #include <string>
 #include <string_view>
 
+#include "server/utils/lockfile.h"
+
 namespace sdb::catalog {
 
 inline constexpr std::string_view kStoreDir = "segments";
@@ -51,6 +53,16 @@ void RemoveStorage(std::string store, absl::AnyInvocable<bool()> remove_files);
 
 void ClaimLocation(const std::string& location);
 void ReleaseLocation(std::string location);
+
+struct LockedOwner {
+  std::string path;
+  FileLock lock;
+  std::string content;
+};
+
+LockedOwner LockOwner(const std::string& directory);
+void WriteOwner(LockedOwner& owner, std::string content);
+void EmptyDirectory(const std::string& directory, std::string_view keep);
 
 class DatabaseDirectory final {
  public:

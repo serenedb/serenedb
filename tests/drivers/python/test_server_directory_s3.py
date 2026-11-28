@@ -1,11 +1,12 @@
 """A server directory on an object store.
 
 The snapshot and the segments live in the bucket; the WAL and the temporary
-files stay on a local disk. `LOCK` in the bucket names the WAL directory that
-owns the server until a checkpointed stop removes it, so a server starts from
-another WAL directory only after such a stop. The server signs its requests
-with the credentials of the AWS default chain, which it fetches again before
-they expire.
+files stay on a local disk. `OWNER` in the bucket names the WAL directory that
+owns the server until a handover stop removes it, so a server starts from
+another WAL directory only after such a stop. The WAL and temporary
+directories keep an `OWNER` of their own, locked while the server runs. The
+server signs its requests with the credentials of the AWS default chain, which
+it fetches again before they expire.
 """
 
 from __future__ import annotations
@@ -102,7 +103,13 @@ def _count(server: _Server) -> int:
         return conn.execute("SELECT count(*) FROM t").fetchone()[0]
 
 
-def test_a_server_moves_between_wal_directories_after_a_checkpointed_stop(
+def _wal_owner(node: Path) -> tuple[bytes, bytes]:
+    owner = (node / "wal" / "OWNER").read_bytes()
+    assert len(owner) == 32, owner
+    return owner[:16], owner[16:]
+
+
+def test_a_server_moves_between_wal_directories_after_a_handover_stop(
         tmp_path: Path) -> None:
     with FakeS3() as fake:
         prefix = f"moves-{tmp_path.name}"
@@ -110,19 +117,21 @@ def test_a_server_moves_between_wal_directories_after_a_checkpointed_stop(
         env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
                                   "AWS_SECRET_ACCESS_KEY": "secret"})
 
-        first = _Server(url, tmp_path / "a", env, "--checkpoint_at_stop")
+        first = _Server(url, tmp_path / "a", env)
         try:
             assert first.wait_ready(), first.output()
-            assert f"{prefix}/LOCK" in fake.keys("bucket", prefix)
+            _, first_wal = _wal_owner(tmp_path / "a")
+            assert fake.objects[("bucket", f"{prefix}/OWNER")].data == first_wal
             with first.connect() as conn:
                 conn.execute("CREATE TABLE t (a INT)")
                 conn.execute("INSERT INTO t SELECT i FROM range(1000) r(i)")
                 conn.execute("CHECKPOINT")
                 conn.execute("INSERT INTO t VALUES (-1)")
+                conn.execute("SET sdb_faults = 'handover_at_stop'")
         finally:
             assert first.stop() == 0, first.output()
-        assert f"{prefix}/LOCK" not in fake.keys("bucket", prefix)
-        assert sorted(p.name for p in (tmp_path / "a" / "wal").iterdir()) == ["LOCK"]
+        assert f"{prefix}/OWNER" not in fake.keys("bucket", prefix)
+        assert sorted(p.name for p in (tmp_path / "a" / "wal").iterdir()) == ["OWNER"]
 
         second = _Server(url, tmp_path / "b", env, "--require_existing")
         try:
@@ -132,7 +141,10 @@ def test_a_server_moves_between_wal_directories_after_a_checkpointed_stop(
                 conn.execute("INSERT INTO t VALUES (-2)")
         finally:
             second.kill()
-        assert f"{prefix}/LOCK" in fake.keys("bucket", prefix)
+        first_server, _ = _wal_owner(tmp_path / "a")
+        second_server, second_wal = _wal_owner(tmp_path / "b")
+        assert second_server == first_server
+        assert fake.objects[("bucket", f"{prefix}/OWNER")].data == second_wal
 
         refused = _Server(url, tmp_path / "a", env, "--require_existing")
         try:
@@ -166,7 +178,7 @@ def test_a_lost_wal_directory_is_abandoned_by_name(tmp_path: Path) -> None:
                 conn.execute("INSERT INTO t VALUES (2)")
         finally:
             lost.kill()
-        lost_id = (tmp_path / "a" / "wal" / "LOCK").read_text()
+        lost_id = _wal_owner(tmp_path / "a")[1].hex()
 
         wrong = _Server(url, tmp_path / "b", env, "--abandon_wal=0123")
         try:
@@ -184,8 +196,8 @@ def test_a_lost_wal_directory_is_abandoned_by_name(tmp_path: Path) -> None:
                 conn.execute("INSERT INTO t VALUES (3)")
         finally:
             taken.kill()
-        assert fake.objects[("bucket", f"lost-{tmp_path.name}/LOCK")].data.decode() == \
-            (tmp_path / "b" / "wal" / "LOCK").read_text()
+        assert fake.objects[("bucket", f"lost-{tmp_path.name}/OWNER")].data == \
+            _wal_owner(tmp_path / "b")[1]
 
         again = _Server(url, tmp_path / "b", env)
         try:
@@ -193,6 +205,76 @@ def test_a_lost_wal_directory_is_abandoned_by_name(tmp_path: Path) -> None:
             assert _count(again) == 2
         finally:
             assert again.stop() == 0, again.output()
+
+
+def test_a_wal_directory_of_another_server_is_refused(tmp_path: Path) -> None:
+    with FakeS3() as fake:
+        env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
+                                  "AWS_SECRET_ACCESS_KEY": "secret"})
+        first = _Server(f"s3://bucket/first-{tmp_path.name}", tmp_path / "a",
+                        env)
+        try:
+            assert first.wait_ready(), first.output()
+            with first.connect() as conn:
+                conn.execute("CREATE TABLE t (a INT)")
+                conn.execute("INSERT INTO t VALUES (1)")
+        finally:
+            first.kill()
+        wal = tmp_path / "a" / "wal"
+        before = {p.name: p.read_bytes() for p in wal.iterdir()}
+
+        other = _Server(f"s3://bucket/other-{tmp_path.name}", tmp_path / "a",
+                        env)
+        try:
+            assert not other.wait_ready(timeout=30)
+            assert other.proc.wait(timeout=30) != 0
+            assert f"the WAL directory '{wal}' belongs to the server " \
+                f"{_wal_owner(tmp_path / 'a')[0].hex()}" in other.output()
+        finally:
+            other.kill()
+        assert {p.name: p.read_bytes() for p in wal.iterdir()} == before
+
+
+def test_a_temporary_directory_is_kept_for_its_server_and_emptied_for_another(
+        tmp_path: Path) -> None:
+    with FakeS3() as fake:
+        env = _environment(fake, {"AWS_ACCESS_KEY_ID": "key",
+                                  "AWS_SECRET_ACCESS_KEY": "secret"})
+        url = f"s3://bucket/temp-{tmp_path.name}"
+        temp = tmp_path / "a" / "temp"
+        server = _Server(url, tmp_path / "a", env)
+        try:
+            assert server.wait_ready(), server.output()
+            owner = (temp / "OWNER").read_bytes()
+            assert owner == _wal_owner(tmp_path / "a")[0]
+            busy = _Server(f"s3://bucket/busy-{tmp_path.name}",
+                           tmp_path / "b", env, f"--temp_directory={temp}")
+            try:
+                assert not busy.wait_ready(timeout=30)
+                assert busy.proc.wait(timeout=30) != 0
+                assert str(temp) in busy.output()
+                assert "is in use by another running server" in busy.output()
+            finally:
+                busy.kill()
+        finally:
+            assert server.stop() == 0, server.output()
+        (temp / "kept").write_text("cached")
+
+        again = _Server(url, tmp_path / "a", env)
+        try:
+            assert again.wait_ready(), again.output()
+        finally:
+            assert again.stop() == 0, again.output()
+        assert (temp / "kept").read_text() == "cached"
+
+        other = _Server(f"s3://bucket/other-{tmp_path.name}", tmp_path / "c",
+                        env, f"--temp_directory={temp}")
+        try:
+            assert other.wait_ready(), other.output()
+            assert not (temp / "kept").exists()
+            assert (temp / "OWNER").read_bytes() == _wal_owner(tmp_path / "c")[0]
+        finally:
+            assert other.stop() == 0, other.output()
 
 
 def test_an_object_store_server_directory_needs_local_directories(

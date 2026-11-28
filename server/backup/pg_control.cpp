@@ -102,28 +102,18 @@ ControlFileData MakeControl(const ControlState& state) {
   return data;
 }
 
-uint64_t NewSystemIdentifier() {
-  const auto now = absl::Now();
-  const auto seconds = static_cast<uint64_t>(absl::ToUnixSeconds(now));
-  const auto micros =
-    static_cast<uint64_t>(absl::ToUnixMicros(now) % 1'000'000);
-  absl::BitGen gen;
-  return (seconds << 32) | (micros << 12) |
-         absl::Uniform<uint64_t>(gen, 0, 4096);
-}
-
 uint64_t ClockPosition() {
   return static_cast<uint64_t>(absl::ToUnixMicros(absl::Now()));
 }
 
-std::array<uint8_t, kMockNonceLen> NewMockNonce() {
-  std::array<uint8_t, kMockNonceLen> nonce{};
+}  // namespace
+
+MockNonce NewMockNonce() {
+  MockNonce nonce{};
   SDB_ENSURE(RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) == 1,
              "could not generate the mock authentication nonce");
   return nonce;
 }
-
-}  // namespace
 
 std::optional<ControlState> ReadPgControl(const std::string& data_dir) {
   auto& fs = catalog::StorageFileSystem();
@@ -194,15 +184,31 @@ PositionSource& PositionSource::Instance() {
   return gSource;
 }
 
-ControlState PositionSource::NewState() {
-  return {.system_identifier = NewSystemIdentifier(),
-          .checkpoint = 0,
-          .mock_nonce = NewMockNonce()};
-}
-
-void PositionSource::Adopt(const ControlState& state) {
+void PositionSource::Adopt(const std::string& data_dir,
+                           const UniqueId& server_id,
+                           const MockNonce& mock_nonce, bool fresh) {
+  ControlState state{.system_identifier = server_id.High(),
+                     .mock_nonce = mock_nonce};
+  if (!data_dir.empty()) {
+    const auto control = fresh ? std::nullopt : ReadPgControl(data_dir);
+    if (control && control->system_identifier != state.system_identifier) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("the snapshot belongs to the server with system identifier ",
+                state.system_identifier, ", and ", kPgControlFile,
+                " to the server with system identifier ",
+                control->system_identifier));
+    }
+    if (control) {
+      state.checkpoint = control->checkpoint;
+    }
+    if (control != state) {
+      WritePgControl(data_dir, state);
+    }
+  }
   absl::MutexLock lock{&_mutex};
-  _data_dir.clear();
+  _data_dir = data_dir;
+  _server_id = server_id;
   _state = state;
 }
 
@@ -212,22 +218,7 @@ ControlState PositionSource::State() {
   return *_state;
 }
 
-void PositionSource::Open(const std::string& data_dir) {
-  absl::MutexLock lock{&_mutex};
-  auto state = ReadPgControl(data_dir);
-  if (!state) {
-    state =
-      ControlState{.system_identifier = NewSystemIdentifier(), .checkpoint = 0};
-  }
-  if (absl::c_all_of(state->mock_nonce, [](uint8_t b) { return b == 0; })) {
-    state->mock_nonce = NewMockNonce();
-    WritePgControl(data_dir, *state);
-  }
-  _data_dir = data_dir;
-  _state = state;
-}
-
-std::array<uint8_t, kMockNonceLen> PositionSource::MockNonce() {
+MockNonce PositionSource::GetMockNonce() {
   absl::MutexLock lock{&_mutex};
   if (_state) {
     return _state->mock_nonce;
@@ -236,6 +227,12 @@ std::array<uint8_t, kMockNonceLen> PositionSource::MockNonce() {
     _volatile_nonce = NewMockNonce();
   }
   return *_volatile_nonce;
+}
+
+UniqueId PositionSource::ServerId() {
+  absl::MutexLock lock{&_mutex};
+  SDB_ASSERT(_state);
+  return _server_id;
 }
 
 uint64_t PositionSource::SystemIdentifier() {

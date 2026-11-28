@@ -39,6 +39,7 @@ namespace sdb::lifecycle {
 namespace {
 
 std::atomic_bool gIsStopping = false;
+std::atomic_bool gHandover = false;
 std::atomic_bool gShutdownFailed = false;
 std::string gDataDirArg;
 
@@ -102,6 +103,15 @@ void BeginShutdown() noexcept {
   const uint64_t v = 1;
   while (::write(gShutdownWriteFd, &v, sizeof(v)) < 0 && errno == EINTR) {
   }
+}
+
+void BeginHandover() noexcept {
+  gHandover.store(true, std::memory_order_release);
+  BeginShutdown();
+}
+
+bool HandoverRequested() noexcept {
+  return gHandover.load(std::memory_order_acquire);
 }
 
 void FailShutdown() noexcept {

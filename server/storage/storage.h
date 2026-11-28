@@ -21,9 +21,11 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "catalog/boot.h"
+#include "catalog/database_directory.h"
 #include "search/engine.h"
 #include "server/utils/lockfile.h"
 
@@ -54,7 +56,8 @@ class Storage final {
 
   Runtime& _runtime;
   FileLock _lock;
-  FileLock _wal_lock;
+  std::optional<catalog::LockedOwner> _wal_owner;
+  std::optional<catalog::LockedOwner> _temp_owner;
   search::SearchEngine _search;
   std::string _directory;
   bool _remote = false;

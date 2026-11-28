@@ -115,16 +115,6 @@
           "categoryLabel": "Server"
         },
         {
-          "name": "checkpoint_at_stop",
-          "flag": "--checkpoint_at_stop",
-          "type": "",
-          "defaultValue": "false",
-          "description": "End every clean stop with a checkpoint and an empty WAL directory, so the server can start anywhere from its server directory alone.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
           "name": "cpu_threads",
           "flag": "--cpu_threads",
           "type": "",

@@ -65,8 +65,8 @@ bool Eventually(const auto& done) {
 class DatabaseDirectoryTest : public ::testing::Test {
  protected:
   void SetUp() final {
-    backup::PositionSource::Instance().Adopt(
-      backup::PositionSource::NewState());
+    backup::PositionSource::Instance().Adopt({}, UniqueId::New(),
+                                             backup::NewMockNonce(), true);
     _root = std::filesystem::temp_directory_path() /
             absl::StrCat("database_directory_", ::getpid());
     std::filesystem::remove_all(_root);

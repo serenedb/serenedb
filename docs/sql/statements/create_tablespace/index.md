@@ -55,11 +55,11 @@ The directory is created when it does not exist, on an object store as an empty 
 ERROR:  tablespace location "/mnt/nvme/serenedb/segments/inside" is inside the files of a tablespace
 ```
 
-A location belongs to one server: `CREATE TABLESPACE` writes an `OWNER` file there that names the server's system identifier, and another server's `CREATE TABLESPACE` on that location is refused, since the index files of two servers would share names:
+A location belongs to one server: `CREATE TABLESPACE` writes an `OWNER` file there that names the server's id, and another server's `CREATE TABLESPACE` on that location is refused, since the index files of two servers would share names. On a local disk the running server also keeps `OWNER` locked, so a second process can't use the location at the same time:
 
 ```text
 ERROR:  tablespace location "/mnt/nvme/serenedb" belongs to another server
-DETAIL:  Its OWNER file names the server with system identifier 7696604830604944365.
+DETAIL:  Its OWNER file names the server 019adf3b6c5e4f0a2b1c3d4e5f607182.
 HINT:  Use another location, or remove this one once no server uses it.
 ```
 

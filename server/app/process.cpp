@@ -127,6 +127,7 @@ void WaitForShutdown() {
   SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 #ifdef SDB_FAULT_INJECTION
   SDB_PARK_ONCE_ON_FAILURE("hold_shutdown");
+  SDB_IF_FAILURE("handover_at_stop") { lifecycle::BeginHandover(); }
   duckdb::FaultPoints::Clear();
 #endif
 }

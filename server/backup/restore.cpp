@@ -145,7 +145,6 @@ void PrepareServerDirectory(const catalog::ServerDirectory& layout) {
     if (!duckdb::Path::IsRemote(data_dir)) {
       RemoveSessionPins(fs, layout.BackupsDir());
     }
-    PositionSource::Instance().Open(data_dir);
   } catch (const std::exception& e) {
     SDB_FATAL(STARTUP, "cannot prepare server directory '", data_dir,
               "': ", duckdb::ErrorData{e}.RawMessage());

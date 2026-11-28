@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_cat.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
@@ -94,37 +96,91 @@ TEST_F(PgControlTest, AnotherControlVersionIsRefused) {
   EXPECT_THROW(ReadPgControl(_root), irs::SqlException);
 }
 
-TEST_F(PgControlTest, OpeningANewDirectoryCreatesAStableIdentity) {
+TEST_F(PgControlTest, ANewServerWritesTheTopOfItsIdAsTheSystemIdentifier) {
   auto& positions = PositionSource::Instance();
-  positions.Open(_root);
-  const auto identifier = positions.SystemIdentifier();
-  EXPECT_NE(identifier, 0);
+  const auto id = UniqueId::New();
+  const auto nonce = NewMockNonce();
+  positions.Adopt(_root, id, nonce, true);
+  EXPECT_EQ(positions.ServerId(), id);
+  EXPECT_EQ(positions.SystemIdentifier(), id.High());
   const auto stored = ReadPgControl(_root);
   ASSERT_TRUE(stored);
-  EXPECT_EQ(stored->system_identifier, identifier);
-  positions.Open(_root);
-  EXPECT_EQ(positions.SystemIdentifier(), identifier);
+  EXPECT_EQ(stored->system_identifier, id.High());
+  EXPECT_EQ(stored->mock_nonce, nonce);
+  positions.Adopt(_root, id, nonce, false);
+  EXPECT_EQ(positions.SystemIdentifier(), id.High());
+}
+
+TEST_F(PgControlTest, AnExistingServerWithoutAControlFileGetsOneBack) {
+  auto& positions = PositionSource::Instance();
+  const auto id = UniqueId::New();
+  const auto nonce = NewMockNonce();
+  positions.Adopt(_root, id, nonce, true);
+  std::filesystem::remove(_root / kPgControlFile);
+  positions.Adopt(_root, id, nonce, false);
+  const auto stored = ReadPgControl(_root);
+  ASSERT_TRUE(stored);
+  EXPECT_EQ(stored->system_identifier, id.High());
+}
+
+TEST_F(PgControlTest, AControlFileOfAnotherServerIsRefused) {
+  auto& positions = PositionSource::Instance();
+  positions.Adopt(_root, UniqueId::New(), NewMockNonce(), true);
+  EXPECT_THROW(positions.Adopt(_root, UniqueId::New(), NewMockNonce(), false),
+               irs::SqlException);
+}
+
+TEST_F(PgControlTest, AnObjectStoreServerWritesNoControlFile) {
+  auto& positions = PositionSource::Instance();
+  const auto id = UniqueId::New();
+  positions.Adopt({}, id, NewMockNonce(), true);
+  EXPECT_EQ(positions.ServerId(), id);
+  EXPECT_FALSE(ReadPgControl(_root));
 }
 
 TEST_F(PgControlTest, PositionsIncreaseAndArePersisted) {
   auto& positions = PositionSource::Instance();
-  positions.Open(_root);
+  const auto id = UniqueId::New();
+  const auto nonce = NewMockNonce();
+  positions.Adopt(_root, id, nonce, true);
   const auto first = positions.Issue();
   const auto second = positions.Issue();
   EXPECT_GT(second, first);
   ASSERT_TRUE(ReadPgControl(_root));
   EXPECT_EQ(ReadPgControl(_root)->checkpoint, second);
-  positions.Open(_root);
+  positions.Adopt(_root, id, nonce, false);
   EXPECT_GT(positions.Issue(), second);
 }
 
 TEST_F(PgControlTest, PositionsNeverGoBelowTheFloor) {
   const uint64_t floor = uint64_t{1} << 62;
-  WritePgControl(_root, {.system_identifier = 7, .checkpoint = floor});
+  const auto id = UniqueId::New();
+  const auto nonce = NewMockNonce();
+  WritePgControl(_root, {.system_identifier = id.High(),
+                         .checkpoint = floor,
+                         .mock_nonce = nonce});
   auto& positions = PositionSource::Instance();
-  positions.Open(_root);
+  positions.Adopt(_root, id, nonce, false);
   EXPECT_EQ(positions.Issue(), floor + 1);
   EXPECT_EQ(positions.Issue(), floor + 2);
+}
+
+TEST(UniqueIdTest, StartsWithItsMillisecondsAndRoundTrips) {
+  const auto before = static_cast<uint64_t>(absl::ToUnixMillis(absl::Now()));
+  const auto id = UniqueId::New();
+  const auto after = static_cast<uint64_t>(absl::ToUnixMillis(absl::Now()));
+  const auto millis = id.High() >> 16;
+  EXPECT_GE(millis, before);
+  EXPECT_LE(millis, after);
+  EXPECT_TRUE(id);
+  EXPECT_FALSE(UniqueId{});
+  EXPECT_NE(id, UniqueId::New());
+  EXPECT_EQ(id.Hex().size(), 2 * UniqueId::kBytes);
+  EXPECT_EQ(UniqueId::FromHex(id.Hex()), id);
+  EXPECT_EQ(UniqueId::FromBytes(id.Bytes()), id);
+  EXPECT_FALSE(UniqueId::FromHex("0123"));
+  EXPECT_FALSE(UniqueId::FromHex(std::string(2 * UniqueId::kBytes, 'x')));
+  EXPECT_FALSE(UniqueId::FromBytes("short"));
 }
 
 TEST_F(PgControlTest, PgVersionIsWrittenOnceAndKept) {

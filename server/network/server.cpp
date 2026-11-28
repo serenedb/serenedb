@@ -115,7 +115,7 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
 
   network::ScramVerifier MockScram(std::string_view username) const final {
     return network::MockScramVerifier(
-      username, backup::PositionSource::Instance().MockNonce());
+      username, backup::PositionSource::Instance().GetMockNonce());
   }
 };
 

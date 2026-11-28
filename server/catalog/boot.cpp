@@ -67,62 +67,98 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kWalDir = "wal";
+constexpr std::string_view kTempDir = "temp";
 constexpr std::string_view kSnapshotFile = "snapshot";
 constexpr std::string_view kBackupsDir = "backups";
 
-std::optional<std::string> ReadServerLock(duckdb::FileSystem& fs,
-                                          const ServerDirectory& layout) {
-  const auto path = fs.JoinPath(layout.directory, kLockFile);
+std::optional<UniqueId> ReadServerOwner(duckdb::FileSystem& fs,
+                                        const ServerDirectory& layout) {
+  const auto path = fs.JoinPath(layout.directory, kOwnerFile);
   if (!fs.FileExists(path)) {
     return std::nullopt;
   }
-  return irs::ReadWhole<std::string>(duckdb::QueryContext{}, fs, path);
+  auto owner = UniqueId::FromBytes(
+    irs::ReadWhole<std::string>(duckdb::QueryContext{}, fs, path));
+  if (!owner) {
+    SDB_FATAL(STARTUP, "'", path, "' is damaged");
+  }
+  return owner;
 }
 
-void TakeServerLock(duckdb::FileSystem& fs, const ServerDirectory& layout,
-                    const std::string& wal_id, bool replace) {
-  const auto path = fs.JoinPath(layout.directory, kLockFile);
+void TakeServerOwner(duckdb::FileSystem& fs, const ServerDirectory& layout,
+                     const UniqueId& wal_id, bool replace) {
+  const auto path = fs.JoinPath(layout.directory, kOwnerFile);
   try {
     if (replace) {
-      irs::WriteWhole(fs, path, wal_id, true);
+      irs::WriteWhole(fs, path, wal_id.Bytes(), true);
       return;
     }
     const auto file =
       fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
                           duckdb::FileFlags::FILE_FLAGS_EXCLUSIVE_CREATE);
-    file->Write(duckdb::QueryContext{}, const_cast<char*>(wal_id.data()),
-                wal_id.size(), 0);
+    const auto bytes = wal_id.Bytes();
+    file->Write(duckdb::QueryContext{}, const_cast<char*>(bytes.data()),
+                bytes.size(), 0);
     file->Close();
   } catch (const std::exception& e) {
     SDB_FATAL(STARTUP, "could not take the server directory '",
-              layout.directory, "' for the WAL directory ", wal_id, ": ",
+              layout.directory, "' for the WAL directory ", wal_id.Hex(), ": ",
               duckdb::ErrorData{e}.RawMessage());
   }
 }
 
-Log::Identity AdoptIdentity(Log::Identity identity, bool remote) {
-  auto& positions = backup::PositionSource::Instance();
-  if (remote) {
-    if (!identity) {
-      const auto state = backup::PositionSource::NewState();
-      identity = {.system_identifier = state.system_identifier,
-                  .mock_nonce = state.mock_nonce};
-    }
-    positions.Adopt({.system_identifier = identity.system_identifier,
-                     .mock_nonce = identity.mock_nonce});
-    return identity;
+UniqueId ClaimWal(LockedOwner& owner, const ServerDirectory& layout,
+                  const UniqueId& server_id) {
+  if (owner.content.empty()) {
+    const auto wal_id = UniqueId::New();
+    WriteOwner(owner,
+               absl::StrCat(server_id.Bytes(), wal_id.Bytes()));
+    return wal_id;
   }
-  const auto state = positions.State();
-  if (identity && identity.system_identifier != state.system_identifier) {
-    SDB_FATAL(STARTUP,
-              "the snapshot belongs to the server with system "
-              "identifier ",
-              identity.system_identifier, ", and ", backup::kPgControlFile,
-              " to the server with system identifier ",
-              state.system_identifier);
+  const auto server = UniqueId::FromBytes(
+    std::string_view{owner.content}.substr(0, UniqueId::kBytes));
+  const auto wal = owner.content.size() == 2 * UniqueId::kBytes
+                     ? UniqueId::FromBytes(std::string_view{owner.content}.substr(
+                         UniqueId::kBytes))
+                     : std::nullopt;
+  if (!server || !wal) {
+    SDB_FATAL(STARTUP, "'", owner.path, "' is damaged");
   }
-  return {.system_identifier = state.system_identifier,
-          .mock_nonce = state.mock_nonce};
+  if (*server != server_id) {
+    SDB_FATAL(STARTUP, "the WAL directory '", layout.WalDir(),
+              "' belongs to the server ", server->Hex(), ", and '",
+              layout.directory, "' holds the server ", server_id.Hex());
+  }
+  return *wal;
+}
+
+void ClaimTemp(LockedOwner& owner, const ServerDirectory& layout,
+               const UniqueId& server_id) {
+  const auto self = std::string{server_id.Bytes()};
+  if (owner.content == self) {
+    return;
+  }
+  if (!owner.content.empty()) {
+    SDB_INFO(STARTUP, "emptying the temporary directory '", layout.TempDir(),
+             "', which another server used");
+    EmptyDirectory(layout.TempDir(), kOwnerFile);
+  }
+  WriteOwner(owner, self);
+}
+
+Log::Identity NewIdentity() {
+  return {.server_id = UniqueId::New(), .mock_nonce = backup::NewMockNonce()};
+}
+
+void AdoptIdentity(const Log::Identity& identity, const ServerDirectory& layout,
+                   bool fresh) {
+  try {
+    backup::PositionSource::Instance().Adopt(
+      layout.Remote() ? std::string{} : layout.directory, identity.server_id,
+      identity.mock_nonce, fresh);
+  } catch (const std::exception& e) {
+    SDB_FATAL(STARTUP, duckdb::ErrorData{e}.RawMessage());
+  }
 }
 
 struct LiveStorage {
@@ -243,11 +279,31 @@ void RequirePresent(std::span<const LiveStorage> live) {
 
 }  // namespace
 
-ServerDirectory::ServerDirectory(std::string directory_p, std::string wal_p)
-  : directory{std::move(directory_p)}, wal{std::move(wal_p)} {}
+ServerDirectory::ServerDirectory(std::string directory_p, std::string wal_p,
+                                 std::string temp_p)
+  : directory{std::move(directory_p)},
+    wal{std::move(wal_p)},
+    temp{std::move(temp_p)} {}
 
 std::string ServerDirectory::DefaultWal(std::string_view directory) {
   return duckdb::FileSystem::JoinPath(std::string{directory}, kWalDir);
+}
+
+std::string ServerDirectory::DefaultTemp(std::string_view directory) {
+  return duckdb::FileSystem::JoinPath(std::string{directory}, kTempDir);
+}
+
+bool ServerDirectory::Remote() const {
+  return !InMemory() && duckdb::Path::IsRemote(directory);
+}
+
+bool ServerDirectory::WalHasOwner() const {
+  return !InMemory() && (Remote() || wal != DefaultWal(directory));
+}
+
+bool ServerDirectory::TempHasOwner() const {
+  return !InMemory() && !temp.empty() &&
+         (Remote() || temp != DefaultTemp(directory));
 }
 
 std::string ServerDirectory::SnapshotPath() const {
@@ -288,45 +344,31 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
           .transaction_manager = duckdb::make_uniq<TransactionManager>(db)};
 }
 
-void InitCatalog(bool default_database, bool require_existing,
-                 const std::string& abandon_wal) {
+void InitCatalog(const CatalogStart& start) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
   auto& fs = StorageFileSystem();
   bool created = false;
-  const bool remote =
-    !layout.InMemory() && duckdb::Path::IsRemote(layout.directory);
-  std::string wal_id;
-  std::optional<std::string> owner;
+  const bool remote = layout.Remote();
+  Log::Identity identity;
+  UniqueId wal_id;
+  std::optional<UniqueId> owner;
   bool abandoned = false;
   if (!layout.InMemory()) {
     BeginStorageWork();
-    if (remote) {
-      wal_id = irs::ReadWhole<std::string>(
-        duckdb::QueryContext{}, fs, fs.JoinPath(layout.WalDir(), kLockFile));
-      owner = ReadServerLock(fs, layout);
-      abandoned = owner && *owner != wal_id && *owner == abandon_wal;
-      if (owner && *owner != wal_id && !abandoned) {
-        SDB_FATAL(STARTUP, "the server directory '", layout.directory,
-                  "' belongs to the WAL directory ", *owner,
-                  ", which may hold commits its snapshot does not have: "
-                  "start the server with that WAL directory, stop it with "
-                  "--checkpoint_at_stop first, or, when it is lost, start "
-                  "with --abandon_wal=",
-                  *owner, " and lose those commits");
-      }
-      if (abandoned) {
-        SDB_WARN(STARTUP, "starting '", layout.directory,
-                 "' from its snapshot without the WAL directory ", *owner,
-                 ": the commits only that WAL holds are lost");
-      }
-    } else {
+    if (!remote) {
       backup::PrepareServerDirectory(layout);
     }
-    created = !Log::HasSnapshot(fs, layout.SnapshotPath());
+    std::optional<Log::Identity> stored;
+    try {
+      stored = Log::ReadIdentity(fs, layout.SnapshotPath());
+    } catch (const std::exception& e) {
+      SDB_FATAL(STARTUP, duckdb::ErrorData{e}.RawMessage());
+    }
+    created = !stored;
     if (created) {
-      if (require_existing) {
+      if (start.require_existing) {
         SDB_FATAL(STARTUP, "'", layout.directory,
                   "' holds no server, and --require_existing refuses to "
                   "create one");
@@ -335,6 +377,35 @@ void InitCatalog(bool default_database, bool require_existing,
         SDB_FATAL(STARTUP, "'", layout.directory,
                   "' holds segments but no snapshot: refusing to start an "
                   "empty server over them");
+      }
+    }
+    identity = created ? NewIdentity() : *stored;
+    try {
+      if (start.wal_owner) {
+        wal_id = ClaimWal(*start.wal_owner, layout, identity.server_id);
+      }
+      if (start.temp_owner) {
+        ClaimTemp(*start.temp_owner, layout, identity.server_id);
+      }
+    } catch (const std::exception& e) {
+      SDB_FATAL(STARTUP, duckdb::ErrorData{e}.RawMessage());
+    }
+    if (remote) {
+      owner = ReadServerOwner(fs, layout);
+      abandoned =
+        owner && *owner != wal_id && owner->Hex() == start.abandon_wal;
+      if (owner && *owner != wal_id && !abandoned) {
+        SDB_FATAL(STARTUP, "the server directory '", layout.directory,
+                  "' belongs to the WAL directory ", owner->Hex(),
+                  ", which may hold commits its snapshot does not have: "
+                  "start the server with that WAL directory, or, when it is "
+                  "lost, start with --abandon_wal=",
+                  owner->Hex(), " and lose those commits");
+      }
+      if (abandoned) {
+        SDB_WARN(STARTUP, "starting '", layout.directory,
+                 "' from its snapshot without the WAL directory ",
+                 owner->Hex(), ": the commits only that WAL holds are lost");
       }
     }
   }
@@ -365,9 +436,10 @@ void InitCatalog(bool default_database, bool require_existing,
     transactions.SetReplaying(false);
     initialized = replayed.snapshot;
     clean = !abandoned && (clean || replayed.clean);
-    log->SetIdentity(AdoptIdentity(replayed.identity, remote));
+    AdoptIdentity(identity, layout, created);
+    log->SetIdentity(identity);
     if (takeover) {
-      TakeServerLock(fs, layout, wal_id, abandoned);
+      TakeServerOwner(fs, layout, wal_id, abandoned);
     }
     fs.CreateDirectoryExtended(
       layout.StoreDir(),
@@ -378,7 +450,7 @@ void InitCatalog(bool default_database, bool require_existing,
     transactions.Open(std::move(log));
   }
   context.RunFunctionInTransaction(
-    [&] { cluster.Bootstrap(context, default_database); });
+    [&] { cluster.Bootstrap(context, start.default_database); });
   auth::PublishRoles(cluster);
   if (layout.InMemory()) {
     return;

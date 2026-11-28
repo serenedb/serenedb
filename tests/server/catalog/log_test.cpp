@@ -341,7 +341,7 @@ TEST_F(LogTest, ASnapshotOfAnotherVersionIsRefused) {
     uint64_t number;
     Lsn begin;
     uint64_t clean;
-    uint64_t system_identifier;
+    std::array<uint8_t, UniqueId::kBytes> server_id;
     std::array<uint8_t, 32> mock_nonce;
   };
   const Header header{.version = uint64_t{1} << 40};
@@ -363,15 +363,20 @@ TEST_F(LogTest, ASnapshotOfAnotherVersionIsRefused) {
 }
 
 TEST_F(LogTest, ASnapshotKeepsTheIdentityOfItsServer) {
-  const Log::Identity identity{.system_identifier = 42, .mock_nonce = {7}};
+  const Log::Identity identity{.server_id = UniqueId::New(), .mock_nonce = {7}};
+  const auto path = SnapshotPath().string();
+  EXPECT_FALSE(Log::ReadIdentity(*_fs, path));
   {
     auto log = Open();
     EXPECT_FALSE(_replayed.identity);
     log->SetIdentity(identity);
     Snapshot(*log, log->Append(Bytes(Payload('A'))));
   }
+  EXPECT_EQ(Log::ReadIdentity(*_fs, path), identity);
   Open();
   EXPECT_EQ(_replayed.identity, identity);
+  std::filesystem::resize_file(SnapshotPath(), 4);
+  EXPECT_THROW(Log::ReadIdentity(*_fs, path), irs::SqlException);
 }
 
 TEST_F(LogTest, ACleanSnapshotStartsWithoutTheLog) {

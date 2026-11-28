@@ -205,13 +205,13 @@ statement ok
 CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
 
 system ok
-mkdir -p $__TEST_DIR__/owned && echo 1 > $__TEST_DIR__/owned/OWNER
+mkdir -p $__TEST_DIR__/owned && printf 0123456789abcdef > $__TEST_DIR__/owned/OWNER
 
 statement error
 CREATE TABLESPACE loc_owned_${__DATABASE__} LOCATION '${__TEST_DIR__}/owned';
 ----
 db error: ERROR: tablespace location "<slt:ignore>/owned" belongs to another server
-DETAIL: Its OWNER file names the server with system identifier 1.
+DETAIL: Its OWNER file names the server 30313233343536373839616263646566.
 HINT: Use another location, or remove this one once no server uses it.
 
 
@@ -219,6 +219,17 @@ system ok
 ls $__TEST_DIR__/owned
 ----
 OWNER
+
+
+system ok
+mkdir -p $__TEST_DIR__/unreadable && echo 1 > $__TEST_DIR__/unreadable/OWNER
+
+statement error
+CREATE TABLESPACE loc_unreadable_${__DATABASE__} LOCATION '${__TEST_DIR__}/unreadable';
+----
+db error: ERROR: tablespace location "<slt:ignore>/unreadable" belongs to another server
+DETAIL: Its OWNER file names an unreadable owner.
+HINT: Use another location, or remove this one once no server uses it.
 
 
 statement ok

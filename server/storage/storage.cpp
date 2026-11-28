@@ -22,8 +22,6 @@
 #include "storage/storage.h"
 
 #include <absl/flags/flag.h>
-#include <absl/random/random.h>
-#include <absl/strings/str_format.h>
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
@@ -72,21 +70,11 @@ ABSL_FLAG(std::string, abandon_wal, "",
           "object store: the server starts from its last snapshot, and the "
           "commits that only that WAL holds are lost.");
 
-ABSL_FLAG(bool, checkpoint_at_stop, false,
-          "End every clean stop with a checkpoint and an empty WAL directory, "
-          "so the server can start anywhere from its server directory alone.");
-
 namespace sdb {
 namespace {
 
 duckdb::FileSystem& DataFileSystem() {
   return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
-}
-
-std::string NewWalId() {
-  absl::BitGen gen;
-  return absl::StrFormat("%016x%016x", absl::Uniform<uint64_t>(gen),
-                         absl::Uniform<uint64_t>(gen));
 }
 
 void RequireLocal(std::string_view flag, std::string_view value,
@@ -112,13 +100,14 @@ catalog::ServerDirectory ReadServerDirectory(std::string directory) {
   if (wal.empty()) {
     wal = catalog::ServerDirectory::DefaultWal(directory);
   }
-  return {std::move(directory), std::move(wal)};
+  auto temp = ReadTempDirectory(directory);
+  return {std::move(directory), std::move(wal), std::move(temp)};
 }
 
 std::string ReadTempDirectory(const std::string& directory) {
   auto temp = absl::GetFlag(FLAGS_temp_directory);
   if (temp.empty() && !directory.empty()) {
-    temp = duckdb::FileSystem::JoinPath(directory, "temp");
+    temp = catalog::ServerDirectory::DefaultTemp(directory);
   }
   return temp;
 }
@@ -157,8 +146,12 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
     network::pg::hba::SetHbaConfig(config.hba_config);
   }
   try {
-    catalog::InitCatalog(config.default_database, config.require_existing,
-                         config.abandon_wal);
+    catalog::InitCatalog(
+      {.default_database = config.default_database,
+       .require_existing = config.require_existing,
+       .abandon_wal = config.abandon_wal,
+       .wal_owner = _wal_owner ? &*_wal_owner : nullptr,
+       .temp_owner = _temp_owner ? &*_temp_owner : nullptr});
     _search.Start();
   } catch (...) {
     Close();
@@ -203,21 +196,22 @@ void Storage::Lock(const catalog::ServerDirectory& layout) {
                 "': ", duckdb::ErrorData{e}.RawMessage());
     }
   }
-  create(layout.WalDir());
-  if (!remote &&
-      layout.WalDir() == catalog::ServerDirectory::DefaultWal(directory)) {
-    return;
-  }
-  const auto wal_lock = fs.JoinPath(layout.WalDir(), catalog::kLockFile);
-  try {
-    if (!fs.FileExists(wal_lock)) {
-      irs::WriteWhole(fs, wal_lock, NewWalId(), true);
+  const auto lock_owner = [&](const std::string& path) {
+    create(path);
+    try {
+      return catalog::LockOwner(path);
+    } catch (const std::exception& e) {
+      SDB_FATAL(GENERAL, duckdb::ErrorData{e}.RawMessage());
     }
-  } catch (const std::exception& e) {
-    SDB_FATAL(GENERAL, "Unable to create '", wal_lock,
-              "': ", duckdb::ErrorData{e}.RawMessage());
+  };
+  if (layout.WalHasOwner()) {
+    _wal_owner = lock_owner(layout.WalDir());
+  } else {
+    create(layout.WalDir());
   }
-  _wal_lock = take(wal_lock);
+  if (layout.TempHasOwner()) {
+    _temp_owner = lock_owner(layout.TempDir());
+  }
 }
 
 void Storage::Close() noexcept {
@@ -226,7 +220,7 @@ void Storage::Close() noexcept {
   _runtime.Background().Drain();
   auto& transactions = catalog::Transactions::Get();
   std::optional<catalog::Transactions::FinalCheckpoint> final;
-  if (_started && absl::GetFlag(FLAGS_checkpoint_at_stop)) {
+  if (_started && lifecycle::HandoverRequested()) {
     try {
       final = transactions.CaptureFinalCheckpoint();
     } catch (const std::exception& ex) {
@@ -243,7 +237,7 @@ void Storage::Close() noexcept {
       transactions.Close();
       if (clean && _remote) {
         auto& fs = DataFileSystem();
-        fs.TryRemoveFile(fs.JoinPath(_directory, catalog::kLockFile));
+        fs.TryRemoveFile(fs.JoinPath(_directory, catalog::kOwnerFile));
       }
     } else {
       catalog::CloseLog();

@@ -91,7 +91,7 @@ cmake --build build_sbg -t search-benchmark-game
 `docs/` and a search index of it are built into `serenedb` and `serenedb-tests`, where the `sdb_docs` functions and the shell's `.docs` read them; a `docs/` change needs only a rebuild.
 
 - To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`; that build has no documentation to read.
-- The build indexes the docs with the freshly linked binary, `serenedb docs-index <corpus> <index-dir>`, then embeds the index into it.
+- The build indexes the docs in memory with the freshly linked `serenedb`, `serenedb docs-index <corpus> <image>`, and `scripts/embed_docs_index.py` embeds the image into `serenedb` and `serenedb-tests`; no index files or data directory are written.
 - On macOS the index gets a fixed 4 MiB region. When the build fails because the index outgrew it, raise `kCapacity` in `server/docs/docs_index_image.cpp`.
 
 ### The TPC data generators

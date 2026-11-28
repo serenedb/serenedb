@@ -276,12 +276,8 @@ class Loader {
     }
     auto& context = *_system.conn->context;
     const auto& database = ConnectionContext::Get(context).GetDatabase();
-    Image image{ExportImage(context, database, "docs"),
-                ExportImage(context, database, "objects")};
-    if (!image.Complete()) {
-      return {};
-    }
-    return image;
+    return {ExportImage(context, database, "docs"),
+            ExportImage(context, database, "objects")};
   }
 
   bool Run(const std::string& sql) {
@@ -479,7 +475,7 @@ bool WriteImage(std::string_view packed, const std::string& out) {
   if (!file ||
       std::fwrite(packed.data(), 1, packed.size(), file.get()) !=
         packed.size() ||
-      std::fflush(file.get()) != 0) {
+      std::fclose(file.release()) != 0) {
     SDB_ERROR(STARTUP, "cannot build the docs index: writing ", out,
               " failed: ", std::strerror(errno));
     return false;
